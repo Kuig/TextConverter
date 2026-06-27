@@ -5,60 +5,7 @@ from pathlib import Path
 from textconverter.logger import log_action, log_info, log_success, log_warning
 from .ast import Image
 
-_PROJECT_ROOT = Path(__file__).parent.parent
-
-# config.json path resolved by package __init__.py
-
-
-def _load_config() -> dict:
-    """Load Ollama configuration from the project-root config.json.
-
-    Returns:
-        Configuration dict. Falls back to sensible defaults if file is missing.
-    """
-    config_path = _PROJECT_ROOT / "config.json"
-    if config_path.exists():
-        with open(config_path, encoding="utf-8") as f:
-            return json.load(f)
-    return {
-        "ollama": {
-            "url": "http://localhost:11434",
-            "classification_model": "gemma4:e2b",
-            "description_model": "gemma4:e2b",
-            "classification_prompt": (
-                "Analyze the image and classify it into exactly one of the following categories: "
-                "'photo_drawing_or_comic', 'diagram', 'short_text_table_or_formula', 'chart', "
-                "'infographic_or_depliant', 'document_scan', 'logo_or_icon', 'map'. "
-                "Reply ONLY with a valid JSON object containing a single key 'category' and the "
-                "chosen category as the value."
-            ),
-            "prompts": {
-                "photo_drawing_or_comic": "Accurate description of scene and subjects.",
-                "diagram": "Detailed description of the diagram.",
-                "short_text_table_or_formula": (
-                    "Transcription only, strictly preserving the original layout and formatting "
-                    "(e.g. use markdown tables)."
-                ),
-                "chart": (
-                    "Extract key trends. Create a data table ONLY if exact numerical values are "
-                    "clearly readable; do NOT guess or hallucinate numbers."
-                ),
-                "infographic_or_depliant": (
-                    "Extract all the text and describe the layout and visual flow of the information."
-                ),
-                "document_scan": (
-                    "Transcribe all the text exactly as it appears in the scan, preserving the "
-                    "structure and formatting as much as possible."
-                ),
-                "logo_or_icon": "Briefly describe the logo, symbol, or icon without overcomplicating it.",
-                "map": (
-                    "Describe the map, its geographic or thematic focus, and any key legends or "
-                    "paths shown."
-                ),
-                "default": "Describe the image in detail.",
-            },
-        }
-    }
+from .config import load_config
 
 
 def _call_ollama(
@@ -289,7 +236,7 @@ def process_images(doc, base_dir: str, latex_auto: bool = False) -> None:
         base_dir: Base directory for resolving relative image paths.
         latex_auto: If True, skip description for non-table/formula images.
     """
-    config = _load_config()
+    config = load_config()
     total_images = _count_images(doc)
     state = {"total": total_images, "current": 0}
 
