@@ -129,6 +129,32 @@ save_to_file(
 )
 ```
 
+### Windows Context Menu Integration
+
+You can integrate `TextConverter` directly into the Windows Explorer right-click context menu. This allows you to right-click any supported file and quickly convert it to your desired format.
+
+#### Features
+* **Cascading Menu**: Adds a grouped `"Convert with TextConverter..."` menu.
+* **Extension Filtering**: Only shows relevant options:
+  * **PDFs**: Shows all output options (.md, .tex, light/dark HTML).
+  * **Markdown / LaTeX**: Excludes self-conversion (e.g., no "convert to .md" option for `.md` files).
+  * **HTML / HTM**: Includes duplicate options for "main content" extraction (`--extract-html` to filter out boilerplate).
+  * **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`): Automatically runs with AI image description (`image_handling="describe"`).
+* **Smart Defaults**: Always executes with `--code-parsing` enabled.
+
+#### Setup
+1. Open a PowerShell terminal in the project root.
+2. Run the generator script:
+   ```powershell
+   cd "Windows Integration"
+   .\generate_registry_files.ps1
+   ```
+   This dynamically detects your Python virtual environment path and generates two registry files: `register.reg` and `unregister.reg`.
+3. Double-click `register.reg` and approve the prompt to register the context menu.
+4. To remove the integration, double-click `unregister.reg`.
+
+---
+
 ## Project Structure
 
 ```
@@ -141,6 +167,8 @@ TextConverter/
 ├── README.md
 ├── DocsInput/               ← Sample input documents
 ├── DocsOutput/              ← Generated output documents
+├── Windows Integration/     ← Windows shell context menu integration
+│   └── generate_registry_files.ps1  ← Dynamic registry file generator
 └── textconverter/           ← Core package
     ├── __init__.py          ← Package initializer
     ├── __main__.py          ← CLI entry point (convert / mcp / gui subcommands)
