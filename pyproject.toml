@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "textconverter"
+version = "0.1.0"
+description = "TextConverter — Text files format converter"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pymupdf4llm>=0.0.17",
+    "mcp>=1.2.0",
+    "streamlit"
+]
+
+[project.scripts]
+textconverter = "textconverter.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["textconverter*"]

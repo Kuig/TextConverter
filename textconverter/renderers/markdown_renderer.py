@@ -1,0 +1,94 @@
+from ..ast import Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule
+
+def render_markdown(doc: Document) -> str:
+    """Renders an AST Document to a Markdown string."""
+    lines = []
+    for child in doc.children:
+        rendered = _render_node(child)
+        if rendered is not None:
+            lines.append(rendered)
+    return '\n\n'.join(filter(bool, lines)) + '\n'
+
+def _render_node(node) -> str:
+    if isinstance(node, Heading):
+        return f"{'#' * node.level} {''.join(_render_node(c) for c in node.children)}"
+        
+    elif isinstance(node, Paragraph):
+        content = ''.join(_render_node(c) for c in node.children).strip()
+        return content.replace('\n', '  \n')
+        
+    elif isinstance(node, CodeBlock):
+        lang = node.language or ''
+        return f"```{lang}\n{node.code}\n```"
+        
+    elif isinstance(node, ListBlock):
+        items = []
+        for i, item in enumerate(node.items):
+            prefix = f"{i+1}." if node.ordered else "-"
+            # Item can have multiple children (e.g. Paragraphs or sub-lists if expanded).
+            # Join them with spaces or newlines so they don't concatenate words.
+            item_content = ' \n    '.join(_render_node(c) for c in item.children).strip()
+            items.append(f"{prefix} {item_content}")
+        return '\n'.join(items)
+        
+    elif isinstance(node, Table):
+        if not node.headers and not node.rows: return ""
+        headers = [_render_node(c) for c in node.headers] if node.headers else []
+        if not headers and node.rows:
+            headers = [""] * len(node.rows[0].cells)
+            
+        lines = []
+        lines.append("| " + " | ".join(headers) + " |")
+        lines.append("|" + "|".join(["---"] * len(headers)) + "|")
+        
+        for row in node.rows:
+            cells = [_render_node(c) for c in row.cells]
+            while len(cells) < len(headers):
+                cells.append("")
+            lines.append("| " + " | ".join(cells) + " |")
+        return '\n'.join(lines)
+        
+    elif isinstance(node, TableCell):
+        return ''.join(_render_node(c) for c in node.children).strip()
+        
+    elif isinstance(node, Text):
+        content = node.content
+        if node.italic: content = f"_{content}_"
+        if node.bold: content = f"**{content}**"
+        return content
+        
+    elif isinstance(node, Link):
+        title_str = f' "{node.title}"' if node.title else ''
+        content_str = ''.join(_render_node(c) for c in node.content)
+        return f"[{content_str}]({node.url}{title_str})"
+        
+    elif isinstance(node, Image):
+        if hasattr(node, 'description') and node.description:
+            if not getattr(node, 'render_metadata', True):
+                return node.description
+            cat_str = f" - Class: {node.category}" if getattr(node, 'category', None) else ""
+            return f"**[Image Reference: {node.src}{cat_str}]**  \n**----- Start of picture description -----**  \n{node.description}  \n**----- End of picture description -----**\n\n"
+        title_str = f' "{node.title}"' if node.title else ''
+        return f'![{node.alt}]({node.url if hasattr(node, "url") else node.src}{title_str})'
+        
+    elif isinstance(node, CodeInline):
+        return f"`{node.code}`"
+        
+    elif isinstance(node, LineBreak):
+        return "  \n"
+        
+    elif isinstance(node, BlockQuote):
+        content = '\n'.join(_render_node(c) for c in node.children)
+        lines = content.split('\n')
+        if node.alert_type:
+            lines.insert(0, f"[!{node.alert_type}]")
+        
+        bq_lines = []
+        for line in lines:
+            bq_lines.append(f"> {line}" if line.strip() else ">")
+        return '\n'.join(bq_lines)
+        
+    elif isinstance(node, HorizontalRule):
+        return "---"
+        
+    return ""
