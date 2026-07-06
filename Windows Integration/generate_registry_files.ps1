@@ -104,9 +104,10 @@ foreach ($Ext in $Associations.Keys) {
         $Template = $Sub.Template
         $Extract = if ($Sub.Extract) { "True" } else { "False" }
         $ImgHandling = if ($Sub.ImageHandling) { $Sub.ImageHandling } else { "link" }
+        $CodeParsing = if ($Ext -eq ".md" -or $Ext -eq ".markdown" -or $Ext -eq ".tex" -or $Ext -eq ".latex") { "False" } else { "True" }
         
         # Construct the python one-liner command
-        $pyCode = "import sys, pathlib; sys.path.append('$PythonProjectDir'); from textconverter.api import save_to_file; src=pathlib.Path(sys.argv[1]); out=src.with_suffix('$TargetExt'); save_to_file(str(src), str(out), template='$Template', code_parsing=True, image_handling='$ImgHandling', extract_html=$Extract)"
+        $pyCode = "import sys, pathlib; sys.path.append('$PythonProjectDir'); from textconverter.api import save_to_file; src=pathlib.Path(sys.argv[1]); out=src.with_suffix('$TargetExt'); save_to_file(str(src), str(out), template='$Template', code_parsing=$CodeParsing, image_handling='$ImgHandling', extract_html=$Extract)"
         
         $RegisterContent += "`r`n[HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter\shell\$Key]`r`n"
         $RegisterContent += "`"MUIVerb`"=generic:`"$Verb`"`r`n".Replace("generic:", "")
