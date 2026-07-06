@@ -98,13 +98,13 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
         b64_code = base64.b64encode(payload.encode('utf-8')).decode('utf-8')
         return f"\n\n<!--CODEBLOCK:{b64_code}-->\n\n"
         
-    text = re.sub(r'^[ \t]*```[ \t]*(\w*)\n(.*?)^[ \t]*```', _encode_codeblock, text, flags=re.MULTILINE | re.DOTALL)
+    text = re.sub(r'^[ \t]*```[ \t]*([^\n`]*)\n(.*?)^[ \t]*```', _encode_codeblock, text, flags=re.MULTILINE | re.DOTALL)
 
     if code_parsing:
         from ..code_detector import pre_process_markdown_code
         text = pre_process_markdown_code(text)
         # Second pass: encode newly detected and fenced code blocks
-        text = re.sub(r'^[ \t]*```[ \t]*(\w*)\n(.*?)^[ \t]*```', _encode_codeblock, text, flags=re.MULTILINE | re.DOTALL)
+        text = re.sub(r'^[ \t]*```[ \t]*([^\n`]*)\n(.*?)^[ \t]*```', _encode_codeblock, text, flags=re.MULTILINE | re.DOTALL)
         
     doc = Document()
     
