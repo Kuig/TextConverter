@@ -33,6 +33,7 @@ a:hover { text-decoration: underline; }
 pre, code { font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; background-color: #f6f8fa; border-radius: 3px; }
 pre { padding: 16px; overflow: auto; line-height: 1.45; }
 code { padding: 0.2em 0.4em; font-size: 85%; }
+pre code { padding: 0; font-size: 100%; background-color: transparent; border-radius: 0; }
 table { border-collapse: collapse; width: 100%; margin-bottom: 1em; }
 th, td { padding: 6px 13px; border: 1px solid #dfe2e5; }
 tr:nth-child(even) { background-color: #f6f8fa; }
