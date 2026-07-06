@@ -38,6 +38,9 @@ def _has_type_in_doc(doc: Document, cls) -> bool:
     return False
 
 def _escape_latex(text: str) -> str:
+    # Convert Unicode typographic quotes back to LaTeX notation
+    text = text.replace('\u201c', '``').replace('\u201d', "''")   # " "  → `` ''
+    text = text.replace('\u2018', '`').replace('\u2019', "'")    # ' '  → ` '
     # basic escapes
     chars = {
         '&': r'\&', '%': r'\%', '$': r'\$', '#': r'\#', '_': r'\_',
