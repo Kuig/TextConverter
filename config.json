@@ -1,8 +1,8 @@
 {
-  "ollama": {
-    "url": "http://localhost:11434",
-    "classification_model": "gemma4:e2b",
-    "description_model": "gemma4:e2b",
+  "ai": {
+    "provider": "ollama",
+    "classification_model": "gemma4:12b",
+    "description_model": "gemma4:12b",
     "classification_visual_token_budget": 70,
     "description_visual_token_budget": 1120,
     "provide_extracted_text_to_describer": true,
@@ -18,5 +18,11 @@
       "map": "Describe the map, its geographic or thematic focus, and any key legends or paths shown.",
       "default": "Describe the image in detail."
     }
+  },
+  "ollama": {
+    "url": "http://localhost:11434",
+    "timeout": 300,
+    "keep_alive": "15m",
+    "context_size": 4096
   }
 }
