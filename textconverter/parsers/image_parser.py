@@ -5,7 +5,7 @@ from .markdown_parser import parse_markdown
 
 def parse_image(source: str) -> Document:
     """Parses an image file by generating a markdown description via Ollama and then parsing that markdown."""
-    from ..image_describer import _call_ollama
+    from ..image_describer import _call_ai
     if not os.path.exists(source):
         raise ValueError(f"Image file not found: {source}")
         
@@ -15,7 +15,7 @@ def parse_image(source: str) -> Document:
     # We pass an empty base_dir since we provide the absolute/relative path directly in source
     base_dir = ""
     print(f"Generating description for image {source}...")
-    markdown_desc, category = _call_ollama(source, base_dir, config)
+    markdown_desc, category = _call_ai(source, base_dir, config)
     
     if markdown_desc and markdown_desc.startswith("[Error"):
         # Create a basic document with the error message
