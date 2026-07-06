@@ -41,6 +41,8 @@ def _call_ai(
 
     ai_cfg = get_ai_config(config)
     provider = ai_cfg.get("provider", "ollama")
+    provider_settings = config.get(provider, {})
+    provider_timeout = provider_settings.get("timeout", 300)
     c_model = ai_cfg.get("classification_model", "gemma4:12b")
     d_model = ai_cfg.get("description_model", "gemma4:12b")
     classification_prompt = ai_cfg.get(
@@ -79,7 +81,7 @@ def _call_ai(
             prompt=classification_prompt,
             file_path=img_path,
             format_json=True,
-            timeout=30,
+            timeout=provider_timeout,
             extra_options=c_opts,
         )
         try:
@@ -115,7 +117,7 @@ def _call_ai(
             model=d_model,
             prompt=final_prompt,
             file_path=img_path,
-            timeout=120,
+            timeout=provider_timeout,
             extra_options=d_opts,
         )
         return desc_response.text.strip(), category
