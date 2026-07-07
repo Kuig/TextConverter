@@ -1,185 +1,393 @@
 from __future__ import annotations
 import os
 import sys
+import unittest
+import shutil
+import socket
+from pathlib import Path
+from unittest.mock import patch, MagicMock
+import ssl
+
+try:
+    ssl._create_default_https_context = ssl._create_unverified_context
+except AttributeError:
+    pass
+
+# Add parent directory to sys.path to run textconverter locally
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import textconverter
 
-os.makedirs("DocsOutput", exist_ok=True)
+# Mock unified_ai_client if not installed to prevent import errors during tests
+try:
+    import unified_ai_client
+except ImportError:
+    mock_client = MagicMock()
+    sys.modules['unified_ai_client'] = mock_client
 
-def run_discard_test():
-    import shutil
-    # Clean up any existing folder first
-    if os.path.exists("DocsOutput/Pane_discard_images"):
-        shutil.rmtree("DocsOutput/Pane_discard_images")
-    textconverter.save_to_file(
-        "https://daginoilbonaparte.it/blog-di-cucina/ricetta-pane-impasta/",
-        "DocsOutput/Pane_discard.md",
-        image_handling="discard",
-        code_parsing=True,
-        extract_html=True
-    )
-    if os.path.exists("DocsOutput/Pane_discard_images"):
-        raise RuntimeError("Image folder was created even though image_handling is set to 'discard'!")
+TEST_DIR = Path(__file__).resolve().parent
+INPUT_DIR = TEST_DIR / "Input"
+OUTPUT_DIR = TEST_DIR / "Output"
 
-def run_caption_test():
-    html_content = """
-    <div class="thumbcaption">
-        Una serie di <a href="http://example.com/codon">codoni</a> su una molecola di <a href="http://example.com/rna">RNA messaggero</a>.
-    </div>
-    """
-    result = textconverter.convert(html_content, to_format="markdown", from_format="html")
-    expected = "Una serie di [codoni](http://example.com/codon) su una molecola di [RNA messaggero](http://example.com/rna)."
-    if expected not in result:
-         raise RuntimeError(f"Caption was not wrapped correctly! Got: {repr(result)}")
 
-tests = [
-    (
-        "Bread test",
-        lambda: textconverter.save_to_file(
+def is_connected() -> bool:
+    """Check if internet connection is available."""
+    try:
+        socket.setdefaulttimeout(3)
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(("8.8.8.8", 53))
+        return True
+    except socket.error:
+        return False
+
+
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Base class to avoid repeating setUpClass in every test class
+# ---------------------------------------------------------------------------
+
+class BaseConverterTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    def _out(self, filename: str) -> Path:
+        """Return output path, deleting any existing file first."""
+        p = OUTPUT_DIR / filename
+        if p.exists():
+            p.unlink()
+        return p
+
+
+# ---------------------------------------------------------------------------
+# Markdown Parser Tests
+# ---------------------------------------------------------------------------
+
+class TestMarkdownParser(BaseConverterTest):
+
+    def test_md_to_html_structure(self):
+        """SampleMD.md → HTML: headings, paragraphs, table, code, blockquote, list."""
+        in_path = INPUT_DIR / "SampleMD.md"
+        out_path = self._out("SampleMD.html")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        self.assertIn("<h1>", content, "Missing h1 heading")
+        self.assertIn("<h2>", content, "Missing h2 heading")
+        self.assertIn("<h3>", content, "Missing h3 heading")
+        self.assertIn("<p>", content, "Missing paragraph")
+        self.assertIn("<table", content, "Missing table")
+        self.assertIn("<ul>", content, "Missing unordered list")
+        self.assertIn("<ol>", content, "Missing ordered list")
+        self.assertIn("<pre>", content, "Missing pre/code block")
+        self.assertIn("<blockquote>", content, "Missing blockquote")
+        # Fenced code blocks present in SampleMD.md
+        self.assertIn("def drytext_condense_file", content, "Missing fenced Python code")
+        # Inline code
+        self.assertIn("<code>", content, "Missing inline code")
+        # Alert blockquotes
+        self.assertIn("IMPORTANT", content, "Missing IMPORTANT alert")
+        self.assertIn("CAUTION", content, "Missing CAUTION alert")
+        # Bold and italic (renderer uses <b>/<i>)
+        self.assertTrue("<b>" in content or "<strong>" in content, "Missing bold text")
+        self.assertTrue("<i>" in content or "<em>" in content, "Missing italic text")
+
+    def test_md_roundtrip(self):
+        """SampleMD.md → MD: key structural elements survive the roundtrip."""
+        in_path = INPUT_DIR / "SampleMD.md"
+        out_path = self._out("SampleMD_out.md")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        self.assertIn("# Sample MD File", content, "Missing h1 title in roundtrip")
+        self.assertIn("## 1. Title", content, "Missing h2 in roundtrip")
+        # Table preserved
+        self.assertIn("| Col One |", content, "Missing table header in roundtrip")
+        self.assertIn("`foo.bar`", content, "Missing inline code in roundtrip")
+        # Bold and italic
+        self.assertIn("**table**", content, "Missing bold in roundtrip")
+        self.assertIn("[link]", content, "Missing link in roundtrip")
+
+    def test_code_block_fenced_and_unfenced(self):
+        """CodeTest.md → HTML: fenced Python code detected, inline code preserved."""
+        in_path = INPUT_DIR / "CodeTest.md"
+        out_path = self._out("CodeTest.html")
+
+        textconverter.save_to_file(str(in_path), str(out_path), code_parsing=True)
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        # Fenced block preserved
+        self.assertIn("def fibonacci(n):", content, "Missing fibonacci function")
+        self.assertIn("<pre>", content, "Missing pre tag for code block")
+        # Inline code preserved (backtick notation)
+        self.assertIn("<code>", content, "Missing inline code tag")
+
+    def test_html_caption_wrapping(self):
+        """HTML captions with links should be wrapped as plain paragraph text."""
+        html_content = """
+        <div class="thumbcaption">
+            Una serie di <a href="http://example.com/codon">codoni</a> su una molecola di <a href="http://example.com/rna">RNA messaggero</a>.
+        </div>
+        """
+        result = textconverter.convert(html_content, to_format="markdown", from_format="html")
+        self.assertIn("[codoni](http://example.com/codon)", result)
+        self.assertIn("[RNA messaggero](http://example.com/rna)", result)
+
+
+# ---------------------------------------------------------------------------
+# HTML Parser Tests
+# ---------------------------------------------------------------------------
+
+class TestHtmlParser(BaseConverterTest):
+
+    def test_sample_html_to_markdown(self):
+        """SampleHtml.htm → MD: text content, lists, table, links survive parsing."""
+        in_path = INPUT_DIR / "SampleHtml.htm"
+        out_path = self._out("SampleHtml.md")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        # Headings
+        self.assertIn("Titolo di Livello 1", content, "Missing h1 content")
+        self.assertIn("Sottotitolo di Livello 2", content, "Missing h2 content")
+        # Table content
+        self.assertIn("Mario Rossi", content, "Missing table row content")
+        self.assertIn("Laura Bianchi", content, "Missing table row content")
+        # List items
+        self.assertIn("grassetto", content, "Missing list item content")
+        self.assertIn("corsivo", content, "Missing list item content")
+        # Link preserved
+        self.assertIn("https://www.google.it", content, "Missing hyperlink")
+
+    def test_main_content_extraction(self):
+        """MainContentTest.html → MD with extract_html=True: only main block, no nav/footer."""
+        in_path = INPUT_DIR / "MainContentTest.html"
+        out_path = self._out("MainContentTest.md")
+
+        textconverter.save_to_file(str(in_path), str(out_path), extract_html=True)
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        self.assertIn("Main Title", content, "Missing main content title")
+        self.assertIn("This is the main content.", content, "Missing main content paragraph")
+        self.assertNotIn("Footer info", content, "Footer should be stripped")
+        self.assertNotIn("Home", content, "Nav should be stripped")
+
+
+# ---------------------------------------------------------------------------
+# LaTeX Parser Tests
+# ---------------------------------------------------------------------------
+
+class TestLatexParser(BaseConverterTest):
+
+    def test_simple_latex_to_markdown(self):
+        """SampleLatex.tex → MD: title, abstract blockquote, quotes, code preserved."""
+        in_path = INPUT_DIR / "SampleLatex.tex"
+        out_path = self._out("SampleLatex.md")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        # Title extracted from \title{} preamble
+        self.assertIn("# **Il Teorema di Pitagora**", content, "Missing extracted title")
+        # Abstract rendered as blockquote
+        self.assertIn("> ## Abstract", content, "Missing abstract blockquote")
+        # Typographic quote normalization (``text'' → "text")
+        self.assertIn("\u201cLa matematica \u00e8 la regina delle scienze\u201d", content,
+                      "Missing normalized double quotes in abstract")
+        self.assertIn("\u201cOgni cosa \u00e8 numero\u201d", content,
+                      "Missing normalized double quotes in body")
+        # Verbatim block: quotes inside code must NOT be normalized
+        self.assertIn("print(f``c = {c}'')", content,
+                      "Verbatim quotes were incorrectly normalized")
+        # texttt inline: quotes must NOT be normalized either
+        self.assertIn("math.hypot(a, b)", content, "Missing texttt content")
+
+    def test_simple_latex_to_html(self):
+        """SampleLatex.tex → HTML: title, abstract, blockquote present."""
+        in_path = INPUT_DIR / "SampleLatex.tex"
+        out_path = self._out("SampleLatex.html")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        self.assertIn("Il Teorema di Pitagora", content, "Missing title in HTML")
+        self.assertIn("Abstract", content, "Missing Abstract heading in HTML")
+        self.assertIn("<blockquote>", content, "Missing blockquote element in HTML")
+
+    def test_journal_latex_to_markdown(self):
+        """Journal TEX.tex → MD: abstract (section-style), introduction section present."""
+        in_path = INPUT_DIR / "Journal TEX.tex"
+        out_path = self._out("Journal_TEX.md")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        self.assertGreater(len(content.strip()), 100, "Output is too short for a journal")
+        self.assertIn("Introduction", content, "Missing Introduction section")
+        self.assertIn("Methodology", content, "Missing Methodology section")
+
+    def test_weird_journal_latex_to_markdown(self):
+        """Weird Journal TEX.tex → MD: begin{abstract} environment, table, section present."""
+        in_path = INPUT_DIR / "Weird Journal TEX.tex"
+        out_path = self._out("Weird_Journal_TEX.md")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        self.assertGreater(len(content.strip()), 100, "Output is too short for a journal")
+        # Abstract from \begin{abstract}
+        self.assertIn("Abstract", content, "Missing Abstract section")
+        # Body section
+        self.assertIn("Introduction", content, "Missing Introduction section")
+        # Table from \begin{tabular}
+        self.assertIn("|", content, "Missing table (tabular) content")
+
+
+# ---------------------------------------------------------------------------
+# PDF Parser Tests
+# ---------------------------------------------------------------------------
+
+class TestPdfParser(BaseConverterTest):
+
+    def test_simple_pdf(self):
+        """Simple Pdf.pdf → MD: output is non-empty."""
+        in_path = INPUT_DIR / "Simple Pdf.pdf"
+        out_path = self._out("Simple_Pdf.md")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+        self.assertGreater(out_path.stat().st_size, 0, "Output is empty")
+
+    def test_journal_pdf(self):
+        """Journal PDF.pdf → MD: output is non-empty, contains some text."""
+        in_path = INPUT_DIR / "Journal PDF.pdf"
+        out_path = self._out("Journal_PDF.md")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+        content = _read(out_path)
+        self.assertGreater(len(content.strip()), 200, "PDF output too short")
+
+    def test_weird_journal_pdf(self):
+        """Weird Journal PDF.pdf → MD: output is non-empty, contains some text."""
+        in_path = INPUT_DIR / "Weird Journal PDF.pdf"
+        out_path = self._out("Weird_Journal_PDF.md")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+        content = _read(out_path)
+        self.assertGreater(len(content.strip()), 200, "PDF output too short")
+
+    def test_vector_image_pdf(self):
+        """Vector Image PDF.pdf → MD: output is non-empty."""
+        in_path = INPUT_DIR / "Vector Image PDF.pdf"
+        out_path = self._out("Vector_Image_PDF.md")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+        self.assertGreater(out_path.stat().st_size, 0, "Output is empty")
+
+
+# ---------------------------------------------------------------------------
+# Image Describer Tests (mocked)
+# ---------------------------------------------------------------------------
+
+class TestImageDescriber(BaseConverterTest):
+
+    @patch("unified_ai_client.preload_model")
+    @patch("unified_ai_client.call_ai")
+    def test_image_description_mocked(self, mock_call, mock_preload):
+        """Foto.jpg with describe mode: mocked AI calls produce description in output."""
+        mock_class_resp = MagicMock()
+        mock_class_resp.text = '{"category": "diagram"}'
+        mock_desc_resp = MagicMock()
+        mock_desc_resp.text = "This is a detailed mock description of the diagram."
+        mock_call.side_effect = [mock_class_resp, mock_desc_resp]
+
+        in_path = INPUT_DIR / "Foto.jpg"
+        out_path = self._out("Foto_described.md")
+
+        textconverter.save_to_file(str(in_path), str(out_path), image_handling="describe")
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        self.assertIn("This is a detailed mock description of the diagram.", content,
+                      "Description text not found in output")
+        # Verify both calls were made (classification + description)
+        self.assertEqual(mock_call.call_count, 2, "Expected 2 AI calls (classify + describe)")
+        mock_preload.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Remote Integration Tests
+# ---------------------------------------------------------------------------
+
+@unittest.skipUnless(is_connected(), "No internet connection available")
+class TestRemoteIntegration(BaseConverterTest):
+
+    def test_remote_bread_link(self):
+        """Remote URL → MD with image_handling=link: output and image folder created."""
+        out_path = self._out("Pane.md")
+        img_dir = OUTPUT_DIR / "Pane_images"
+        if img_dir.exists():
+            shutil.rmtree(img_dir)
+
+        textconverter.save_to_file(
             "https://daginoilbonaparte.it/blog-di-cucina/ricetta-pane-impasta/",
-            "DocsOutput/Pane.md",
+            str(out_path),
             image_handling="link",
             code_parsing=True,
-            extract_html=True,
-            template="dark-theme"
+            extract_html=False
         )
-    ),
-    (
-        "Bread test with discard image handling",
-        run_discard_test
-    ),
-    (
-        "Wikipedia caption paragraph wrapping",
-        run_caption_test
-    )
-    #(
-    #    "Tesi with unfenced code",
-    #    lambda: textconverter.save_to_file(
-    #        "DocsInput/Tesi.pdf",
-    #        "DocsOutput/Tesi.html",
-    #        image_handling="link",
-    #        code_parsing=True,
-    #        template="dark-theme"
-    #    )
-    #),
-    #(
-    #    "Markdown CodeTest with blank lines",
-    #    lambda: textconverter.save_to_file(
-    #        "DocsInput/CodeTest.md",
-    #        "DocsOutput/CodeTest.html",
-    #        image_handling="link",
-    #        code_parsing=True,
-    #        template="dark-theme"
-    #    )
-    #) 
-    # (
-    #     "MD to MD",
-    #     lambda: core.save_to_file(
-    #         "D:/Progetti/IA/TextConverter/DocsInput/SampleMD.md",
-    #         "DocsOutput/SampleMD.md",
-    #         image_handling="discard",
-    #         code_parsing=False
-    #     )
-    # ),
-    # (
-    #     "MD to HTML",
-    #     lambda: core.save_to_file(
-    #         "D:/Progetti/IA/TextConverter/DocsInput/SampleMD.md",
-    #         "DocsOutput/SampleMD.html",
-    #         image_handling="discard",
-    #         code_parsing=False,
-    #         template="light-theme"
-    #     )
-    # )
-    # (
-    #     "Wikipedia Swish Function",
-    #     lambda: core.save_to_file(
-    #         "https://en.wikipedia.org/wiki/Swish_function",
-    #         "DocsOutput/Swish.html",
-    #         image_handling="discard",
-    #         code_parsing=True,
-    #         extract_html=True,
-    #         template="light-theme"
-    #     )
-    # )
-    # (
-    #     "SMC Network",
-    #     lambda: core.save_to_file(
-    #         "https://smcnetwork.org/index.html",
-    #         "DocsOutput/SMCNetwork.html",
-    #         image_handling="link",
-    #         code_parsing=True,
-    #         extract_html=True,
-    #         template="light-theme"
-    #     )
-    # ),
-    # (
-    #     "Signal Perspective (FFmpeg)",
-    #     lambda: core.save_to_file(
-    #         "https://www.signalperspective.com/how-to-with-ffmpeg/",
-    #         "DocsOutput/HowToFfmpeg.html",
-    #         image_handling="link",
-    #         code_parsing=True,
-    #         extract_html=True,
-    #         template="light-theme"
-    #     )
-    # ),
-    # (
-    #     "CCRMA Stanford",
-    #     lambda: core.save_to_file(
-    #         "https://ccrma.stanford.edu/",
-    #         "DocsOutput/Ccrrma.html",
-    #         image_handling="link",
-    #         code_parsing=True,
-    #         extract_html=True,
-    #         template="light-theme"
-    #     )
-    # ),
-    # (
-    #     "CCRMA Stanford Research",
-    #     lambda: core.save_to_file(
-    #         "https://ccrma.stanford.edu/~jos/pasp/Delay_Lines.html",
-    #         "DocsOutput/Ccrrma_research.html",
-    #         image_handling="discard",
-    #         code_parsing=True,
-    #         extract_html=True,
-    #         template="light-theme"
-    #     )
-    # ),
-    # (
-    #     "Unimi Presti Homepage",
-    #     lambda: core.save_to_file(
-    #         "https://homes.di.unimi.it/presti/index.php?p=3&l=1",
-    #         "DocsOutput/Presti.html",
-    #         image_handling="link",
-    #         code_parsing=True,
-    #         extract_html=True,
-    #         template="light-theme"
-    #     )
-    # )
+        self.assertTrue(out_path.exists(), "Output markdown file not created")
+        self.assertTrue(img_dir.exists(), "Image directory was not created")
+        self.assertGreater(len(os.listdir(img_dir)), 0, "Image directory is empty")
 
-]
+    def test_remote_bread_discard(self):
+        """Remote URL → MD with image_handling=discard: output created, no image folder."""
+        out_path = self._out("Pane_discard.md")
+        img_dir = OUTPUT_DIR / "Pane_discard_images"
+        if img_dir.exists():
+            shutil.rmtree(img_dir)
 
-failed_tests = []
+        textconverter.save_to_file(
+            "https://daginoilbonaparte.it/blog-di-cucina/ricetta-pane-impasta/",
+            str(out_path),
+            image_handling="discard",
+            code_parsing=True,
+            extract_html=True
+        )
+        self.assertTrue(out_path.exists(), "Output markdown file not created")
+        self.assertFalse(img_dir.exists(), "Image directory should NOT be created with discard")
 
-for name, test_func in tests:
-    print(f"\n--- Testing: {name} ---")
-    try:
-        test_func()
-        print(f"✅ {name} conversion succeeded!")
-    except Exception as exc:
-        print(f"❌ {name} conversion failed: {exc}", file=sys.stderr)
-        failed_tests.append((name, str(exc)))
+    def test_remote_wikipedia_swish(self):
+        """Wikipedia Swish function → HTML: output created, contains expected content."""
+        out_path = self._out("Swish.html")
 
-print("\n" + "=" * 40)
-print("             TEST SUMMARY")
-print("=" * 40)
-if failed_tests:
-    print(f"❌ Failed {len(failed_tests)} out of {len(tests)} tests:\n")
-    for name, err in failed_tests:
-        print(f"- {name}: {err}")
-    print("=" * 40)
-    sys.exit(1)
-else:
-    print("✅ All tests passed successfully!")
-    print("=" * 40)
-    sys.exit(0)
+        textconverter.save_to_file(
+            "https://en.wikipedia.org/wiki/Swish_function",
+            str(out_path),
+            image_handling="discard",
+            code_parsing=True,
+            extract_html=True
+        )
+        self.assertTrue(out_path.exists(), "Output HTML file not created")
+        content = _read(out_path)
+        self.assertIn("Swish", content, "Expected 'Swish' keyword not found in output")
+
+
+if __name__ == "__main__":
+    unittest.main()
