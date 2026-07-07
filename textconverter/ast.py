@@ -102,6 +102,12 @@ class Table(Node):
     rows: TList[TableRow] = field(default_factory=list)
 
 @dataclass
+class Equation(Node):
+    """A mathematical equation node."""
+    code: str
+    inline: bool = False
+
+@dataclass
 class Document(Node):
     """The root of the AST."""
     children: TList[Node] = field(default_factory=list)

@@ -4,7 +4,7 @@ from typing import List
 from ..ast import (
     Document, Paragraph, Heading, Text, Link, Image, CodeInline,
     CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, InlineElement,
-    BlockQuote
+    BlockQuote, Equation
 )
 
 def _normalize_latex_quotes(text: str) -> str:
@@ -132,6 +132,15 @@ def parse_latex(text: str) -> Document:
     """Parses a basic subset of LaTeX into AST Document."""
     doc = Document()
 
+    # Strip comments first so that they are not included in metadata extraction
+    text = re.sub(r'(?<!\\)%.*$', '', text, flags=re.MULTILINE)
+
+    # Strip custom two-column layouts and wrappers
+    text = re.sub(r'\\twocolumn\s*\[', '', text)
+    text = text.replace('\\begin{@twocolumnfalse}', '')
+    text = re.sub(r'\\end\{@twocolumnfalse\}\s*\]', '', text)
+    text = text.replace('\\end{@twocolumnfalse}', '')
+
     # Strip layout and styling commands first so they are cleaned from metadata too
     text = _strip_macro(text, "\\fontsize")
     for cmd in ["\\thispagestyle", "\\pubyear", "\\pagerange", "\\vspace", "\\hspace", "\\pageref", "\\bibliographystyle", "\\bibliography"]:
@@ -161,9 +170,6 @@ def parse_latex(text: str) -> Document:
     if m_doc:
         text = m_doc.group(1)
 
-    # Strip comments
-    text = re.sub(r'(?<!\\)%.*$', '', text, flags=re.MULTILINE)
-
     pos = 0
     targets = [
         ('\\section', 'section'),
@@ -179,7 +185,11 @@ def parse_latex(text: str) -> Document:
         ('\\begin{figure}', 'figure'),
         ('\\begin{figure*}', 'figure*'),
         ('\\begin{table}', 'table'),
-        ('\\begin{table*}', 'table*')
+        ('\\begin{table*}', 'table*'),
+        ('\\begin{equation}', 'equation'),
+        ('\\begin{align}', 'align'),
+        ('\\begin{displaymath}', 'displaymath'),
+        ('\\begin{keywords}', 'keywords')
     ]
     
     # Pre-populate title, author, date in doc
@@ -318,6 +328,22 @@ def parse_latex(text: str) -> Document:
                 pos = end
             else:
                 pos = first_pos + len(first_cmd)
+                
+        elif first_type in ('equation', 'align', 'displaymath'):
+            content, start, end = _extract_environment(text, first_type, first_pos)
+            if start != -1:
+                doc.children.append(Equation(code=content.strip(), inline=False))
+                pos = end
+            else:
+                pos = first_pos + len(first_cmd)
+                
+        elif first_type == 'keywords':
+            content, start, end = _extract_environment(text, 'keywords', first_pos)
+            if start != -1:
+                doc.children.append(Paragraph(children=[Text(content="Keywords: ", bold=True)] + parse_inline_latex(content.strip())))
+                pos = end
+            else:
+                pos = first_pos + len(first_cmd)
 
     return doc
 
@@ -342,65 +368,157 @@ def _parse_latex_table(content: str) -> Table:
 def parse_inline_latex(text: str, is_bold: bool = False, is_italic: bool = False) -> List[InlineElement]:
     elements = []
     pos = 0
-    targets = [
-        ('\\textbf', 'bold'),
-        ('\\textit', 'italic'),
-        ('\\href', 'href'),
-        ('\\url', 'url'),
-        ('\\includegraphics', 'image'),
-        ('\\texttt', 'code')
-    ]
     
     while pos < len(text):
-        first_pos = -1
-        first_tag = None
-        first_cmd = None
-        
-        for cmd, tag in targets:
-            idx = text.find(cmd, pos)
-            if idx != -1:
-                next_char_idx = idx + len(cmd)
-                if next_char_idx < len(text) and text[next_char_idx].isalpha():
-                    continue
-                if first_pos == -1 or idx < first_pos:
-                    first_pos = idx
-                    first_tag = tag
-                    first_cmd = cmd
-                    
-        if first_pos == -1:
+        m = re.search(r'(\\|\$)', text[pos:])
+        if not m:
+            # No more commands, parse plain text
             plain = _normalize_latex_quotes(text[pos:])
             if plain:
                 elements.append(Text(content=plain, bold=is_bold, italic=is_italic))
             break
             
-        if first_pos > pos:
-            plain = _normalize_latex_quotes(text[pos:first_pos])
+        idx = pos + m.start()
+        
+        if idx > pos:
+            # Text leading up to the backslash or dollar
+            plain = _normalize_latex_quotes(text[pos:idx])
             if plain:
                 elements.append(Text(content=plain, bold=is_bold, italic=is_italic))
-                
-        args, macro_start, macro_end = _extract_macro_args(text, first_cmd, first_pos)
-        if macro_start == -1 or not args:
-            elements.append(Text(content=first_cmd, bold=is_bold, italic=is_italic))
-            pos = first_pos + len(first_cmd)
+            pos = idx
+            
+        # Handle $ and $$
+        if text[pos] == '$':
+            if pos + 1 < len(text) and text[pos + 1] == '$':
+                # Block math
+                end_idx = text.find('$$', pos + 2)
+                if end_idx != -1:
+                    code = text[pos + 2:end_idx].strip()
+                    elements.append(Equation(code=code, inline=False))
+                    pos = end_idx + 2
+                else:
+                    elements.append(Text(content="$$", bold=is_bold, italic=is_italic))
+                    pos += 2
+            else:
+                # Inline math
+                end_idx = text.find('$', pos + 1)
+                # Ensure we don't match \$
+                while end_idx != -1 and text[end_idx - 1] == '\\':
+                    end_idx = text.find('$', end_idx + 1)
+                if end_idx != -1:
+                    code = text[pos + 1:end_idx].strip()
+                    elements.append(Equation(code=code, inline=True))
+                    pos = end_idx + 1
+                else:
+                    elements.append(Text(content="$", bold=is_bold, italic=is_italic))
+                    pos += 1
+            continue
+
+        # Now text[pos] is '\\'. Let's see what follows it.
+        if pos + 1 >= len(text):
+            elements.append(Text(content='\\', bold=is_bold, italic=is_italic))
+            break
+            
+        next_char = text[pos + 1]
+        
+        # Math Environments: \( ... \) and \[ ... \]
+        if next_char == '(':
+            end_idx = text.find('\\)', pos + 2)
+            if end_idx != -1:
+                code = text[pos + 2:end_idx].strip()
+                elements.append(Equation(code=code, inline=True))
+                pos = end_idx + 2
+            else:
+                elements.append(Text(content="\\(", bold=is_bold, italic=is_italic))
+                pos += 2
             continue
             
-        if first_tag == 'bold':
-            elements.extend(parse_inline_latex(args[0], is_bold=True, is_italic=is_italic))
-        elif first_tag == 'italic':
-            elements.extend(parse_inline_latex(args[0], is_bold=is_bold, is_italic=True))
-        elif first_tag == 'code':
-            elements.append(CodeInline(code=args[0]))
-        elif first_tag == 'href':
-            if len(args) >= 2:
-                elements.append(Link(url=args[0], title=None, content=parse_inline_latex(args[1], is_bold=is_bold, is_italic=is_italic)))
-            elif len(args) == 1:
-                elements.append(Link(url=args[0], title=None, content=[Text(content=args[0], bold=is_bold, italic=is_italic)]))
-        elif first_tag == 'url':
-            elements.append(Link(url=args[0], title=None, content=[Text(content=args[0], bold=is_bold, italic=is_italic)]))
-        elif first_tag == 'image':
-            elements.append(Image(src=args[0], alt="image"))
-            
-        pos = macro_end
+        if next_char == '[':
+            end_idx = text.find('\\]', pos + 2)
+            if end_idx != -1:
+                code = text[pos + 2:end_idx].strip()
+                elements.append(Equation(code=code, inline=False))
+                pos = end_idx + 2
+            else:
+                elements.append(Text(content="\\[", bold=is_bold, italic=is_italic))
+                pos += 2
+            continue
         
+        # 1. Line breaks: \\ or \\[...]
+        if next_char == '\\':
+            from ..ast import LineBreak
+            elements.append(LineBreak())
+            # Check for \\[1ex] or similar optional parameter
+            pos += 2
+            if pos < len(text) and text[pos] == '[':
+                end_opt = text.find(']', pos)
+                if end_opt != -1:
+                    pos = end_opt + 1
+            continue
+            
+        # 2. Escaped characters: \%, \&, \$, \_, \#, \{, \}
+        if next_char in ('%', '&', '$', '_', '#', '{', '}'):
+            elements.append(Text(content=next_char, bold=is_bold, italic=is_italic))
+            pos += 2
+            continue
+            
+        # 3. Macro command starting with letters
+        m = re.match(r'^\\([a-zA-Z]+)\*?', text[pos:])
+        if not m:
+            elements.append(Text(content='\\', bold=is_bold, italic=is_italic))
+            pos += 1
+            continue
+            
+        cmd_name = m.group(0) # e.g. \textbf or \cite
+        cmd_base = m.group(1) # e.g. textbf or cite
+        
+        # Check if it is a safeguarded macro: cite, citet, citet*, citet, citet*, ref, label
+        if cmd_base in ('cite', 'citet', 'citep', 'ref', 'label'):
+            args, start, end = _extract_macro_args(text, cmd_name, pos)
+            if start != -1:
+                # Include the macro and its arguments as plain text verbatim
+                elements.append(Text(content=text[start:end], bold=is_bold, italic=is_italic))
+                pos = end
+            else:
+                elements.append(Text(content=cmd_name, bold=is_bold, italic=is_italic))
+                pos += len(cmd_name)
+            continue
+            
+        # Check if it is a known inline style command
+        if cmd_base in ('textbf', 'textit', 'texttt', 'href', 'url', 'includegraphics'):
+            args, start, end = _extract_macro_args(text, cmd_name, pos)
+            if start != -1 and args:
+                if cmd_base == 'textbf':
+                    elements.extend(parse_inline_latex(args[0], is_bold=True, is_italic=is_italic))
+                elif cmd_base == 'textit':
+                    elements.extend(parse_inline_latex(args[0], is_bold=is_bold, is_italic=True))
+                elif cmd_base == 'texttt':
+                    elements.append(CodeInline(code=args[0]))
+                elif cmd_base == 'href':
+                    if len(args) >= 2:
+                        elements.append(Link(url=args[0], title=None, content=parse_inline_latex(args[1], is_bold=is_bold, is_italic=is_italic)))
+                    elif len(args) == 1:
+                        elements.append(Link(url=args[0], title=None, content=[Text(content=args[0], bold=is_bold, italic=is_italic)]))
+                elif cmd_base == 'url':
+                    elements.append(Link(url=args[0], title=None, content=[Text(content=args[0], bold=is_bold, italic=is_italic)]))
+                elif cmd_base == 'includegraphics':
+                    elements.append(Image(src=args[0], alt="image"))
+                pos = end
+            else:
+                elements.append(Text(content=cmd_name, bold=is_bold, italic=is_italic))
+                pos += len(cmd_name)
+            continue
+            
+        # 4. Any other unrecognized macro command
+        args, start, end = _extract_macro_args(text, cmd_name, pos)
+        if start != -1:
+            if args:
+                # Replace command with its recursively parsed argument content
+                elements.extend(parse_inline_latex(args[0], is_bold=is_bold, is_italic=is_italic))
+            pos = end
+        else:
+            # 0-argument command -> strip it completely
+            pos += len(cmd_name)
+            
     return elements
 

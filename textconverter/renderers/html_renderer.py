@@ -1,4 +1,4 @@
-from ..ast import Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule
+from ..ast import Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
 from .templates import get_template
 
 import html
@@ -97,5 +97,11 @@ def _render_node(node) -> str:
             
     elif isinstance(node, HorizontalRule):
         return "<hr />"
+        
+    elif isinstance(node, Equation):
+        if node.inline:
+            return f'<span class="math inline">\\({html.escape(node.code)}\\)</span>'
+        else:
+            return f'<div class="math block">$$\n{html.escape(node.code)}\n$$</div>'
         
     return ""

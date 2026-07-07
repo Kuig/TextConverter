@@ -1,4 +1,4 @@
-from ..ast import Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule
+from ..ast import Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
 
 def render_markdown(doc: Document) -> str:
     """Renders an AST Document to a Markdown string."""
@@ -104,5 +104,11 @@ def _render_node(node) -> str:
         
     elif isinstance(node, HorizontalRule):
         return "---"
+        
+    elif isinstance(node, Equation):
+        if node.inline:
+            return f"${node.code}$"
+        else:
+            return f"$$\n{node.code}\n$$"
         
     return ""

@@ -203,6 +203,7 @@ def _process_list(node_list: list, base_dir: str, config: dict, state: dict, lat
     Returns:
         The modified node list.
     """
+    new_list = []
     for child in node_list:
         if isinstance(child, Image):
             state["current"] += 1
@@ -214,8 +215,39 @@ def _process_list(node_list: list, base_dir: str, config: dict, state: dict, lat
             child.category = category
             if desc:
                 child.description = desc
-            if latex_auto and category == "short_text_table_or_formula":
+            if latex_auto and category == "short_text_table_or_formula" and desc:
                 child.render_metadata = False
+                
+                # Try to promote to Equation if it's pure math
+                code = desc.strip()
+                if code.startswith('```latex') and code.endswith('```'):
+                    code = code[code.find('\n')+1:-3].strip()
+                elif code.startswith('```') and code.endswith('```'):
+                    code = code[code.find('\n')+1:-3].strip()
+                
+                is_math = False
+                if code.startswith('$$') and code.endswith('$$'):
+                    code = code[2:-2].strip()
+                    is_math = True
+                elif code.startswith(r'\[') and code.endswith(r'\]'):
+                    code = code[2:-2].strip()
+                    is_math = True
+                elif code.startswith(r'\begin{equation}') and code.endswith(r'\end{equation}'):
+                    code = code[16:-14].strip()
+                    is_math = True
+                elif code.startswith(r'\begin{align}') and code.endswith(r'\end{align}'):
+                    code = code[13:-11].strip()
+                    is_math = True
+                elif code.startswith(r'\begin{displaymath}') and code.endswith(r'\end{displaymath}'):
+                    code = code[19:-17].strip()
+                    is_math = True
+                    
+                if is_math:
+                    from .ast import Equation
+                    new_list.append(Equation(code=code, inline=False))
+                    continue
+            
+            new_list.append(child)
         elif (
             hasattr(child, "children")
             or hasattr(child, "content")
@@ -225,7 +257,11 @@ def _process_list(node_list: list, base_dir: str, config: dict, state: dict, lat
             or hasattr(child, "headers")
         ):
             _traverse(child, base_dir, config, state, latex_auto)
-    return node_list
+            new_list.append(child)
+        else:
+            new_list.append(child)
+            
+    return new_list
 
 
 def process_images(doc, base_dir: str, latex_auto: bool = False) -> None:

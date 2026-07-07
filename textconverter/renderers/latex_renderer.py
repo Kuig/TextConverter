@@ -1,4 +1,4 @@
-from ..ast import Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule
+from ..ast import Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
 
 def render_latex(doc: Document, image_handling: str = "auto") -> str:
     """Renders an AST Document to a compiling LaTeX document."""
@@ -132,4 +132,10 @@ def _render_node(node, image_handling: str = "auto") -> str:
     elif isinstance(node, HorizontalRule):
         return "\\noindent\\rule{\\textwidth}{0.4pt}"
         
+    elif isinstance(node, Equation):
+        if node.inline:
+            return f"${node.code}$"
+        else:
+            return f"\\begin{{equation}}\n{node.code}\n\\end{{equation}}"
+            
     return ""

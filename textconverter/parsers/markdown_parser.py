@@ -4,7 +4,7 @@ from typing import List
 from ..ast import (
     Document, Paragraph, Heading, Text, Link, Image, CodeInline,
     CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, InlineElement,
-    BlockQuote, HorizontalRule
+    BlockQuote, HorizontalRule, Equation
 )
 
 def smart_preprocess_markdown(text: str) -> str:
@@ -162,6 +162,16 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
         
     doc = Document()
     
+    # Pre-process math blocks (before splitting into paragraphs)
+    def _encode_mathblock(m):
+        import base64, json
+        code = m.group(1).strip()
+        payload = json.dumps({"code": code})
+        b64_code = base64.b64encode(payload.encode('utf-8')).decode('utf-8')
+        return f"\n\n<!--MATHBLOCK:{b64_code}-->\n\n"
+        
+    text = re.sub(r'(?<!\\)\$\$(.*?)(?<!\\)\$\$', _encode_mathblock, text, flags=re.MULTILINE | re.DOTALL)
+    
     # Pre-process OCR text from images
     def _encode_ocr(m):
         import base64
@@ -186,6 +196,14 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
             import base64, json
             payload = json.loads(base64.b64decode(m_code.group(1)).decode('utf-8'))
             doc.children.append(CodeBlock(code=payload['code'].strip(), language=payload['lang'] or None))
+            continue
+            
+        # 1b. Math Blocks
+        m_math = re.match(r'^<!--MATHBLOCK:([A-Za-z0-9+/=]+)-->$', block)
+        if m_math:
+            import base64, json
+            payload = json.loads(base64.b64decode(m_math.group(1)).decode('utf-8'))
+            doc.children.append(Equation(code=payload['code'], inline=False))
             continue
             
         # 2. Headings
@@ -319,6 +337,7 @@ def parse_inline(text: str) -> List[InlineElement]:
         r'(!\[(?P<img_alt>[^\]]*)\]\((?P<img_url>[^\)\s]*)\s*(?:\"(?P<img_title>[^\"]*)\")?\)(?:<!--OCR:(?P<ocr_b64>[A-Za-z0-9+/=]+)-->)?)|'
         r'(\[(?P<link_text>[^\]]+)\]\((?P<link_url>[^\)\s]*)\s*(?:\"(?P<link_title>[^\"]*)\")?\))|'
         r'(?P<codeinline>`(?P<code_content>[^`]+)`)|'
+        r'(?P<mathinline>(?<!\\)\$(?!\s)(?P<math_content>[^$]+?)(?<!\s)(?<!\\)\$)|'
         r'(?P<linebreak><br\s*/?>)'
     )
     
@@ -346,6 +365,8 @@ def parse_inline(text: str) -> List[InlineElement]:
             elements.append(link)
         elif g.get('codeinline') is not None:
             elements.append(CodeInline(code=g['code_content']))
+        elif g.get('mathinline') is not None:
+            elements.append(Equation(code=g['math_content'], inline=True))
         elif g.get('linebreak') is not None:
             from ..ast import LineBreak
             elements.append(LineBreak())

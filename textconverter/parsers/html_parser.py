@@ -3,7 +3,7 @@ from html.parser import HTMLParser
 from ..ast import (
     Document, Paragraph, Heading, Text, Link, Image, CodeInline, LineBreak,
     CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, Node,
-    BlockQuote, HorizontalRule
+    BlockQuote, HorizontalRule, Equation
 )
 
 _INLINE_TAGS = frozenset([
@@ -27,6 +27,15 @@ class ASTHTMLParser(HTMLParser):
         self.in_style_tag = False
         self.style_data = ""
         self.in_alert_title = False
+        
+        self.in_math_script = False
+        self.math_script_data = ""
+        self.math_script_inline = True
+        
+        self.in_math_element = False
+        self.math_element_data = ""
+        self.math_element_inline = True
+        self.math_element_depth = 0
         
         self.attr_stack = [self.current_text_attrs.copy()]
 
@@ -63,12 +72,30 @@ class ASTHTMLParser(HTMLParser):
             self.ignore_data = True
             return
         elif tag == 'script':
-            self.ignore_data = True
+            script_type = attr_dict.get('type', '')
+            if script_type.startswith('math/tex'):
+                self.in_math_script = True
+                self.math_script_data = ""
+                self.math_script_inline = 'mode=display' not in script_type
+                self.ignore_data = False
+            else:
+                self.ignore_data = True
             return
         elif tag == 'div' and 'alert-title' in classes:
             self.in_alert_title = True
             self.ignore_data = True
             return
+            
+        if not self.in_math_element and tag in ('span', 'div') and 'math' in classes:
+            self.in_math_element = True
+            self.math_element_data = ""
+            self.math_element_inline = 'inline' in classes or tag == 'span'
+            self.math_element_depth = 1
+            self.ignore_data = False
+            return
+            
+        if getattr(self, 'in_math_element', False):
+            self.math_element_depth += 1
             
         # update attrs from stack
         new_attrs = self.attr_stack[-1].copy()
@@ -149,12 +176,34 @@ class ASTHTMLParser(HTMLParser):
             self.style_data = ""
             return
         elif tag == 'script':
+            if getattr(self, 'in_math_script', False):
+                self.in_math_script = False
+                eq = Equation(code=self.math_script_data.strip(), inline=self.math_script_inline)
+                self._append_to_parent(eq)
+                self.math_script_data = ""
             self.ignore_data = False
             return
         elif tag == 'div' and self.in_alert_title:
             self.in_alert_title = False
             self.ignore_data = False
             return
+            
+        if getattr(self, 'in_math_element', False):
+            if tag in ('span', 'div') and self.math_element_depth == 1:
+                self.in_math_element = False
+                code = self.math_element_data.strip()
+                if code.startswith(r'\(') and code.endswith(r'\)'):
+                    code = code[2:-2].strip()
+                elif code.startswith('$$') and code.endswith('$$'):
+                    code = code[2:-2].strip()
+                elif code.startswith(r'\[') and code.endswith(r'\]'):
+                    code = code[2:-2].strip()
+                eq = Equation(code=code, inline=self.math_element_inline)
+                self._append_to_parent(eq)
+                self.math_element_data = ""
+                return
+            else:
+                self.math_element_depth -= 1
             
         # pop attrs for this tag
         if len(self.attr_stack) > 1:
@@ -187,6 +236,14 @@ class ASTHTMLParser(HTMLParser):
     def handle_data(self, data):
         if self.in_style_tag:
             self.style_data += data
+            
+        if getattr(self, 'in_math_script', False):
+            self.math_script_data += data
+            return
+            
+        if getattr(self, 'in_math_element', False):
+            self.math_element_data += data
+            return
             
         if self.ignore_data:
             return
