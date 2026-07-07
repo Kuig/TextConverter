@@ -47,13 +47,12 @@ List:
 
 - The list starts here.
 - This element has code:
-
-```python
-# In the entry point (e.g., drytext.py)
-elif args.command == "gui":
-    import subprocess, sys
-    subprocess.run([sys.executable, "-m", "streamlit", "run", "gui/app.py"])
-```
+	```python
+	# In the entry point (e.g., drytext.py)
+	elif args.command == "gui":
+		import subprocess, sys
+		subprocess.run([sys.executable, "-m", "streamlit", "run", "gui/app.py"])
+	```
 
 - Somehow breaks things `look at this` weird, innit? `uh?`.
 - Here final text.
@@ -136,7 +135,7 @@ But ther's more
 3. Third item
     1. Indented item
     2. Indented item
-4. Fourth item2. elenco 2  
+4. Fourth item 
    1. abc  
    2. cba  
    3. ddd  

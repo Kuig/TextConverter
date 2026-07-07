@@ -72,6 +72,60 @@ def smart_preprocess_markdown(text: str) -> str:
     return '\n'.join(new_lines)
 
 
+def _parse_markdown_list(block_text: str) -> ListBlock:
+    lines = block_text.split('\n')
+    stack = []
+    root_list_block = None
+
+    for line in lines:
+        if not line.strip():
+            continue
+            
+        m = re.match(r'^(\s*)([-*+•●○■]|\d+\.)\s+(.*)$', line)
+        if m:
+            indent = len(m.group(1).replace('\t', '    '))
+            marker = m.group(2)
+            content = m.group(3)
+            ordered = marker[0].isdigit()
+            
+            # Pop stack while top has strictly greater indent
+            while stack and stack[-1]["indent"] > indent:
+                stack.pop()
+                
+            if not stack:
+                # Root list block
+                root_list_block = ListBlock(ordered=ordered)
+                new_item = ListItem(children=[Paragraph(children=parse_inline(content.strip()))])
+                root_list_block.items.append(new_item)
+                stack.append({"indent": indent, "list_block": root_list_block, "list_item": new_item})
+            elif stack[-1]["indent"] < indent:
+                # Nested list block
+                new_list = ListBlock(ordered=ordered)
+                new_item = ListItem(children=[Paragraph(children=parse_inline(content.strip()))])
+                new_list.items.append(new_item)
+                stack[-1]["list_item"].children.append(new_list)
+                stack.append({"indent": indent, "list_block": new_list, "list_item": new_item})
+            else:
+                # Sibling item in current list block
+                new_item = ListItem(children=[Paragraph(children=parse_inline(content.strip()))])
+                stack[-1]["list_block"].items.append(new_item)
+                stack[-1]["list_item"] = new_item
+        else:
+            # Continuation line
+            if stack:
+                active_item = stack[-1]["list_item"]
+                # Append to last paragraph if present
+                last_p = None
+                if active_item.children and isinstance(active_item.children[-1], Paragraph):
+                    last_p = active_item.children[-1]
+                if last_p:
+                    last_p.children.extend(parse_inline(" " + line.strip()))
+                else:
+                    active_item.children.append(Paragraph(children=parse_inline(line.strip())))
+                    
+    return root_list_block
+
+
 def parse_markdown(text: str, code_parsing: bool = False) -> Document:
     """Parses markdown text into an AST Document."""
     text = smart_preprocess_markdown(text)
@@ -174,38 +228,16 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
             doc.children.append(BlockQuote(children=parsed_inner.children, alert_type=alert_type))
             continue
             
-        # 3. Unordered Lists
-        if re.match(r'^[-*+•●○■]\s+', block):
-            lb = ListBlock(ordered=False)
-            lines = block.split('\n')
-            for line in lines:
-                m_item = re.match(r'^\s*[-*+•●○■]\s+(.*)$', line)
-                if m_item:
-                    lb.items.append(ListItem(children=[Paragraph(children=parse_inline(m_item.group(1).strip()))]))
-                elif lb.items:
-                    lb.items[-1].children.append(Paragraph(children=parse_inline(line.strip())))
-            
-            if doc.children and isinstance(doc.children[-1], ListBlock) and not doc.children[-1].ordered:
-                doc.children[-1].items.extend(lb.items)
-            else:
-                doc.children.append(lb)
-            continue
-            
-        # 4. Ordered Lists
-        if re.match(r'^\d+\.\s+', block):
-            lb = ListBlock(ordered=True)
-            lines = block.split('\n')
-            for line in lines:
-                m_item = re.match(r'^\s*\d+\.\s+(.*)$', line)
-                if m_item:
-                    lb.items.append(ListItem(children=[Paragraph(children=parse_inline(m_item.group(1).strip()))]))
-                elif lb.items:
-                    lb.items[-1].children.append(Paragraph(children=parse_inline(line.strip())))
-            
-            if doc.children and isinstance(doc.children[-1], ListBlock) and doc.children[-1].ordered:
-                doc.children[-1].items.extend(lb.items)
-            else:
-                doc.children.append(lb)
+        # 3. Lists (Ordered and Unordered)
+        if re.match(r'^[-*+•●○■]\s+', block) or re.match(r'^\d+\.\s+', block):
+            lb = _parse_markdown_list(block)
+            if lb:
+                if (doc.children and 
+                    isinstance(doc.children[-1], ListBlock) and 
+                    doc.children[-1].ordered == lb.ordered):
+                    doc.children[-1].items.extend(lb.items)
+                else:
+                    doc.children.append(lb)
             continue
             
         # 5. Tables

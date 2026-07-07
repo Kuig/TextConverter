@@ -25,9 +25,23 @@ def _render_node(node) -> str:
         items = []
         for i, item in enumerate(node.items):
             prefix = f"{i+1}." if node.ordered else "-"
-            # Item can have multiple children (e.g. Paragraphs or sub-lists if expanded).
-            # Join them with spaces or newlines so they don't concatenate words.
-            item_content = ' \n    '.join(_render_node(c) for c in item.children).strip()
+            
+            rendered_parts = []
+            for j, child in enumerate(item.children):
+                rendered_child = _render_node(child)
+                if not rendered_child.strip():
+                    continue
+                    
+                if j == 0 and isinstance(child, Paragraph):
+                    # Render the first paragraph inline with the list item bullet/number
+                    rendered_parts.append(rendered_child)
+                else:
+                    # Render other blocks (or subsequent paragraphs) on new lines, indented by 4 spaces
+                    lines = rendered_child.split('\n')
+                    indented_lines = [f"    {line}" if line.strip() else "" for line in lines]
+                    rendered_parts.append('\n'.join(indented_lines))
+            
+            item_content = '\n'.join(rendered_parts).strip()
             items.append(f"{prefix} {item_content}")
         return '\n'.join(items)
         
