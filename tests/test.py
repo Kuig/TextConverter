@@ -428,7 +428,8 @@ class TestRemoteIntegration(BaseConverterTest):
             str(out_path),
             image_handling="discard",
             code_parsing=True,
-            extract_html=True
+            extract_html=True,
+            template="light"
         )
         self.assertTrue(out_path.exists(), "Output HTML file not created")
         content = _read(out_path)

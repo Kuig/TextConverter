@@ -37,9 +37,36 @@ class ASTHTMLParser(HTMLParser):
         self.math_element_inline = True
         self.math_element_depth = 0
         
+        self.in_math = False
+        self.math_code = ""
+        self.math_inline = True
+        self.in_math_annotation = False
+        self.just_parsed_math = False
+        
         self.attr_stack = [self.current_text_attrs.copy()]
 
     def handle_starttag(self, tag, attrs):
+        attr_dict = dict(attrs)
+        classes = attr_dict.get('class', '').split()
+        
+        if getattr(self, 'in_math', False):
+            if tag == 'annotation':
+                if attr_dict.get('encoding') == 'application/x-tex':
+                    self.in_math_annotation = True
+                    self.ignore_data = False
+            return
+
+        if tag not in ('math', 'annotation', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub', 'img', 'span', 'div'):
+            self.just_parsed_math = False
+
+        if tag == 'math':
+            self.in_math = True
+            self.math_inline = (attr_dict.get('display') != 'block')
+            self.math_code = ""
+            self.in_math_annotation = False
+            self.ignore_data = True
+            return
+
         if tag not in _INLINE_TAGS:
             self._active_anon_paragraph = None
         # Implicitly close paragraph if entering a new block element
@@ -63,9 +90,6 @@ class ASTHTMLParser(HTMLParser):
             while len(self.stack) > 1 and isinstance(self.stack[-1], TableCell):
                 node = self.stack.pop()
                 self._append_to_parent(node)
-
-        attr_dict = dict(attrs)
-        classes = attr_dict.get('class', '').split()
         
         if tag == 'style':
             self.in_style_tag = True
@@ -146,6 +170,20 @@ class ASTHTMLParser(HTMLParser):
         elif tag == 'a':
             node = Link(url=attr_dict.get('href', ''), title=attr_dict.get('title'))
         elif tag == 'img':
+            # Skip Wikipedia math fallback images or convert them if math was not parsed
+            if any(c.startswith('mwe-math-fallback-image') for c in classes):
+                if getattr(self, 'just_parsed_math', False):
+                    self.just_parsed_math = False
+                    return
+                alt = attr_dict.get('alt', '')
+                if alt.startswith(r'{\displaystyle') and alt.endswith('}'):
+                    alt = alt[14:-1].strip()
+                elif alt.startswith(r'\displaystyle'):
+                    alt = alt[13:].strip()
+                inline = 'mwe-math-fallback-image-inline' in classes
+                eq = Equation(code=alt, inline=inline)
+                self._append_to_parent(eq)
+                return
             img = Image(src=attr_dict.get('src', ''), alt=attr_dict.get('alt', ''), title=attr_dict.get('title'))
             self._append_to_parent(img)
             return
@@ -167,6 +205,23 @@ class ASTHTMLParser(HTMLParser):
             self.stack.append(node)
 
     def handle_endtag(self, tag):
+        if getattr(self, 'in_math', False):
+            if tag == 'annotation' and getattr(self, 'in_math_annotation', False):
+                self.in_math_annotation = False
+                self.ignore_data = True
+            elif tag == 'math':
+                self.in_math = False
+                self.ignore_data = False
+                self.just_parsed_math = True
+                code = self.math_code.strip()
+                if code.startswith(r'{\displaystyle') and code.endswith('}'):
+                    code = code[14:-1].strip()
+                elif code.startswith(r'\displaystyle'):
+                    code = code[13:].strip()
+                eq = Equation(code=code, inline=self.math_inline)
+                self._append_to_parent(eq)
+            return
+
         if tag not in _INLINE_TAGS:
             self._active_anon_paragraph = None
         if tag == 'style':
@@ -236,6 +291,11 @@ class ASTHTMLParser(HTMLParser):
     def handle_data(self, data):
         if self.in_style_tag:
             self.style_data += data
+            
+        if getattr(self, 'in_math', False):
+            if getattr(self, 'in_math_annotation', False):
+                self.math_code += data
+            return
             
         if getattr(self, 'in_math_script', False):
             self.math_script_data += data
@@ -323,7 +383,7 @@ _VOID = frozenset([
     'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
     'link', 'meta', 'param', 'source', 'track', 'wbr'
 ])
-_SAFE_ATTRS = frozenset(['href', 'src', 'alt', 'title', 'class', 'id', 'role'])
+_SAFE_ATTRS = frozenset(['href', 'src', 'alt', 'title', 'class', 'id', 'role', 'encoding', 'display'])
 
 
 class _ContentExtractor(HTMLParser):

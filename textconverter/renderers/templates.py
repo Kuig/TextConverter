@@ -135,8 +135,9 @@ PRETTY_DARK_TEMPLATE = PRETTY_LIGHT_TEMPLATE.replace(
 )
 
 def get_template(name: str) -> str:
-    if name == 'light-theme' or name == 'pretty':
+    name_lower = name.lower() if name else ""
+    if name_lower in ('light-theme', 'pretty', 'light'):
         return PRETTY_LIGHT_TEMPLATE
-    elif name == 'dark-theme':
+    elif name_lower in ('dark-theme', 'dark'):
         return PRETTY_DARK_TEMPLATE
     return PLAIN_TEMPLATE
