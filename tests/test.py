@@ -225,6 +225,33 @@ class TestLatexParser(BaseConverterTest):
         self.assertIn("Abstract", content, "Missing Abstract heading in HTML")
         self.assertIn("<blockquote>", content, "Missing blockquote element in HTML")
 
+    def test_latex_to_html_with_light_template(self):
+        """SampleLatex.tex → HTML with pretty (light) template: verifies CSS and MathJax script are present."""
+        in_path = INPUT_DIR / "SampleLatex.tex"
+        out_path = self._out("SampleLatex_pretty.html")
+
+        textconverter.save_to_file(str(in_path), str(out_path), template="pretty")
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        self.assertIn("MathJax-script", content)
+        self.assertIn(".math.inline", content)
+        self.assertIn("Il Teorema di Pitagora", content)
+        self.assertIn("font-family: -apple-system", content)
+
+    def test_latex_to_html_with_dark_template(self):
+        """SampleLatex.tex → HTML with dark-theme template: verifies dark CSS background and MathJax script."""
+        in_path = INPUT_DIR / "SampleLatex.tex"
+        out_path = self._out("SampleLatex_dark.html")
+
+        textconverter.save_to_file(str(in_path), str(out_path), template="dark-theme")
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        self.assertIn("MathJax-script", content)
+        self.assertIn('background-color: #0d1117;', content)
+        self.assertIn('color: #c9d1d9;', content)
+
     def test_journal_latex_to_markdown(self):
         """Journal TEX.tex → MD: abstract (section-style), introduction section present."""
         in_path = INPUT_DIR / "Journal TEX.tex"
@@ -254,6 +281,25 @@ class TestLatexParser(BaseConverterTest):
         self.assertIn("Introduction", content, "Missing Introduction section")
         # Table from \begin{tabular}
         self.assertIn("|", content, "Missing table (tabular) content")
+
+    def test_latex_safeguards(self):
+        """Verify that latex macros like \\cite, \\ref, \\label, and \\footnote are preserved."""
+        tex_content = "This is a cite \\cite{somekey}, a label \\label{lbl}, a ref \\ref{lbl}, and a footnote \\footnote{This is a footnote}."
+        result = textconverter.convert(tex_content, to_format="markdown", from_format="latex")
+        self.assertIn("\\cite{somekey}", result)
+        self.assertIn("\\label{lbl}", result)
+        self.assertIn("\\ref{lbl}", result)
+        self.assertIn("\\footnote{This is a footnote}", result)
+
+    def test_latex_math_to_html(self):
+        """Verify that LaTeX math environments are correctly converted to HTML math elements."""
+        tex_content = "Inline $x=1$ and block \\begin{equation} y=2 \\end{equation} and display \\[ z=3 \\]."
+        result = textconverter.convert(tex_content, to_format="html", from_format="latex")
+        self.assertIn('<span class="math inline">\\(x=1\\)</span>', result)
+        self.assertIn('<div class="math block">$$\ny=2\n$$</div>', result)
+        self.assertIn('<div class="math block">$$\nz=3\n$$</div>', result)
+
+
 
 
 # ---------------------------------------------------------------------------

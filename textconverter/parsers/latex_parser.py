@@ -472,8 +472,8 @@ def parse_inline_latex(text: str, is_bold: bool = False, is_italic: bool = False
         cmd_name = m.group(0) # e.g. \textbf or \cite
         cmd_base = m.group(1) # e.g. textbf or cite
         
-        # Check if it is a safeguarded macro: cite, citet, citet*, citet, citet*, ref, label
-        if cmd_base in ('cite', 'citet', 'citep', 'ref', 'label'):
+        # Check if it is a safeguarded macro: cite, citet, citet*, citet, citet*, ref, label, footnote
+        if cmd_base in ('cite', 'citet', 'citep', 'ref', 'label', 'footnote'):
             args, start, end = _extract_macro_args(text, cmd_name, pos)
             if start != -1:
                 # Include the macro and its arguments as plain text verbatim

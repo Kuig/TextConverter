@@ -22,9 +22,14 @@ def _render_node(node) -> str:
         return f"<h{node.level}>{content}</h{node.level}>"
         
     elif isinstance(node, Paragraph):
-        content = ''.join(_render_node(c) for c in node.children)
-        content = content.replace('\n', '<br />\n')
-        return f"<p>{content}</p>"
+        rendered = []
+        for c in node.children:
+            r = _render_node(c)
+            if isinstance(c, Equation) and not c.inline:
+                rendered.append(r)
+            else:
+                rendered.append(r.replace('\n', '<br />\n'))
+        return f"<p>{''.join(rendered)}</p>"
         
     elif isinstance(node, CodeBlock):
         lang = f' class="language-{html.escape(node.language)}"' if node.language else ''

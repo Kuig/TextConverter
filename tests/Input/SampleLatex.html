@@ -1,18 +1,4 @@
-# Basic templating system
-
-PLAIN_TEMPLATE = """<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Document</title>
-</head>
-<body>
-{{content}}
-</body>
-</html>"""
-
-# A minimalistic styled template
-PRETTY_LIGHT_TEMPLATE = """<!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -92,51 +78,33 @@ blockquote.alert-caution { border-left-color: #d1242f; }
     text-align: center;
     overflow-x: auto;
 }
-.math.inline:has(mjx-container, .MathJax) {
-    background-color: transparent;
-    border: none;
-    padding: 0;
-}
-.math.block:has(mjx-container, .MathJax) {
-    background-color: transparent;
-    border: none;
-    padding: 0;
-}
 </style>
-<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
 </head>
 <body>
-{{content}}
+<h1><b>Il Teorema di Pitagora</b></h1>
+<p>Mario Rossi</p>
+<p>2024</p>
+<blockquote>
+<h2>Abstract</h2>
+<p>Questo articolo presenta il famoso teorema di Pitagora, uno dei risultati<br />
+fondamentali della geometria euclidea. Come diceva il grande matematico:<br />
+“La matematica è la regina delle scienze”.</p>
+</blockquote>
+<h1>Introduzione</h1>
+<p>Il teorema di Pitagora afferma che in un triangolo rettangolo, il quadrato<br />
+dell&#x27;ipotenusa è uguale alla somma dei quadrati dei cateti.</p>
+<p>Come scrisse Euclide: “Ogni cosa è numero”.</p>
+<h1>Il Teorema</h1>
+<p>Dato un triangolo rettangolo con cateti <span class="math inline">\(a\)</span> e <span class="math inline">\(b\)</span> e ipotenusa <span class="math inline">\(c\)</span>:</p>
+<ul>
+<li><p>Il cateto <span class="math inline">\(a\)</span> è il primo lato</p></li>
+<li><p>Il cateto <span class="math inline">\(b\)</span> è il secondo lato</p></li>
+<li><p>L&#x27;ipotenusa <span class="math inline">\(c\)</span> è il lato più lungo</p></li>
+</ul>
+<p>Il codice per calcolare l&#x27;ipotenusa è:</p>
+<pre><code>import math
+c = math.sqrt(a**2 + b**2)
+print(f``c = {c}&#x27;&#x27;)</code></pre>
+<p>Inoltre si usa spesso <code>math.hypot(a, b)</code>che è una funzione con “apici standard” nel nome.\footnote{Esempio di footnote.}</p>
 </body>
-</html>"""
-
-PRETTY_DARK_TEMPLATE = PRETTY_LIGHT_TEMPLATE.replace(
-    'color: #333;', 'color: #c9d1d9;'
-).replace(
-    'background-color: #f6f8fa;', 'background-color: #161b22;'
-).replace(
-    'border: 1px solid #dfe2e5;', 'border: 1px solid #30363d;'
-).replace(
-    'border-left: 0.25em solid #dfe2e5;', 'border-left: 0.25em solid #30363d;'
-).replace(
-    'background-color: #dfe2e5;', 'background-color: #30363d;'
-).replace(
-    '#0969da', '#2f81f7'
-).replace(
-    '#1a7f37', '#3fb950'
-).replace(
-    '#8250df', '#bc8cff'
-).replace(
-    '#9a6700', '#d29922'
-).replace(
-    '#d1242f', '#f85149'
-).replace(
-    '<body>', '<body style="background-color: #0d1117;">'
-)
-
-def get_template(name: str) -> str:
-    if name == 'light-theme' or name == 'pretty':
-        return PRETTY_LIGHT_TEMPLATE
-    elif name == 'dark-theme':
-        return PRETTY_DARK_TEMPLATE
-    return PLAIN_TEMPLATE
+</html>
