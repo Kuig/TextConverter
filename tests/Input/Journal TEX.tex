@@ -1,0 +1,328 @@
+\documentclass[twoside,twocolumn,10pt]{article}
+
+% -----------------------------
+% Packages
+% -----------------------------
+\usepackage{fancyhdr}
+\usepackage{geometry}
+\usepackage{abstract}
+\usepackage{graphicx}
+\usepackage{titlesec}
+\usepackage{ragged2e}
+\usepackage{amssymb}
+\usepackage{parskip}
+\usepackage{amsmath}
+\usepackage{newtxtext}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{balance}
+\usepackage[backend=bibtex,style=ieee]{biblatex}
+\addbibresource{references.bib}
+\usepackage[font=footnotesize,labelfont=bf,justification=raggedright,format=plain]{caption}
+\usepackage{float}
+
+% -----------------------------
+% Bibliography Heading
+% -----------------------------
+\defbibheading{bibliography}[\refname]{%
+  \section{\MakeUppercase{REFERENCES}}}
+
+% -----------------------------
+% Custom Column Types
+% -----------------------------
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\arraybackslash}p{#1}}
+
+% -----------------------------
+% Caption Formatting
+% -----------------------------
+\captionsetup[table]{labelsep=period, justification=raggedright}
+\captionsetup[figure]{labelsep=period, justification=raggedright}
+
+% -----------------------------
+% Page Geometry
+% -----------------------------
+\geometry{
+    a4paper,
+    left=0.8in,
+    right=0.8in,
+    top=1in,
+    bottom=1in
+}
+
+\setlength{\columnsep}{15pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+\frenchspacing
+
+% -----------------------------
+% Abstract Formatting
+% -----------------------------
+\renewcommand{\abstractname}{\hspace{1.3em}\textbf{Abstract}}
+\renewcommand{\abstractnamefont}{\normalfont\fontsize{10}{14}\bfseries\MakeUppercase}
+\renewcommand{\absnamepos}{flushleft}
+\renewcommand{\abstracttextfont}{\normalfont\fontsize{11}{13}\selectfont}
+
+% -----------------------------
+% Header / Footer Style
+% -----------------------------
+\setcounter{page}{1}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[C]{\small SHORT PAPER TITLE}
+\fancyhead[CO]{\small Author1 and Author2 (Year)}
+\fancyfoot[C]{\thepage}
+
+% -----------------------------
+% First Page Style
+% -----------------------------
+\fancypagestyle{firstpage}{
+  \fancyhf{}
+  \fancyhead[LO]{\small Volume X, Issue X, Year}
+ \fancyhead[RO]{\small LGU J. Comput. Sci. \& IT}
+  \fancyfoot[L]{\footnotesize Received: DD Month YYYY; Revised: DD Month YYYY; Accepted: DD Month YYYY\\\textsuperscript{*}Corresponding Author: Name \textless email@example.com\textgreater}
+  \fancyfoot[R]{\footnotesize \textcopyright\ Year by the Author(s). Published by LGURJCSIT,\\ \hspace{0.5cm} under the CC-BY license}
+  \renewcommand{\headrulewidth}{0.4pt}
+  \renewcommand{\footrulewidth}{0.4pt}
+}
+
+% -----------------------------
+% Title / Author
+% -----------------------------
+\title{\fontsize{16}{20}\selectfont\textbf{PAPER TITLE* (use style: paper title)}}
+
+\author{
+    \fontsize{12}{14}\selectfont
+    Author 1\textsuperscript{1*}, Author 2\textsuperscript{2}, Author 3\textsuperscript{3}\\[1ex]
+    \fontsize{12}{14}\selectfont
+    \textsuperscript{1}Department, University Name, City, Country \\
+    \textsuperscript{2}Department, University Name, City, Country \\
+    \textsuperscript{3}Department, University Name, City, Country
+}
+
+\date{}
+
+% -----------------------------
+% Section Formatting
+% -----------------------------
+\titleformat{\section}{\normalsize\bfseries\uppercase}{\thesection.}{1em}{}
+\titleformat{\subsection}{\normalsize\bfseries\flushleft}{\thesubsection.}{1em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\itshape\flushleft}{\thesubsubsection.}{1em}{}
+
+% -----------------------------
+% Document Start
+% -----------------------------
+\begin{document}
+
+\twocolumn[
+\begin{@twocolumnfalse}
+
+\vspace{-0.7cm}
+\noindent
+\raggedright
+{\fontsize{11}{13}\selectfont Original Article}
+\hfill
+{\fontsize{11}{13}\selectfont\footnotesize https://doi.org/xx.xxxx/xxxx}
+
+\vspace{-0.5cm}
+
+\maketitle
+\thispagestyle{firstpage}
+
+\section*{\hspace{-1.5mm}Abstract}
+\fontsize{10}{12}\selectfont
+\justifying
+\noindent
+The rapid growth of global financial systems has significantly increased the complexity of money laundering activities, posing serious challenges to traditional Anti-Money Laundering (AML) mechanisms. Conventional rule-based approaches are often inadequate in detecting sophisticated and evolving financial crimes. This study proposes an Artificial Intelligence (AI)-driven framework to enhance AML compliance and improve the detection of financial anomalies in large-scale transactional data. The proposed framework integrates multiple machine learning techniques, including supervised models, unsupervised anomaly detection methods, and Graph Neural Networks (GNNs) for capturing complex relationships in transaction networks. Additionally, Natural Language Processing (NLP) is utilized to analyze unstructured financial data, while privacy-preserving techniques such as federated learning are incorporated to ensure secure and compliant data handling. The framework is evaluated using both simulated and real-world datasets. Experimental results demonstrate improved detection performance, with graph-based approaches showing superior accuracy and robustness.
+
+\vspace{0.3cm}
+\noindent\textbf{Keywords:}
+Anti-Money Laundering, Artificial Intelligence, Graph Neural Networks, Financial Anomaly Detection, Federated Learning, Financial Crimes
+
+\vspace{0.8cm}
+\end{@twocolumnfalse}
+]
+
+% -----------------------------
+% Main Text
+% -----------------------------
+\section{Introduction}
+\fontsize{11}{13}\selectfont
+
+The global financial ecosystem continues to expand rapidly, enabling economic growth while simultaneously creating opportunities for illicit activities such as money laundering. Money laundering is one of the most complex and widespread financial crimes, involving the concealment of illegally obtained funds through layered and sophisticated transaction processes \cite{ref1}. It is estimated that trillions of dollars are laundered annually, posing severe threats to financial stability, regulatory compliance, and global economic integrity \cite{ref2}.
+
+Traditional Anti-Money Laundering (AML) systems primarily rely on rule-based mechanisms and manual monitoring. While these systems have been effective in the past, they are increasingly inadequate in handling the scale and complexity of modern financial transactions. The rise of digital banking, cross-border transactions, and cryptocurrencies has introduced new challenges, making it difficult for conventional systems to detect evolving laundering patterns \cite{ref3, ref4}. Consequently, financial institutions are under increasing pressure to adopt more intelligent, adaptive, and scalable solutions.
+
+Artificial Intelligence (AI) has emerged as a powerful tool in addressing these challenges. By leveraging machine learning algorithms, Natural Language Processing (NLP), and network analysis techniques, AI enables the identification of hidden patterns and anomalies within large-scale financial datasets \cite{ref5}. Unlike traditional approaches, AI-driven systems can learn dynamically from data, adapt to new threats, and significantly reduce false positives, thereby improving overall detection efficiency \cite{ref6}.
+
+Recent regulatory developments further emphasize the importance of advanced AML frameworks. The establishment of the European Anti-Money Laundering Authority (AMLA) reflects the growing need for harmonized and technology-driven compliance systems across jurisdictions \cite{ref7, ref8}. These initiatives encourage the integration of AI into financial monitoring systems to enhance transparency, efficiency, and cross-border cooperation.
+
+Despite its advantages, the adoption of AI in AML systems presents several challenges, including model interpretability, data privacy concerns, and algorithmic bias. Ensuring transparency and compliance with regulatory standards remains critical for the successful deployment of AI-based solutions \cite{ref16}. Therefore, this study explores the integration of AI techniques into AML frameworks, aiming to improve compliance mechanisms and enhance the detection of financial anomalies.
+
+\section{Literature Review}
+\fontsize{11}{13}\selectfont
+
+Over the past decade, the application of Artificial Intelligence (AI) in Anti-Money Laundering (AML) systems has gained significant attention in both academia and industry. Traditional rule-based approaches have gradually been replaced by data-driven techniques capable of handling large volumes of financial transactions with improved accuracy and efficiency. Machine learning models have demonstrated strong capabilities in detecting anomalies and suspicious patterns, often outperforming conventional methods \cite{ref9}.
+
+Natural Language Processing (NLP) techniques have been widely used to analyze unstructured financial data, such as suspicious activity reports and transaction descriptions. These approaches enable deeper insights into potential laundering schemes and improve decision-making processes in financial institutions \cite{ref10}. In addition, graph-based methods have emerged as powerful tools for modeling relationships between entities, allowing for the detection of complex transaction networks and hidden connections \cite{ref11}.
+
+Despite these advancements, several challenges remain in the implementation of AI-based AML systems. Data heterogeneity, the scarcity of labeled datasets, and the dynamic nature of financial transactions make model training and evaluation difficult \cite{ref13}. Unsupervised learning techniques have been explored to address these issues; however, achieving consistent performance across diverse datasets remains a significant challenge \cite{ref14}.
+
+Regulatory compliance is another critical concern in AML systems. Financial institutions must adhere to international standards, such as those defined by the Financial Action Task Force (FATF), which require transparency, accountability, and explainability in AI-based decision-making processes \cite{ref17, ref21}.
+
+Recent research also highlights the importance of privacy-preserving techniques, such as federated learning, which enable collaborative model training without sharing sensitive data. These approaches provide a promising solution for balancing data privacy with analytical performance in AML systems \cite{ref11}.
+
+\section{Methodology}
+\fontsize{11}{13}\selectfont
+
+This study proposes an AI-driven framework for enhancing Anti-Money Laundering (AML) detection and compliance. The methodology integrates multiple machine learning techniques to address the complexity and dynamic nature of financial transactions.
+
+\subsection{Data Collection}
+A combination of simulated and real-world datasets is utilized to ensure robustness and generalizability. Synthetic datasets such as AMLSim provide controlled environments for testing, while real-world datasets capture practical transaction patterns.
+
+\subsection{Data Preprocessing}
+Data preprocessing plays a critical role in improving model performance. This includes data cleaning, handling missing values, normalization, and feature engineering. Key features such as transaction frequency, transaction amount, and network relationships are extracted to enhance predictive accuracy.
+
+\subsection{Model Design}
+The proposed framework incorporates multiple algorithms, including Random Forest, Support Vector Machines, Autoencoders, and Graph Neural Networks. Each model contributes uniquely to the detection process. Supervised models classify known patterns, while unsupervised models detect anomalies in unseen data. Graph-based models are particularly effective in capturing relationships between entities, enabling the identification of complex laundering networks.
+
+% -----------------------------
+% Table 1
+% -----------------------------
+\begin{table*}[t]
+\centering
+\caption{General Caption for Table 1}
+\label{table1}
+\renewcommand{\arraystretch}{1.2}
+\setlength{\tabcolsep}{6pt}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{p{4cm} p{4cm} p{4cm} p{4cm}}
+\toprule
+\textbf{Column 1} & \textbf{Column 2} & \textbf{Column 3} & \textbf{Column 4} \\
+\midrule
+Entry 1 & Entry 2 & Entry 3 & Entry 4 \\
+Entry 1 & Entry 2 & Entry 3 & Entry 4 \\
+Entry 1 & Entry 2 & Entry 3 & Entry 4 \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}
+
+% -----------------------------
+% Table 2
+% -----------------------------
+\begin{table}[htbp]
+\centering
+\caption{General Caption for Table 2}
+\label{table2}
+\renewcommand{\arraystretch}{1.2}
+\setlength{\tabcolsep}{6pt}
+\resizebox{\columnwidth}{!}{
+\begin{tabular}{p{2.8cm} p{2cm} p{2cm}}
+\toprule
+\textbf{Item} & \textbf{Value 1} & \textbf{Value 2} \\
+\midrule
+Item A & 10 & 20 \\
+Item B & 15 & 25 \\
+Item C & 12 & 18 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+% -----------------------------
+% Figure 1
+% -----------------------------
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.82\textwidth]{figure1.png}
+\caption{General Caption for Figure 1}
+\label{figure1}
+\end{figure*}
+
+% -----------------------------
+% Figure 2
+% -----------------------------
+%\begin{figure}[htbp]
+%\centering
+%\includegraphics[width=\columnwidth]{figure2.png}
+%\caption{General Caption for Figure 2}
+%\label{figure2}
+%\end{figure}
+
+\section{Results}
+\fontsize{11}{13}\selectfont
+
+The experimental results demonstrate the effectiveness of the proposed AI-based AML framework. Multiple performance metrics, including accuracy, precision, recall, F1-score, and AUC-ROC, were used to evaluate the models.
+
+The findings indicate that Graph Neural Networks (GNNs) outperform other models in terms of detection accuracy and robustness. This is attributed to their ability to capture complex relationships within transaction networks. XGBoost and Random Forest models also show competitive performance, particularly in structured datasets.
+
+Autoencoders proved effective for anomaly detection, especially in identifying previously unseen patterns. However, they exhibited slightly higher false positive rates compared to supervised models. Support Vector Machines demonstrated moderate performance but faced scalability challenges with large datasets.
+
+Overall, the results validate the effectiveness of combining multiple machine learning approaches. The proposed framework achieves a balance between accuracy, scalability, and computational efficiency.
+
+% -----------------------------
+% Table 3
+% -----------------------------
+\begin{table*}[t]
+\centering
+\caption{General Caption for Table 3}
+\label{table3}
+\renewcommand{\arraystretch}{1.2}
+\setlength{\tabcolsep}{6pt}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{p{3.5cm} p{2.5cm} p{2.5cm} p{2.5cm} p{2.5cm} p{2.5cm}}
+\toprule
+\textbf{Method} & \textbf{Metric 1} & \textbf{Metric 2} & \textbf{Metric 3} & \textbf{Metric 4} & \textbf{Metric 5} \\
+\midrule
+Method A & 90.0 & 88.5 & 87.2 & 89.1 & 91.3 \\
+Method B & 92.4 & 90.6 & 89.5 & 90.0 & 93.0 \\
+Method C & 94.1 & 93.0 & 91.8 & 92.4 & 95.2 \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}
+
+% -----------------------------
+% Figure 3
+% -----------------------------
+%\begin{figure*}[t]
+%\centering
+%\includegraphics[width=0.72\textwidth]{figure3.png}
+%\caption{General Caption for Figure 3}
+%\label{figure3}
+%\end{figure*}
+
+\section{Discussion}
+\fontsize{11}{13}\selectfont
+
+The results of this study align with existing literature, confirming the effectiveness of AI techniques in financial crime detection. Graph-based approaches, in particular, demonstrate superior performance due to their ability to model complex relationships.
+
+However, challenges such as computational complexity and data privacy remain significant barriers. The implementation of federated learning addresses some privacy concerns but introduces additional computational overhead.
+
+The findings suggest that hybrid models combining multiple algorithms offer the best performance. Future research should focus on improving model interpretability and expanding datasets to enhance generalizability.
+
+\section{Conclusion}
+\fontsize{11}{13}\selectfont
+
+This study demonstrates the potential of Artificial Intelligence in strengthening Anti-Money Laundering systems. By integrating supervised learning, unsupervised anomaly detection, and graph-based analysis, the proposed framework improves financial anomaly detection and supports more efficient compliance mechanisms. The results suggest that combining multiple AI techniques provides a scalable and adaptive solution for addressing modern financial crime challenges.
+
+\vspace{0.5cm}
+
+\small
+\textbf{Conflict of Interest:} The authors declare no conflict of interest.
+
+\textbf{Author Contributions:} Author 1 contributed to conceptualization, methodology, and writing. Author 2 contributed to data analysis and review. All authors approved the final manuscript.
+
+\textbf{Funding:} This research received no external funding.
+
+\textbf{Ethical Statement:} This study follows ethical and academic integrity guidelines.
+
+\balance
+\fontsize{11}{13}\selectfont
+\printbibliography
+
+\end{document}

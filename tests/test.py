@@ -124,39 +124,6 @@ tests = [
     #     )
     # ),
     # (
-    #     "Medium (Paywall)",
-    #     lambda: core.save_to_file(
-    #         "https://medium.com/@michalmalewicz/vibe-coding-is-over-5a84da799e0d",
-    #         "DocsOutput/Medium_paywall.html",
-    #         image_handling="link",
-    #         code_parsing=True,
-    #         extract_html=True,
-    #         template="light-theme"
-    #     )
-    # ),
-    # (
-    #     "Medium (Free)",
-    #     lambda: core.save_to_file(
-    #         "https://medium.com/madhukarkumar/a-comprehensive-guide-to-vibe-coding-tools-2bd35e2d7b4f",
-    #         "DocsOutput/Medium_free.html",
-    #         image_handling="link",
-    #         code_parsing=True,
-    #         extract_html=True,
-    #         template="light-theme"
-    #     )
-    # ),
-    # (
-    #     "Reddit",
-    #     lambda: core.save_to_file(
-    #         "https://www.reddit.com/r/OutOfTheLoop/comments/1jfwxxw/whats_up_with_vibe_coding/",
-    #         "DocsOutput/Reddit.html",
-    #         image_handling="link",
-    #         code_parsing=True,
-    #         extract_html=True,
-    #         template="light-theme"
-    #     )
-    # ),
-    # (
     #     "CCRMA Stanford",
     #     lambda: core.save_to_file(
     #         "https://ccrma.stanford.edu/",
@@ -189,17 +156,7 @@ tests = [
     #         template="light-theme"
     #     )
     # )
-    # (
-    #     "MDPI",
-    #     lambda: core.save_to_file(
-    #         "https://www.mdpi.com/2076-3417/6/5/143",
-    #         "DocsOutput/Mdpi.html",
-    #         image_handling="link",
-    #         code_parsing=True,
-    #         extract_html=True,
-    #         template="light-theme"
-    #     )
-    # )
+
 ]
 
 failed_tests = []

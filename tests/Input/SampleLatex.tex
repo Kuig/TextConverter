@@ -1,0 +1,43 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\title{Il Teorema di Pitagora}
+\author{Mario Rossi}
+\date{2024}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Questo articolo presenta il famoso teorema di Pitagora, uno dei risultati
+fondamentali della geometria euclidea. Come diceva il grande matematico:
+``La matematica è la regina delle scienze''.
+\end{abstract}
+
+\section{Introduzione}
+
+Il teorema di Pitagora afferma che in un triangolo rettangolo, il quadrato
+dell'ipotenusa è uguale alla somma dei quadrati dei cateti.
+
+Come scrisse Euclide: ``Ogni cosa è numero''.
+
+\section{Il Teorema}
+
+Dato un triangolo rettangolo con cateti $a$ e $b$ e ipotenusa $c$:
+
+\begin{itemize}
+  \item Il cateto $a$ è il primo lato
+  \item Il cateto $b$ è il secondo lato
+  \item L'ipotenusa $c$ è il lato più lungo
+\end{itemize}
+
+Il codice per calcolare l'ipotenusa è:
+
+\begin{verbatim}
+import math
+c = math.sqrt(a**2 + b**2)
+print(f``c = {c}'')
+\end{verbatim}
+
+Inoltre si usa spesso \texttt{math.hypot(a, b)} che è una funzione con ``apici standard'' nel nome.
+
+\end{document}

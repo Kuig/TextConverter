@@ -145,5 +145,6 @@ cython_debug/
 /Unused/
 /DocsInput/
 /DocsOutput/
+/tests/Output/
 /Windows Integration/register.reg
 /Windows Integration/unregister.reg
