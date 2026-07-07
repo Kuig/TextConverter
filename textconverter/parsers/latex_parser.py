@@ -19,88 +19,311 @@ def _normalize_latex_quotes(text: str) -> str:
     text = re.sub(r"`(.*?)'", lambda m: '\u2018' + m.group(1) + '\u2019', text, flags=re.DOTALL)
     return text
 
+
+def _find_balanced_braces(text: str, start_pos: int) -> tuple[str, int]:
+    """Finds the content enclosed in balanced curly braces starting from start_pos.
+    
+    Returns a tuple of (content_inside, index_after_closing_brace).
+    If braces are not balanced or not found, returns ("", start_pos).
+    """
+    brace_start = text.find('{', start_pos)
+    if brace_start == -1:
+        return "", start_pos
+        
+    depth = 0
+    content_chars = []
+    i = brace_start
+    while i < len(text):
+        char = text[i]
+        if char == '{':
+            if depth > 0:
+                content_chars.append(char)
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                return "".join(content_chars), i + 1
+            content_chars.append(char)
+        else:
+            if depth > 0:
+                content_chars.append(char)
+        i += 1
+    return "".join(content_chars), len(text)
+
+
+def _extract_macro_args(text: str, macro_name: str, start_pos: int = 0) -> tuple[list[str], int, int]:
+    """Finds the first occurrence of macro_name in text after start_pos and extracts its arguments.
+    
+    A macro can have one or more consecutive {...} argument blocks.
+    Returns:
+        (args_list, macro_start_index, macro_end_index)
+        If not found, returns ([], -1, -1).
+    """
+    pos = text.find(macro_name, start_pos)
+    if pos == -1:
+        return [], -1, -1
+        
+    # Check if there is an opening brace following the macro name (possibly with spaces/newline)
+    idx = pos + len(macro_name)
+    
+    # Skip optional parameter [...] if present
+    if idx < len(text) and text[idx] == '[':
+        end_opt = text.find(']', idx)
+        if end_opt != -1:
+            idx = end_opt + 1
+            
+    args = []
+    while idx < len(text):
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+            
+        if idx < len(text) and text[idx] == '{':
+            content, next_idx = _find_balanced_braces(text, idx)
+            args.append(content)
+            idx = next_idx
+        else:
+            break
+            
+    return args, pos, idx
+
+
+def _strip_macro(text: str, macro_name: str, num_args: int = 1) -> str:
+    """Finds all occurrences of macro_name and strips them out along with their arguments."""
+    pos = 0
+    while True:
+        args, start, end = _extract_macro_args(text, macro_name, pos)
+        if start == -1:
+            break
+        text = text[:start] + text[end:]
+        pos = start
+    return text
+
+
+def _extract_environment(text: str, env_name: str, start_pos: int = 0) -> tuple[str, int, int]:
+    """Finds the first occurrence of \\begin{env_name} ... \\end{env_name} in text.
+    
+    Returns (env_content, begin_index, end_index).
+    If not found, returns ("", -1, -1).
+    """
+    begin_str = f"\\begin{{{env_name}}}"
+    end_str = f"\\end{{{env_name}}}"
+    
+    start_idx = text.find(begin_str, start_pos)
+    if start_idx == -1:
+        return "", -1, -1
+        
+    end_idx = text.find(end_str, start_idx + len(begin_str))
+    if end_idx == -1:
+        return "", -1, -1
+        
+    content = text[start_idx + len(begin_str) : end_idx]
+    
+    # Strip any leading braced environment configuration arguments, e.g. {p{4cm} p{4cm}}
+    idx = 0
+    while idx < len(content) and content[idx].isspace():
+        idx += 1
+    if idx < len(content) and content[idx] == '{':
+        _, next_idx = _find_balanced_braces(content, idx)
+        content = content[next_idx:]
+        
+    return content, start_idx, end_idx + len(end_str)
+
 def parse_latex(text: str) -> Document:
     """Parses a basic subset of LaTeX into AST Document."""
     doc = Document()
 
-    # Extract \title{...} from the preamble before stripping it
+    # Strip layout and styling commands first so they are cleaned from metadata too
+    text = _strip_macro(text, "\\fontsize")
+    for cmd in ["\\thispagestyle", "\\pubyear", "\\pagerange", "\\vspace", "\\hspace", "\\pageref", "\\bibliographystyle", "\\bibliography"]:
+        text = _strip_macro(text, cmd)
+        
+    for cmd in ["\\selectfont", "\\balance", "\\noindent", "\\raggedright", "\\justifying", "\\centering", "\\hfill", "\\maketitle", "\\printbibliography", "\\appendix"]:
+        text = re.sub(re.escape(cmd) + r'\b', '', text)
+
+    # Extract \title{...}, \author{...}, \date{...} (now clean of layout commands)
     title_text = None
-    m_title = re.search(r'\\title\{([^}]+)\}', text)
-    if m_title:
-        title_text = m_title.group(1).strip()
+    args_title, _, _ = _extract_macro_args(text, "\\title")
+    if args_title:
+        title_text = args_title[0].strip()
+
+    author_text = None
+    args_author, _, _ = _extract_macro_args(text, "\\author")
+    if args_author:
+        author_text = args_author[0].strip()
+
+    date_text = None
+    args_date, _, _ = _extract_macro_args(text, "\\date")
+    if args_date:
+        date_text = args_date[0].strip()
 
     # Strip out preamble if document environment exists
     m_doc = re.search(r'\\begin\{document\}(.*?)\\end\{document\}', text, re.DOTALL)
     if m_doc:
         text = m_doc.group(1)
 
-    # Strip \maketitle command (already handled via \title{} above)
-    text = re.sub(r'\\maketitle\b', '', text)
-
-    # Strip comments (not extremely safe with escaped %, but enough for minimal deps)
+    # Strip comments
     text = re.sub(r'(?<!\\)%.*$', '', text, flags=re.MULTILINE)
 
-    # If a title was found, prepend it as a level-1 bold heading
-    if title_text:
-        doc.children.append(Heading(level=1, children=[Text(content=title_text, bold=True)]))
-
-    # Match block elements (including abstract environment)
-    env_pattern = re.compile(
-        r'\\(section|subsection|subsubsection|paragraph)\*?\{([^}]+)\}|'
-        r'\\begin\{(abstract)\}(.*?)\\end\{abstract\}|'
-        r'\\begin\{(itemize|enumerate)\}(.*?)\\end\{\5\}|'
-        r'\\begin\{(verbatim|lstlisting)\}(.*?)\\end\{\7\}|'
-        r'\\begin\{tabular\}\{[^}]*\}(.*?)\\end\{tabular\}',
-        re.DOTALL
-    )
-
     pos = 0
+    targets = [
+        ('\\section', 'section'),
+        ('\\subsection', 'subsection'),
+        ('\\subsubsection', 'subsubsection'),
+        ('\\paragraph', 'paragraph'),
+        ('\\begin{abstract}', 'abstract'),
+        ('\\begin{itemize}', 'itemize'),
+        ('\\begin{enumerate}', 'enumerate'),
+        ('\\begin{verbatim}', 'verbatim'),
+        ('\\begin{lstlisting}', 'lstlisting'),
+        ('\\begin{tabular}', 'tabular'),
+        ('\\begin{figure}', 'figure'),
+        ('\\begin{figure*}', 'figure*'),
+        ('\\begin{table}', 'table'),
+        ('\\begin{table*}', 'table*')
+    ]
+    
+    # Pre-populate title, author, date in doc
+    if title_text:
+        doc.children.append(Heading(level=1, children=parse_inline_latex(title_text, is_bold=True)))
+    if author_text:
+        doc.children.append(Paragraph(children=parse_inline_latex(author_text)))
+    if date_text:
+        doc.children.append(Paragraph(children=parse_inline_latex(date_text)))
+        
     while pos < len(text):
-        m = env_pattern.search(text, pos)
-        if not m:
+        first_pos = -1
+        first_type = None
+        first_cmd = None
+        
+        for cmd, t_type in targets:
+            idx = text.find(cmd, pos)
+            if idx != -1:
+                # Ensure boundary (not followed by alphabetic characters)
+                if cmd.startswith('\\') and not cmd.endswith('}'):
+                    next_char_idx = idx + len(cmd)
+                    if next_char_idx < len(text) and text[next_char_idx].isalpha():
+                        continue
+                if first_pos == -1 or idx < first_pos:
+                    first_pos = idx
+                    first_type = t_type
+                    first_cmd = cmd
+                    
+        if first_pos == -1:
+            # Parse remaining text as plain blocks
             chunk = text[pos:].strip()
             if chunk:
                 for p_text in re.split(r'\n\s*\n', chunk):
                     if p_text.strip():
                         doc.children.append(Paragraph(children=parse_inline_latex(p_text.strip())))
             break
-
-        if m.start() > pos:
-            chunk = text[pos:m.start()].strip()
+            
+        if first_pos > pos:
+            # Parse text leading up to the match
+            chunk = text[pos:first_pos].strip()
             if chunk:
                 for p_text in re.split(r'\n\s*\n', chunk):
                     if p_text.strip():
                         doc.children.append(Paragraph(children=parse_inline_latex(p_text.strip())))
-
-        groups = m.groups()
-        if groups[0]:  # section/subsection/etc (with optional *)
-            level = {'section': 1, 'subsection': 2, 'subsubsection': 3, 'paragraph': 4}.get(groups[0], 1)
-            doc.children.append(Heading(level=level, children=parse_inline_latex(groups[1])))
-        elif groups[2]:  # abstract environment
-            abstract_bq = BlockQuote()
-            abstract_bq.children.append(Heading(level=2, children=[Text(content="Abstract")]))
-            for p_text in re.split(r'\n\s*\n', groups[3].strip()):
-                if p_text.strip():
-                    abstract_bq.children.append(Paragraph(children=parse_inline_latex(p_text.strip())))
-            doc.children.append(abstract_bq)
-        elif groups[4]:  # list (itemize/enumerate)
-            ordered = (groups[4] == 'enumerate')
-            lb = ListBlock(ordered=ordered)
-            items = re.split(r'\\item', groups[5])
-            for item in items[1:]:
-                lb.items.append(ListItem(children=[Paragraph(children=parse_inline_latex(item.strip()))]))
-            doc.children.append(lb)
-        elif groups[6]:  # verbatim/lstlisting
-            doc.children.append(CodeBlock(code=groups[7].strip(), language=None))
-        elif groups[8] is not None:  # tabular
-            doc.children.append(_parse_latex_table(groups[8].strip()))
-
-        pos = m.end()
+                        
+        # Process block target
+        if first_type in ('section', 'subsection', 'subsubsection', 'paragraph'):
+            cmd_len = len(first_cmd)
+            is_starred = False
+            if first_pos + cmd_len < len(text) and text[first_pos + cmd_len] == '*':
+                cmd_name = first_cmd + '*'
+            else:
+                cmd_name = first_cmd
+                
+            args, start, end = _extract_macro_args(text, cmd_name, first_pos)
+            if start != -1 and args:
+                level = {'section': 1, 'subsection': 2, 'subsubsection': 3, 'paragraph': 4}.get(first_type, 1)
+                doc.children.append(Heading(level=level, children=parse_inline_latex(args[0])))
+                pos = end
+            else:
+                pos = first_pos + len(cmd_name)
+                
+        elif first_type == 'abstract':
+            content, start, end = _extract_environment(text, 'abstract', first_pos)
+            if start != -1:
+                abstract_bq = BlockQuote()
+                abstract_bq.children.append(Heading(level=2, children=[Text(content="Abstract")]))
+                for p_text in re.split(r'\n\s*\n', content.strip()):
+                    if p_text.strip():
+                        abstract_bq.children.append(Paragraph(children=parse_inline_latex(p_text.strip())))
+                doc.children.append(abstract_bq)
+                pos = end
+            else:
+                pos = first_pos + len(first_cmd)
+                
+        elif first_type in ('itemize', 'enumerate'):
+            content, start, end = _extract_environment(text, first_type, first_pos)
+            if start != -1:
+                ordered = (first_type == 'enumerate')
+                lb = ListBlock(ordered=ordered)
+                items = re.split(r'\\item', content)
+                for item in items[1:]:
+                    lb.items.append(ListItem(children=[Paragraph(children=parse_inline_latex(item.strip()))]))
+                doc.children.append(lb)
+                pos = end
+            else:
+                pos = first_pos + len(first_cmd)
+                
+        elif first_type in ('verbatim', 'lstlisting'):
+            content, start, end = _extract_environment(text, first_type, first_pos)
+            if start != -1:
+                doc.children.append(CodeBlock(code=content.strip(), language=None))
+                pos = end
+            else:
+                pos = first_pos + len(first_cmd)
+                
+        elif first_type == 'tabular':
+            content, start, end = _extract_environment(text, 'tabular', first_pos)
+            if start != -1:
+                doc.children.append(_parse_latex_table(content.strip()))
+                pos = end
+            else:
+                pos = first_pos + len(first_cmd)
+                
+        elif first_type in ('figure', 'figure*'):
+            env_name = first_type
+            content, start, end = _extract_environment(text, env_name, first_pos)
+            if start != -1:
+                img_args, img_start, img_end = _extract_macro_args(content, "\\includegraphics")
+                cap_args, cap_start, cap_end = _extract_macro_args(content, "\\caption")
+                caption_text = cap_args[0].strip() if cap_args else None
+                
+                if img_args:
+                    img_src = img_args[0].strip()
+                    doc.children.append(Image(src=img_src, alt="image"))
+                    if caption_text:
+                        doc.children.append(Paragraph(children=parse_inline_latex(f"Figure: {caption_text}")))
+                elif caption_text:
+                    doc.children.append(Paragraph(children=parse_inline_latex(f"Figure: {caption_text}")))
+                pos = end
+            else:
+                pos = first_pos + len(first_cmd)
+                
+        elif first_type in ('table', 'table*'):
+            env_name = first_type
+            content, start, end = _extract_environment(text, env_name, first_pos)
+            if start != -1:
+                tab_content, tab_start, tab_end = _extract_environment(content, "tabular")
+                cap_args, cap_start, cap_end = _extract_macro_args(content, "\\caption")
+                caption_text = cap_args[0].strip() if cap_args else None
+                
+                if caption_text:
+                    doc.children.append(Paragraph(children=parse_inline_latex(f"Table: {caption_text}")))
+                if tab_start != -1:
+                    doc.children.append(_parse_latex_table(tab_content.strip()))
+                pos = end
+            else:
+                pos = first_pos + len(first_cmd)
 
     return doc
 
 def _parse_latex_table(content: str) -> Table:
     table = Table()
+    content = content.replace('\\toprule', '').replace('\\midrule', '').replace('\\bottomrule', '')
     rows = content.split('\\\\')
 
     for i, row in enumerate(rows):
@@ -116,49 +339,68 @@ def _parse_latex_table(content: str) -> Table:
 
     return table
 
-def parse_inline_latex(text: str) -> List[InlineElement]:
+def parse_inline_latex(text: str, is_bold: bool = False, is_italic: bool = False) -> List[InlineElement]:
     elements = []
-
-    # Match inline elements: bold, italic, href, url, includegraphics, texttt
-    pattern = re.compile(
-        r'\\textbf\{([^}]+)\}|'
-        r'\\textit\{([^}]+)\}|'
-        r'\\href\{([^}]+)\}\{([^}]+)\}|'
-        r'\\url\{([^}]+)\}|'
-        r'\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}|'
-        r'\\texttt\{([^}]+)\}'
-    )
-
     pos = 0
+    targets = [
+        ('\\textbf', 'bold'),
+        ('\\textit', 'italic'),
+        ('\\href', 'href'),
+        ('\\url', 'url'),
+        ('\\includegraphics', 'image'),
+        ('\\texttt', 'code')
+    ]
+    
     while pos < len(text):
-        m = pattern.search(text, pos)
-        if not m:
-            if pos < len(text):
-                # Normalize typographic quotes only in plain text residuals
-                plain = _normalize_latex_quotes(text[pos:])
-                elements.append(Text(content=plain))
+        first_pos = -1
+        first_tag = None
+        first_cmd = None
+        
+        for cmd, tag in targets:
+            idx = text.find(cmd, pos)
+            if idx != -1:
+                next_char_idx = idx + len(cmd)
+                if next_char_idx < len(text) and text[next_char_idx].isalpha():
+                    continue
+                if first_pos == -1 or idx < first_pos:
+                    first_pos = idx
+                    first_tag = tag
+                    first_cmd = cmd
+                    
+        if first_pos == -1:
+            plain = _normalize_latex_quotes(text[pos:])
+            if plain:
+                elements.append(Text(content=plain, bold=is_bold, italic=is_italic))
             break
-
-        if m.start() > pos:
-            # Normalize typographic quotes only in plain text between commands
-            plain = _normalize_latex_quotes(text[pos:m.start()])
-            elements.append(Text(content=plain))
-
-        g = m.groups()
-        if g[0]:
-            elements.append(Text(content=g[0], bold=True))
-        elif g[1]:
-            elements.append(Text(content=g[1], italic=True))
-        elif g[2]:  # href
-            elements.append(Link(url=g[2], title=None, content=parse_inline_latex(g[3])))
-        elif g[4]:  # url
-            elements.append(Link(url=g[4], title=None, content=[Text(content=g[4])]))
-        elif g[5]:  # includegraphics
-            elements.append(Image(src=g[5], alt="image"))
-        elif g[6]:  # texttt — code inline: quotes NOT normalized here
-            elements.append(CodeInline(code=g[6]))
-
-        pos = m.end()
-
+            
+        if first_pos > pos:
+            plain = _normalize_latex_quotes(text[pos:first_pos])
+            if plain:
+                elements.append(Text(content=plain, bold=is_bold, italic=is_italic))
+                
+        args, macro_start, macro_end = _extract_macro_args(text, first_cmd, first_pos)
+        if macro_start == -1 or not args:
+            elements.append(Text(content=first_cmd, bold=is_bold, italic=is_italic))
+            pos = first_pos + len(first_cmd)
+            continue
+            
+        if first_tag == 'bold':
+            elements.extend(parse_inline_latex(args[0], is_bold=True, is_italic=is_italic))
+        elif first_tag == 'italic':
+            elements.extend(parse_inline_latex(args[0], is_bold=is_bold, is_italic=True))
+        elif first_tag == 'code':
+            elements.append(CodeInline(code=args[0]))
+        elif first_tag == 'href':
+            if len(args) >= 2:
+                elements.append(Link(url=args[0], title=None, content=parse_inline_latex(args[1], is_bold=is_bold, is_italic=is_italic)))
+            elif len(args) == 1:
+                elements.append(Link(url=args[0], title=None, content=[Text(content=args[0], bold=is_bold, italic=is_italic)]))
+        elif first_tag == 'url':
+            elements.append(Link(url=args[0], title=None, content=[Text(content=args[0], bold=is_bold, italic=is_italic)]))
+        elif first_tag == 'image':
+            elements.append(Image(src=args[0], alt="image"))
+            
+        pos = macro_end
+        
     return elements
 
