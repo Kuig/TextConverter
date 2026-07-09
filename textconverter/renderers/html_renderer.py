@@ -108,5 +108,17 @@ def _render_node(node) -> str:
             return f'<span class="math inline">\\({html.escape(node.code)}\\)</span>'
         else:
             return f'<div class="math block">$$\n{html.escape(node.code)}\n$$</div>'
+            
+    else:
+        from ..ast import Footnote, Citation, Reference, Label
+        if isinstance(node, Footnote):
+            # Using <sup> or just literal fallback
+            return f"\\footnote{{{''.join(_render_node(c) for c in node.content)}}}"
+        elif isinstance(node, Citation):
+            return f"\\{node.style}{{{html.escape(','.join(node.keys))}}}"
+        elif isinstance(node, Reference):
+            return f"\\ref{{{html.escape(node.label)}}}"
+        elif isinstance(node, Label):
+            return f"\\label{{{html.escape(node.name)}}}"
         
     return ""

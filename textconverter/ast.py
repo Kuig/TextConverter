@@ -43,8 +43,29 @@ class LineBreak(Node):
     """A line break."""
     pass
 
+@dataclass
+class Footnote(Node):
+    """An inline footnote containing other inline elements."""
+    content: TList['InlineElement'] = field(default_factory=list)
+
+@dataclass
+class Citation(Node):
+    """A citation reference."""
+    keys: TList[str]
+    style: str = "cite" # cite, citet, citep
+
+@dataclass
+class Reference(Node):
+    """A cross-reference to a label."""
+    label: str
+
+@dataclass
+class Label(Node):
+    """A target anchor label."""
+    name: str
+
 # Helper type for inline elements
-InlineElement = Union[Text, Link, Image, CodeInline, LineBreak]
+InlineElement = Union[Text, Link, Image, CodeInline, LineBreak, Footnote, Citation, Reference, Label]
 
 @dataclass
 class Paragraph(Node):

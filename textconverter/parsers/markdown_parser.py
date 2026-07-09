@@ -52,8 +52,13 @@ def smart_preprocess_markdown(text: str) -> str:
             # Check if we should insert an empty line before the block element
             should_insert = False
             if prev_stripped: # Previous line is not empty
-                if is_heading or is_code_fence or is_hr:
+                if is_heading or is_hr:
                     should_insert = True
+                elif is_code_fence:
+                    prev_is_list = (re.match(r'^\s*[-*+]\s+', prev_line) or
+                                    re.match(r'^\s*\d+\.\s+', prev_line))
+                    if not prev_is_list:
+                        should_insert = True
                 elif is_blockquote:
                     if not prev_stripped.startswith(">"):
                         should_insert = True
@@ -72,7 +77,7 @@ def smart_preprocess_markdown(text: str) -> str:
     return '\n'.join(new_lines)
 
 
-def _parse_markdown_list(block_text: str) -> ListBlock:
+def _parse_markdown_list(block_text: str, ref_map: dict | None = None) -> ListBlock:
     lines = block_text.split('\n')
     stack = []
     root_list_block = None
@@ -95,33 +100,45 @@ def _parse_markdown_list(block_text: str) -> ListBlock:
             if not stack:
                 # Root list block
                 root_list_block = ListBlock(ordered=ordered)
-                new_item = ListItem(children=[Paragraph(children=parse_inline(content.strip()))])
+                new_item = ListItem(children=[Paragraph(children=parse_inline(content.strip(), ref_map=ref_map))])
                 root_list_block.items.append(new_item)
                 stack.append({"indent": indent, "list_block": root_list_block, "list_item": new_item})
             elif stack[-1]["indent"] < indent:
                 # Nested list block
                 new_list = ListBlock(ordered=ordered)
-                new_item = ListItem(children=[Paragraph(children=parse_inline(content.strip()))])
+                new_item = ListItem(children=[Paragraph(children=parse_inline(content.strip(), ref_map=ref_map))])
                 new_list.items.append(new_item)
                 stack[-1]["list_item"].children.append(new_list)
                 stack.append({"indent": indent, "list_block": new_list, "list_item": new_item})
             else:
                 # Sibling item in current list block
-                new_item = ListItem(children=[Paragraph(children=parse_inline(content.strip()))])
+                new_item = ListItem(children=[Paragraph(children=parse_inline(content.strip(), ref_map=ref_map))])
                 stack[-1]["list_block"].items.append(new_item)
                 stack[-1]["list_item"] = new_item
         else:
-            # Continuation line
-            if stack:
-                active_item = stack[-1]["list_item"]
-                # Append to last paragraph if present
+            # Decode encoded code/math block placeholders that were inside a list item
+            stripped_line = line.strip()
+            m_cb = re.match(r'^<!--CODEBLOCK:([A-Za-z0-9+/=]+)-->$', stripped_line)
+            m_mb = re.match(r'^<!--MATHBLOCK:([A-Za-z0-9+/=]+)-->$', stripped_line)
+            if m_cb and stack:
+                import base64, json as _json
+                payload = _json.loads(base64.b64decode(m_cb.group(1)).decode('utf-8'))
+                cb = CodeBlock(code=payload['code'].strip(), language=payload['lang'] or None)
+                stack[-1]['list_item'].children.append(cb)
+            elif m_mb and stack:
+                import base64, json as _json
+                payload = _json.loads(base64.b64decode(m_mb.group(1)).decode('utf-8'))
+                stack[-1]['list_item'].children.append(Equation(code=payload['code'], inline=False))
+            elif stack:
+                # Continuation line — append to last paragraph of active item
+                active_item = stack[-1]['list_item']
                 last_p = None
                 if active_item.children and isinstance(active_item.children[-1], Paragraph):
                     last_p = active_item.children[-1]
                 if last_p:
-                    last_p.children.extend(parse_inline(" " + line.strip()))
+                    last_p.children.extend(parse_inline(' ' + stripped_line))
                 else:
-                    active_item.children.append(Paragraph(children=parse_inline(line.strip())))
+                    active_item.children.append(Paragraph(children=parse_inline(stripped_line)))
                     
     return root_list_block
 
@@ -129,6 +146,20 @@ def _parse_markdown_list(block_text: str) -> ListBlock:
 def parse_markdown(text: str, code_parsing: bool = False) -> Document:
     """Parses markdown text into an AST Document."""
     text = smart_preprocess_markdown(text)
+
+    # Collect and strip reference-style link/image definitions: [id]: <url> "title"
+    _ref_def_re = re.compile(
+        r'^ {0,3}\[([^\]]+)\]:\s+<?([^>\s]+?)>?'
+        r'(?:\s+(?:"([^"]*)"|\x27([^\x27]*)\x27|\(([^)]*)\)))?\s*$',
+        re.MULTILINE
+    )
+    ref_map: dict[str, tuple[str, str | None]] = {}
+    for rm in _ref_def_re.finditer(text):
+        label = rm.group(1).lower().strip()
+        url   = rm.group(2)
+        title = rm.group(3) or rm.group(4) or rm.group(5) or None
+        ref_map[label] = (url, title)
+    text = _ref_def_re.sub('', text)
     
     # Pre-process code blocks to preserve empty lines inside them (first pass for existing fences)
     def _encode_codeblock(m):
@@ -195,7 +226,12 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
         if m_code:
             import base64, json
             payload = json.loads(base64.b64decode(m_code.group(1)).decode('utf-8'))
-            doc.children.append(CodeBlock(code=payload['code'].strip(), language=payload['lang'] or None))
+            cb = CodeBlock(code=payload['code'].strip(), language=payload['lang'] or None)
+            # If the previous block was a list, attach this code to the last list item
+            if doc.children and isinstance(doc.children[-1], ListBlock):
+                doc.children[-1].items[-1].children.append(cb)
+            else:
+                doc.children.append(cb)
             continue
             
         # 1b. Math Blocks
@@ -203,14 +239,19 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
         if m_math:
             import base64, json
             payload = json.loads(base64.b64decode(m_math.group(1)).decode('utf-8'))
-            doc.children.append(Equation(code=payload['code'], inline=False))
+            eq = Equation(code=payload['code'], inline=False)
+            # If the previous block was a list, attach to the last list item
+            if doc.children and isinstance(doc.children[-1], ListBlock):
+                doc.children[-1].items[-1].children.append(eq)
+            else:
+                doc.children.append(eq)
             continue
             
         # 2. Headings
         m_heading = re.match(r'^(#{1,6})\s+(.*)$', block, flags=re.MULTILINE)
         if m_heading:
             level = len(m_heading.group(1))
-            doc.children.append(Heading(level=level, children=parse_inline(m_heading.group(2).strip())))
+            doc.children.append(Heading(level=level, children=parse_inline(m_heading.group(2).strip(), ref_map=ref_map)))
             continue
             
         # 3. Horizontal Rule
@@ -248,7 +289,7 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
             
         # 3. Lists (Ordered and Unordered)
         if re.match(r'^[-*+•●○■]\s+', block) or re.match(r'^\d+\.\s+', block):
-            lb = _parse_markdown_list(block)
+            lb = _parse_markdown_list(block, ref_map=ref_map)
             if lb:
                 if (doc.children and 
                     isinstance(doc.children[-1], ListBlock) and 
@@ -271,7 +312,7 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
                 if has_separator:
                     # Headers
                     headers = [c.strip() for c in lines[0].split('|') if c.strip()]
-                    table.headers = [TableCell(children=parse_inline(h)) for h in headers]
+                    table.headers = [TableCell(children=parse_inline(h, ref_map=ref_map)) for h in headers]
                     start_idx = 2
                     
                 # Rows
@@ -281,12 +322,12 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
                     if line.strip().startswith('|'): cells = cells[1:]
                     if line.strip().endswith('|'): cells = cells[:-1]
                     
-                    table.rows.append(TableRow(cells=[TableCell(children=parse_inline(c)) for c in cells]))
+                    table.rows.append(TableRow(cells=[TableCell(children=parse_inline(c, ref_map=ref_map)) for c in cells]))
                 doc.children.append(table)
                 continue
                 
         # Fallback: Paragraph
-        p = Paragraph(children=parse_inline(block))
+        p = Paragraph(children=parse_inline(block, ref_map=ref_map))
         doc.children.append(p)
         
     return doc
@@ -329,39 +370,102 @@ def _parse_formatting(text: str) -> List[InlineElement]:
         
     return resolve(text)
 
-def parse_inline(text: str) -> List[InlineElement]:
-    """Parses inline markdown like bold, italic, links, images, code."""
+def parse_inline(text: str, ref_map: dict | None = None) -> List[InlineElement]:
+    """Parses inline markdown like bold, italic, links, images, code.
+
+    Args:
+        text: The inline markdown string to parse.
+        ref_map: Optional dict mapping lowercase reference labels to (url, title) tuples,
+                 used to resolve reference-style links and images.
+    """
     elements = []
-    
+
     pattern = re.compile(
-        r'(!\[(?P<img_alt>[^\]]*)\]\((?P<img_url>[^\)\s]*)\s*(?:\"(?P<img_title>[^\"]*)\")?\)(?:<!--OCR:(?P<ocr_b64>[A-Za-z0-9+/=]+)-->)?)|'
-        r'(\[(?P<link_text>[^\]]+)\]\((?P<link_url>[^\)\s]*)\s*(?:\"(?P<link_title>[^\"]*)\")?\))|'
+        # LaTeX safeguarded macros
+        r'(?P<latexmacro>\\(?:footnote|cite|citet|citep|ref|label)\b)|'
+        # Reference-style image: ![alt][id]  — must come before reflink and inline-image
+        r'(?P<refimg>!\[(?P<ri_alt>[^\]]*)\]\[(?P<ri_id>[^\]]*)\])|'
+        # Reference-style link: [content][id] — content may include inline images
+        # Uses .*? (non-greedy) so it stops at the first ][id] after the opening [
+        r'(?P<reflink>(?<!!)(?<!\])\[(?P<rl_text>.*?)\]\[(?P<rl_id>[^\]]*)\])|'
+        # Inline image: ![alt](url "title") with optional OCR block
+        r'(?P<inlineimg>!\[(?P<img_alt>[^\]]*)\]\((?P<img_url>[^\)\s]*)(?:\s+"(?P<img_title>[^"]*)")?\)(?:<!--OCR:(?P<ocr_b64>[A-Za-z0-9+/=]+)-->)?)|'
+        # Inline link: [text](url "title")
+        r'(?P<inlinelink>(?<!!)(?<!\])\[(?P<link_text>[^\]]+)\]\((?P<link_url>[^\)\s]*)(?:\s+"(?P<link_title>[^"]*)")?\))|'
         r'(?P<codeinline>`(?P<code_content>[^`]+)`)|'
         r'(?P<mathinline>(?<!\\)\$(?!\s)(?P<math_content>[^$]+?)(?<!\s)(?<!\\)\$)|'
         r'(?P<linebreak><br\s*/?>)'
     )
-    
+
     pos = 0
     while pos < len(text):
         m = pattern.search(text, pos)
         if not m:
             chunk = text[pos:]
-            if chunk: elements.extend(_parse_formatting(chunk))
+            if chunk:
+                elements.extend(_parse_formatting(chunk))
             break
-            
+
         if m.start() > pos:
             chunk = text[pos:m.start()]
-            if chunk: elements.extend(_parse_formatting(chunk))
-            
+            if chunk:
+                elements.extend(_parse_formatting(chunk))
+
         g = m.groupdict()
-        if g.get('img_url') is not None:
+
+        if g.get('latexmacro') is not None:
+            cmd_name = g['latexmacro']
+            cmd_base = cmd_name[1:] # remove leading \
+            from .latex_parser import _extract_macro_args
+            from ..ast import Footnote, Citation, Reference, Label
+            args, start, end = _extract_macro_args(text, cmd_name, m.start())
+            if start != -1 and args:
+                if cmd_base == 'footnote':
+                    elements.append(Footnote(content=parse_inline(args[0], ref_map=ref_map)))
+                elif cmd_base in ('cite', 'citet', 'citep'):
+                    keys = [k.strip() for k in args[0].split(',') if k.strip()]
+                    elements.append(Citation(keys=keys, style=cmd_base))
+                elif cmd_base == 'ref':
+                    elements.append(Reference(label=args[0].strip()))
+                elif cmd_base == 'label':
+                    elements.append(Label(name=args[0].strip()))
+                pos = end
+                continue
+            else:
+                # If extraction fails (e.g. no braces), treat it as plain text and advance
+                elements.append(Text(content=cmd_name))
+                pos = m.end()
+                continue
+                
+        elif g.get('refimg') is not None:
+            # Reference-style image: ![alt][id]
+            label = (g['ri_id'] or g['ri_alt']).lower().strip()
+            url, title = (ref_map or {}).get(label, ('', None))
+            elements.append(Image(src=url, alt=g['ri_alt'], title=title))
+        elif g.get('reflink') is not None:
+            # Reference-style link: [content][id] — content may include an inline image
+            label = (g['rl_id'] or g['rl_text']).lower().strip()
+            url, title = (ref_map or {}).get(label, ('#', None))
+            link = Link(url=url, title=title,
+                        content=parse_inline(g['rl_text'], ref_map=ref_map))
+            elements.append(link)
+        elif g.get('inlineimg') is not None:
             ocr_text = None
             if g.get('ocr_b64'):
                 import base64
                 ocr_text = base64.b64decode(g['ocr_b64']).decode('utf-8')
-            elements.append(Image(src=g['img_url'], alt=g.get('img_alt', ''), title=g.get('img_title'), extracted_text=ocr_text))
-        elif g.get('link_url') is not None:
-            link = Link(url=g['link_url'], title=g.get('link_title'), content=parse_inline(g['link_text']))
+            elements.append(Image(
+                src=g['img_url'],
+                alt=g.get('img_alt', ''),
+                title=g.get('img_title'),
+                extracted_text=ocr_text,
+            ))
+        elif g.get('inlinelink') is not None:
+            link = Link(
+                url=g['link_url'],
+                title=g.get('link_title'),
+                content=parse_inline(g['link_text'], ref_map=ref_map),
+            )
             elements.append(link)
         elif g.get('codeinline') is not None:
             elements.append(CodeInline(code=g['code_content']))
@@ -370,7 +474,7 @@ def parse_inline(text: str) -> List[InlineElement]:
         elif g.get('linebreak') is not None:
             from ..ast import LineBreak
             elements.append(LineBreak())
-            
+
         pos = m.end()
-        
+
     return elements

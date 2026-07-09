@@ -141,6 +141,8 @@ class ASTHTMLParser(HTMLParser):
         node = None
         if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
             node = Heading(level=int(tag[1]))
+        elif tag == 'title':
+            node = Heading(level=1)
         elif tag == 'p':
             if 'title' in classes:
                 node = Heading(level=1)
@@ -271,7 +273,7 @@ class ASTHTMLParser(HTMLParser):
         elif tag == 'pre':
             self.in_pre = False
             
-        if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'a', 'pre', 'code', 'blockquote'):
+        if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'a', 'pre', 'code', 'blockquote', 'title'):
             # Only pop if we actually pushed something (ignoring structural mismatches)
             if len(self.stack) > 1:
                 node = self.stack.pop()
@@ -378,7 +380,7 @@ class ASTHTMLParser(HTMLParser):
 
 
 _NOISE = frozenset(['script', 'style', 'nav', 'footer', 'header',
-                    'aside', 'noscript', 'iframe', 'form'])
+                    'aside', 'noscript', 'iframe', 'form', 'head'])
 _VOID = frozenset([
     'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
     'link', 'meta', 'param', 'source', 'track', 'wbr'

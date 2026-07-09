@@ -74,6 +74,7 @@ def _extract_macro_args(text: str, macro_name: str, start_pos: int = 0) -> tuple
             
     args = []
     while idx < len(text):
+        saved_idx = idx
         while idx < len(text) and text[idx].isspace():
             idx += 1
             
@@ -82,6 +83,7 @@ def _extract_macro_args(text: str, macro_name: str, start_pos: int = 0) -> tuple
             args.append(content)
             idx = next_idx
         else:
+            idx = saved_idx
             break
             
     return args, pos, idx
@@ -474,10 +476,18 @@ def parse_inline_latex(text: str, is_bold: bool = False, is_italic: bool = False
         
         # Check if it is a safeguarded macro: cite, citet, citet*, citet, citet*, ref, label, footnote
         if cmd_base in ('cite', 'citet', 'citep', 'ref', 'label', 'footnote'):
+            from ..ast import Footnote, Citation, Reference, Label
             args, start, end = _extract_macro_args(text, cmd_name, pos)
-            if start != -1:
-                # Include the macro and its arguments as plain text verbatim
-                elements.append(Text(content=text[start:end], bold=is_bold, italic=is_italic))
+            if start != -1 and args:
+                if cmd_base == 'footnote':
+                    elements.append(Footnote(content=parse_inline_latex(args[0], is_bold=is_bold, is_italic=is_italic)))
+                elif cmd_base in ('cite', 'citet', 'citep'):
+                    keys = [k.strip() for k in args[0].split(',') if k.strip()]
+                    elements.append(Citation(keys=keys, style=cmd_base))
+                elif cmd_base == 'ref':
+                    elements.append(Reference(label=args[0].strip()))
+                elif cmd_base == 'label':
+                    elements.append(Label(name=args[0].strip()))
                 pos = end
             else:
                 elements.append(Text(content=cmd_name, bold=is_bold, italic=is_italic))
@@ -494,6 +504,9 @@ def parse_inline_latex(text: str, is_bold: bool = False, is_italic: bool = False
                     elements.extend(parse_inline_latex(args[0], is_bold=is_bold, is_italic=True))
                 elif cmd_base == 'texttt':
                     elements.append(CodeInline(code=args[0]))
+                    # Ensure separating space if the very next character is not whitespace
+                    if end < len(text) and not text[end].isspace():
+                        elements.append(Text(content=' ', bold=is_bold, italic=is_italic))
                 elif cmd_base == 'href':
                     if len(args) >= 2:
                         elements.append(Link(url=args[0], title=None, content=parse_inline_latex(args[1], is_bold=is_bold, is_italic=is_italic)))

@@ -110,5 +110,16 @@ def _render_node(node) -> str:
             return f"${node.code}$"
         else:
             return f"$$\n{node.code}\n$$"
+            
+    else:
+        from ..ast import Footnote, Citation, Reference, Label
+        if isinstance(node, Footnote):
+            return f"\\footnote{{{''.join(_render_node(c) for c in node.content)}}}"
+        elif isinstance(node, Citation):
+            return f"\\{node.style}{{{','.join(node.keys)}}}"
+        elif isinstance(node, Reference):
+            return f"\\ref{{{node.label}}}"
+        elif isinstance(node, Label):
+            return f"\\label{{{node.name}}}"
         
     return ""

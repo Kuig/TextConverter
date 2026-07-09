@@ -282,6 +282,36 @@ class TestLatexParser(BaseConverterTest):
         # Table from \begin{tabular}
         self.assertIn("|", content, "Missing table (tabular) content")
 
+    def test_simple_latex_to_latex(self):
+        """SampleLatex.tex → LaTeX: structural elements roundtrip to latex code."""
+        in_path = INPUT_DIR / "SampleLatex.tex"
+        out_path = self._out("SampleLatex_out.tex")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        self.assertIn("\\documentclass{article}", content)
+        self.assertIn("\\begin{document}", content)
+        self.assertIn("Il Teorema di Pitagora", content)
+        self.assertIn("\\begin{verbatim}", content)
+        self.assertIn("\\end{document}", content)
+
+    def test_weird_journal_latex_to_latex(self):
+        """Weird Journal TEX.tex → LaTeX: abstract, sections, and table roundtrip to latex code."""
+        in_path = INPUT_DIR / "Weird Journal TEX.tex"
+        out_path = self._out("Weird_Journal_TEX_out.tex")
+
+        textconverter.save_to_file(str(in_path), str(out_path))
+        self.assertTrue(out_path.exists())
+
+        content = _read(out_path)
+        self.assertIn("\\documentclass{article}", content)
+        self.assertIn("\\begin{document}", content)
+        self.assertIn("Introduction", content)
+        self.assertIn("\\begin{tabular}", content)
+        self.assertIn("\\end{document}", content)
+
     def test_latex_safeguards(self):
         """Verify that latex macros like \\cite, \\ref, \\label, and \\footnote are preserved."""
         tex_content = "This is a cite \\cite{somekey}, a label \\label{lbl}, a ref \\ref{lbl}, and a footnote \\footnote{This is a footnote}."
@@ -290,6 +320,19 @@ class TestLatexParser(BaseConverterTest):
         self.assertIn("\\label{lbl}", result)
         self.assertIn("\\ref{lbl}", result)
         self.assertIn("\\footnote{This is a footnote}", result)
+
+    def test_latex_to_md_to_latex_safeguards(self):
+        """Verify that latex macros are preserved through a latex -> md -> latex roundtrip and inner formats are parsed."""
+        tex_content = "Some text with \\footnote{inner \\textbf{bold} text} and \\cite{abc}."
+        md_result = textconverter.convert(tex_content, to_format="markdown", from_format="latex")
+        self.assertIn("\\footnote{inner **bold** text}", md_result)
+        self.assertIn("\\cite{abc}", md_result)
+        
+        # Now convert back to latex
+        tex_result = textconverter.convert(md_result, to_format="latex", from_format="markdown")
+        # Should be back to latex with proper bold
+        self.assertIn("\\footnote{inner \\textbf{bold} text}", tex_result)
+        self.assertIn("\\cite{abc}", tex_result)
 
     def test_latex_math_to_html(self):
         """Verify that LaTeX math environments are correctly converted to HTML math elements."""
