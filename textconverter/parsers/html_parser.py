@@ -279,6 +279,27 @@ class ASTHTMLParser(HTMLParser):
                 node = self.stack.pop()
                 
                 parent = self.stack[-1]
+                
+                # Check if this is an Abstract blockquote
+                if tag == 'blockquote' and isinstance(node, BlockQuote):
+                    if getattr(node, '_is_abstract', False):
+                        from ..ast import Abstract
+                        node = Abstract(children=node.children)
+                    else:
+                        def _get_first_text(n):
+                            from ..ast import Text
+                            if isinstance(n, Text): return n
+                            if hasattr(n, 'children') and n.children: return _get_first_text(n.children[0])
+                            if hasattr(n, 'content') and isinstance(n.content, list) and n.content: return _get_first_text(n.content[0])
+                            return None
+                            
+                        first_text = _get_first_text(node)
+                        if first_text and first_text.content.strip().lower().startswith("abstract"):
+                            import re
+                            first_text.content = re.sub(r'^\s*abstract[\s:]*', '', first_text.content, flags=re.IGNORECASE)
+                            from ..ast import Abstract
+                            node = Abstract(children=node.children)
+                
                 # Special handling for table headers
                 if tag == 'th' or (tag == 'tr' and self.in_thead and isinstance(parent, Table)):
                     if isinstance(node, TableRow) and isinstance(parent, Table):
@@ -291,6 +312,12 @@ class ASTHTMLParser(HTMLParser):
                     self._append_to_parent(node, force_parent=parent)
 
     def handle_data(self, data):
+        if getattr(self, 'in_alert_title', False):
+            if data.strip().lower() == "abstract":
+                if len(self.stack) > 0 and isinstance(self.stack[-1], BlockQuote):
+                    self.stack[-1]._is_abstract = True
+            return
+
         if self.in_style_tag:
             self.style_data += data
             

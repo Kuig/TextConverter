@@ -112,8 +112,18 @@ def _render_node(node) -> str:
             return f"$$\n{node.code}\n$$"
             
     else:
-        from ..ast import Footnote, Citation, Reference, Label
-        if isinstance(node, Footnote):
+        from ..ast import Abstract, Footnote, Citation, Reference, Label
+        if isinstance(node, Abstract):
+            content = '\n'.join(_render_node(c) for c in node.children)
+            lines = content.split('\n')
+            lines.insert(0, "[!IMPORTANT]")
+            lines.insert(1, "**Abstract**")
+            
+            bq_lines = []
+            for line in lines:
+                bq_lines.append(f"> {line}" if line.strip() else ">")
+            return '\n'.join(bq_lines)
+        elif isinstance(node, Footnote):
             return f"\\footnote{{{''.join(_render_node(c) for c in node.content)}}}"
         elif isinstance(node, Citation):
             return f"\\{node.style}{{{','.join(node.keys)}}}"

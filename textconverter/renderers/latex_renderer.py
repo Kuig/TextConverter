@@ -139,8 +139,11 @@ def _render_node(node, image_handling: str = "auto") -> str:
             return f"\\begin{{equation}}\n{node.code}\n\\end{{equation}}"
             
     else:
-        from ..ast import Footnote, Citation, Reference, Label
-        if isinstance(node, Footnote):
+        from ..ast import Abstract, Footnote, Citation, Reference, Label
+        if isinstance(node, Abstract):
+            content = '\n'.join(_render_node(c, image_handling) for c in node.children)
+            return f"\\begin{{abstract}}\n{content}\n\\end{{abstract}}"
+        elif isinstance(node, Footnote):
             return f"\\footnote{{{''.join(_render_node(c, image_handling) for c in node.content)}}}"
         elif isinstance(node, Citation):
             return f"\\{node.style}{{{','.join(node.keys)}}}"

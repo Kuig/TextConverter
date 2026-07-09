@@ -284,6 +284,22 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
                 
             # Recursive parse to support nested elements
             parsed_inner = parse_markdown(quote_text, code_parsing=code_parsing)
+            
+            # Check if this is an Abstract blockquote by inspecting the first text node
+            def _get_first_text(n):
+                from ..ast import Text
+                if isinstance(n, Text): return n
+                if hasattr(n, 'children') and n.children: return _get_first_text(n.children[0])
+                if hasattr(n, 'content') and isinstance(n.content, list) and n.content: return _get_first_text(n.content[0])
+                return None
+                
+            first_text = _get_first_text(parsed_inner)
+            if first_text and first_text.content.strip().lower().startswith("abstract"):
+                first_text.content = re.sub(r'^\s*abstract[\s:]*', '', first_text.content, flags=re.IGNORECASE)
+                from ..ast import Abstract
+                doc.children.append(Abstract(children=parsed_inner.children))
+                continue
+                
             doc.children.append(BlockQuote(children=parsed_inner.children, alert_type=alert_type))
             continue
             

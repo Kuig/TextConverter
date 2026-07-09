@@ -200,7 +200,8 @@ class TestLatexParser(BaseConverterTest):
         # Title extracted from \title{} preamble
         self.assertIn("# **Il Teorema di Pitagora**", content, "Missing extracted title")
         # Abstract rendered as blockquote
-        self.assertIn("> ## Abstract", content, "Missing abstract blockquote")
+        self.assertIn("> [!IMPORTANT]", content, "Missing abstract callout")
+        self.assertIn("> **Abstract**", content, "Missing abstract title")
         # Typographic quote normalization (``text'' → "text")
         self.assertIn("\u201cLa matematica \u00e8 la regina delle scienze\u201d", content,
                       "Missing normalized double quotes in abstract")
@@ -223,7 +224,7 @@ class TestLatexParser(BaseConverterTest):
         content = _read(out_path)
         self.assertIn("Il Teorema di Pitagora", content, "Missing title in HTML")
         self.assertIn("Abstract", content, "Missing Abstract heading in HTML")
-        self.assertIn("<blockquote>", content, "Missing blockquote element in HTML")
+        self.assertIn('<blockquote class="alert-important">', content, "Missing abstract blockquote element in HTML")
 
     def test_latex_to_html_with_light_template(self):
         """SampleLatex.tex → HTML with pretty (light) template: verifies CSS and MathJax script are present."""
@@ -333,6 +334,24 @@ class TestLatexParser(BaseConverterTest):
         # Should be back to latex with proper bold
         self.assertIn("\\footnote{inner \\textbf{bold} text}", tex_result)
         self.assertIn("\\cite{abc}", tex_result)
+
+    def test_abstract_roundtrip(self):
+        """Verify that the abstract environment is preserved through latex -> md -> html -> latex."""
+        tex_content = "\\begin{abstract}\nThis is the abstract text.\n\\end{abstract}"
+        md_result = textconverter.convert(tex_content, to_format="markdown", from_format="latex")
+        self.assertIn("> [!IMPORTANT]", md_result)
+        self.assertIn("> **Abstract**", md_result)
+        self.assertIn("> This is the abstract text.", md_result)
+        
+        html_result = textconverter.convert(md_result, to_format="html", from_format="markdown")
+        self.assertIn('<blockquote class="alert-important">', html_result)
+        self.assertIn('<div class="alert-title">Abstract</div>', html_result)
+        self.assertIn('This is the abstract text.', html_result)
+        
+        final_tex = textconverter.convert(html_result, to_format="latex", from_format="html")
+        self.assertIn("\\begin{abstract}", final_tex)
+        self.assertIn("This is the abstract text.", final_tex)
+        self.assertIn("\\end{abstract}", final_tex)
 
     def test_latex_math_to_html(self):
         """Verify that LaTeX math environments are correctly converted to HTML math elements."""

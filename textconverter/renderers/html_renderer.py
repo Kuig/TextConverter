@@ -110,8 +110,11 @@ def _render_node(node) -> str:
             return f'<div class="math block">$$\n{html.escape(node.code)}\n$$</div>'
             
     else:
-        from ..ast import Footnote, Citation, Reference, Label
-        if isinstance(node, Footnote):
+        from ..ast import Abstract, Footnote, Citation, Reference, Label
+        if isinstance(node, Abstract):
+            content = '\n'.join(_render_node(c) for c in node.children)
+            return f'<blockquote class="alert-important">\n<div class="alert-title">Abstract</div>\n{content}\n</blockquote>'
+        elif isinstance(node, Footnote):
             # Using <sup> or just literal fallback
             return f"\\footnote{{{''.join(_render_node(c) for c in node.content)}}}"
         elif isinstance(node, Citation):

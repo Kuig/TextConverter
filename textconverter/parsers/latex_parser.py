@@ -257,12 +257,12 @@ def parse_latex(text: str) -> Document:
         elif first_type == 'abstract':
             content, start, end = _extract_environment(text, 'abstract', first_pos)
             if start != -1:
-                abstract_bq = BlockQuote()
-                abstract_bq.children.append(Heading(level=2, children=[Text(content="Abstract")]))
+                from ..ast import Abstract
+                abstract_node = Abstract()
                 for p_text in re.split(r'\n\s*\n', content.strip()):
                     if p_text.strip():
-                        abstract_bq.children.append(Paragraph(children=parse_inline_latex(p_text.strip())))
-                doc.children.append(abstract_bq)
+                        abstract_node.children.append(Paragraph(children=parse_inline_latex(p_text.strip())))
+                doc.children.append(abstract_node)
                 pos = end
             else:
                 pos = first_pos + len(first_cmd)

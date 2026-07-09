@@ -91,6 +91,11 @@ class BlockQuote(Node):
     alert_type: Optional[str] = None  # e.g., "NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"
 
 @dataclass
+class Abstract(Node):
+    """An abstract block containing other nodes."""
+    children: TList[Node] = field(default_factory=list)
+
+@dataclass
 class HorizontalRule(Node):
     """A horizontal rule / thematic break (---)."""
     pass
