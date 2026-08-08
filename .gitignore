@@ -148,3 +148,6 @@ cython_debug/
 /tests/Output/
 /Windows Integration/register.reg
 /Windows Integration/unregister.reg
+
+# Cora extension
+.cora/

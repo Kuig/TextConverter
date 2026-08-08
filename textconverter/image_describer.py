@@ -4,13 +4,13 @@ import json
 from textconverter.logger import log_action, log_info, log_success, log_warning
 from .ast import Image
 
-from .config import load_config, get_ai_config, configure_provider_from_config
+from .config import AppConfig, load_config, get_ai_config, configure_provider_from_config
 
 
 def _call_ai(
     src: str,
     base_dir: str,
-    config: dict,
+    config: AppConfig,
     latex_auto: bool = False,
     extracted_text: str | None = None,
 ) -> tuple[str | None, str]:
@@ -40,17 +40,14 @@ def _call_ai(
         return f"[Error: Image file not found at {img_path}]", "error"
 
     ai_cfg = get_ai_config(config)
-    provider = ai_cfg.get("provider", "ollama")
-    provider_settings = config.get(provider, {})
+    provider = ai_cfg.provider
+    provider_settings = config.providers.get(provider, {})
     provider_timeout = provider_settings.get("timeout", 300)
-    c_model = ai_cfg.get("classification_model", "gemma4:12b")
-    d_model = ai_cfg.get("description_model", "gemma4:12b")
-    classification_prompt = ai_cfg.get(
-        "classification_prompt",
-        'Classify the image. Reply with JSON {"category": "default"}',
-    )
-    c_budget = ai_cfg.get("classification_visual_token_budget", 0)
-    d_budget = ai_cfg.get("description_visual_token_budget", 0)
+    c_model = ai_cfg.classification_model
+    d_model = ai_cfg.description_model
+    classification_prompt = ai_cfg.classification_prompt
+    c_budget = ai_cfg.classification_visual_token_budget
+    d_budget = ai_cfg.description_visual_token_budget
 
     try:
         try:
@@ -91,12 +88,12 @@ def _call_ai(
             category = "default"
 
         # 2. Description
-        prompts = ai_cfg.get("prompts", {})
+        prompts = ai_cfg.prompts
         if category not in prompts:
             category = "default"
 
         final_prompt = prompts.get(category, "Describe the image in detail.")
-        if extracted_text and ai_cfg.get("provide_extracted_text_to_describer", False):
+        if extracted_text and ai_cfg.provide_extracted_text_to_describer:
             final_prompt += (
                 f"\n\nThis image was originally vector-based and contained the following "
                 f"extracted text:\n{extracted_text}"
@@ -162,13 +159,13 @@ def _count_images(node) -> int:
     return count
 
 
-def _traverse(node, base_dir: str, config: dict, state: dict, latex_auto: bool = False) -> None:
+def _traverse(node, base_dir: str, config: AppConfig, state: dict, latex_auto: bool = False) -> None:
     """Recursively walk an AST node and process Image children in-place.
 
     Args:
         node: Any AST node.
         base_dir: Base directory for resolving image paths.
-        config: Loaded configuration dictionary.
+        config: Loaded application configuration.
         state: Mutable dict with 'total' and 'current' counters.
         latex_auto: Whether to skip non-formula images in LaTeX mode.
     """
@@ -190,13 +187,13 @@ def _traverse(node, base_dir: str, config: dict, state: dict, latex_auto: bool =
             _traverse(header, base_dir, config, state, latex_auto)
 
 
-def _process_list(node_list: list, base_dir: str, config: dict, state: dict, latex_auto: bool = False) -> list:
+def _process_list(node_list: list, base_dir: str, config: AppConfig, state: dict, latex_auto: bool = False) -> list:
     """Process a list of AST nodes, replacing Image nodes with descriptions.
 
     Args:
         node_list: List of AST nodes.
         base_dir: Base directory for resolving image paths.
-        config: Loaded configuration dictionary.
+        config: Loaded application configuration.
         state: Mutable dict with 'total' and 'current' counters.
         latex_auto: Whether to skip non-formula images in LaTeX mode.
 
@@ -282,9 +279,9 @@ def process_images(doc, base_dir: str, latex_auto: bool = False) -> None:
 
     if total_images > 0:
         ai_cfg = get_ai_config(config)
-        provider = ai_cfg.get("provider", "ollama")
-        c_model = ai_cfg.get("classification_model", "unknown")
-        d_model = ai_cfg.get("description_model", "unknown")
+        provider = ai_cfg.provider
+        c_model = ai_cfg.classification_model
+        d_model = ai_cfg.description_model
         log_info(f"Starting description of {total_images} images via {provider} (Class: {c_model}, Desc: {d_model})...")
 
     _traverse(doc, base_dir, config, state, latex_auto)
