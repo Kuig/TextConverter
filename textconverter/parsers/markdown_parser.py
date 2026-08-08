@@ -143,8 +143,22 @@ def _parse_markdown_list(block_text: str, ref_map: dict | None = None) -> ListBl
     return root_list_block
 
 
-def parse_markdown(text: str, code_parsing: bool = False) -> Document:
-    """Parses markdown text into an AST Document."""
+def parse_markdown(
+    text: str,
+    code_parsing: bool = False,
+    parent_ref_map: dict[str, tuple[str, str | None]] | None = None,
+) -> Document:
+    """Parses markdown text into an AST Document.
+
+    Args:
+        text: The markdown source to parse.
+        code_parsing: If True, enables heuristic code-block detection.
+        parent_ref_map: Reference-style link/image definitions inherited from
+            an enclosing document (used internally when a blockquote's content
+            is re-parsed recursively, so references defined outside the
+            blockquote still resolve correctly). Local definitions found in
+            ``text`` take precedence over inherited ones with the same label.
+    """
     text = smart_preprocess_markdown(text)
 
     # Collect and strip reference-style link/image definitions: [id]: <url> "title"
@@ -153,7 +167,7 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
         r'(?:\s+(?:"([^"]*)"|\x27([^\x27]*)\x27|\(([^)]*)\)))?\s*$',
         re.MULTILINE
     )
-    ref_map: dict[str, tuple[str, str | None]] = {}
+    ref_map: dict[str, tuple[str, str | None]] = dict(parent_ref_map or {})
     for rm in _ref_def_re.finditer(text):
         label = rm.group(1).lower().strip()
         url   = rm.group(2)
@@ -282,8 +296,10 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
                 alert_type = m_alert.group(1).upper()
                 quote_text = m_alert.group(2).strip()
                 
-            # Recursive parse to support nested elements
-            parsed_inner = parse_markdown(quote_text, code_parsing=code_parsing)
+            # Recursive parse to support nested elements; inherit the outer
+            # document's reference-style link/image definitions so that
+            # references defined outside the blockquote still resolve.
+            parsed_inner = parse_markdown(quote_text, code_parsing=code_parsing, parent_ref_map=ref_map)
             
             # Check if this is an Abstract blockquote by inspecting the first text node
             def _get_first_text(n):
