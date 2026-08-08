@@ -61,6 +61,10 @@ The `"ai"` section is provider-agnostic: switching to a different backend only r
 
 Configuration is resolved in priority order: **CWD** → package root → built-in defaults. This means you can place a local `config.json` in your working directory to override the project-level settings without modifying the package.
 
+### API Keys (Cloud Providers)
+
+The default provider (Ollama) runs fully locally and needs no API key. If you switch `"provider"` to a cloud backend (`google`, `openai`, `anthropic`, ...), copy [`secrets.json.example`](secrets.json.example) to `secrets.json` at the project root and fill in the relevant key — this file is git-ignored. Environment variables (e.g. `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) are also supported and take priority over `secrets.json`.
+
 ## Image Handling
 
 The `--image-handling` option (or the `image_handling` parameter in the API) determines how images in the source document are processed and rendered.

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from ..ast import Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
 
 def render_markdown(doc: Document) -> str:

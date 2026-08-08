@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Basic templating system
 
 PLAIN_TEMPLATE = """<!DOCTYPE html>

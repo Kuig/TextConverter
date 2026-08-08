@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 from textconverter.api import save_to_file
+from textconverter.logger import log_success, log_error
 
 
 def cmd_convert(args: argparse.Namespace) -> None:
@@ -22,9 +23,9 @@ def cmd_convert(args: argparse.Namespace) -> None:
             code_parsing=args.code_parsing,
             extract_html=args.extract_html,
         )
-        print(f"Saved to {args.output}")
+        log_success(f"Saved to {args.output}")
     except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        log_error(f"Error: {exc}")
         sys.exit(1)
 
 
@@ -37,7 +38,7 @@ def cmd_mcp(args: argparse.Namespace) -> None:
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError:
-        print("'mcp' library not installed. Run: pip install mcp", file=sys.stderr)
+        log_error("'mcp' library not installed. Run: pip install mcp")
         sys.exit(1)
     from textconverter.mcp_tools import register_tools
     mcp = FastMCP("TextConverter")

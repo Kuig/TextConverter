@@ -1,5 +1,5 @@
+from __future__ import annotations
 import re
-from typing import List
 
 from ..ast import (
     Document, Paragraph, Heading, Text, Link, Image, CodeInline,
@@ -350,7 +350,7 @@ def parse_markdown(text: str, code_parsing: bool = False) -> Document:
 
 import uuid
 
-def _parse_formatting(text: str) -> List[InlineElement]:
+def _parse_formatting(text: str) -> list[InlineElement]:
     store = {}
     counter = [0]
     
@@ -386,7 +386,7 @@ def _parse_formatting(text: str) -> List[InlineElement]:
         
     return resolve(text)
 
-def parse_inline(text: str, ref_map: dict | None = None) -> List[InlineElement]:
+def parse_inline(text: str, ref_map: dict | None = None) -> list[InlineElement]:
     """Parses inline markdown like bold, italic, links, images, code.
 
     Args:

@@ -1,4 +1,4 @@
-from typing import List as TList, Optional, Union
+from __future__ import annotations
 from dataclasses import dataclass, field
 
 @dataclass
@@ -18,19 +18,19 @@ class Text(Node):
 class Link(Node):
     """An hyperlink node."""
     url: str
-    title: Optional[str] = None
+    title: str | None = None
     # A link can contain text or even images
-    content: TList[Node] = field(default_factory=list)
+    content: list[Node] = field(default_factory=list)
 
 @dataclass
 class Image(Node):
     """An image node."""
     src: str
     alt: str = ""
-    title: Optional[str] = None
-    description: Optional[str] = None
-    category: Optional[str] = None
-    extracted_text: Optional[str] = None
+    title: str | None = None
+    description: str | None = None
+    category: str | None = None
+    extracted_text: str | None = None
     render_metadata: bool = True
 
 @dataclass
@@ -46,12 +46,12 @@ class LineBreak(Node):
 @dataclass
 class Footnote(Node):
     """An inline footnote containing other inline elements."""
-    content: TList['InlineElement'] = field(default_factory=list)
+    content: list['InlineElement'] = field(default_factory=list)
 
 @dataclass
 class Citation(Node):
     """A citation reference."""
-    keys: TList[str]
+    keys: list[str]
     style: str = "cite" # cite, citet, citep
 
 @dataclass
@@ -65,35 +65,35 @@ class Label(Node):
     name: str
 
 # Helper type for inline elements
-InlineElement = Union[Text, Link, Image, CodeInline, LineBreak, Footnote, Citation, Reference, Label]
+InlineElement = Text | Link | Image | CodeInline | LineBreak | Footnote | Citation | Reference | Label
 
 @dataclass
 class Paragraph(Node):
     """A paragraph of mixed text/children."""
-    children: TList[InlineElement] = field(default_factory=list)
+    children: list[InlineElement] = field(default_factory=list)
 
 @dataclass
 class Heading(Node):
     """A heading node."""
     level: int  # 1 to 6
-    children: TList[InlineElement] = field(default_factory=list)
+    children: list[InlineElement] = field(default_factory=list)
 
 @dataclass
 class CodeBlock(Node):
     """A block of code."""
     code: str
-    language: Optional[str] = None
+    language: str | None = None
 
 @dataclass
 class BlockQuote(Node):
     """A block quote node containing other nodes."""
-    children: TList[Node] = field(default_factory=list)
-    alert_type: Optional[str] = None  # e.g., "NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"
+    children: list[Node] = field(default_factory=list)
+    alert_type: str | None = None  # e.g., "NOTE", "TIP", "IMPORTANT", "WARNING", "CAUTION"
 
 @dataclass
 class Abstract(Node):
     """An abstract block containing other nodes."""
-    children: TList[Node] = field(default_factory=list)
+    children: list[Node] = field(default_factory=list)
 
 @dataclass
 class HorizontalRule(Node):
@@ -103,29 +103,29 @@ class HorizontalRule(Node):
 @dataclass
 class ListItem(Node):
     """An item within a list."""
-    children: TList[Node] = field(default_factory=list)
+    children: list[Node] = field(default_factory=list)
 
 @dataclass
 class ListBlock(Node):
     """An ordered or unordered list."""
     ordered: bool
-    items: TList[ListItem] = field(default_factory=list)
+    items: list[ListItem] = field(default_factory=list)
 
 @dataclass
 class TableCell(Node):
     """A cell in a table."""
-    children: TList[InlineElement] = field(default_factory=list)
+    children: list[InlineElement] = field(default_factory=list)
 
 @dataclass
 class TableRow(Node):
     """A row in a table."""
-    cells: TList[TableCell] = field(default_factory=list)
+    cells: list[TableCell] = field(default_factory=list)
 
 @dataclass
 class Table(Node):
     """A basic table."""
-    headers: TList[TableCell] = field(default_factory=list)
-    rows: TList[TableRow] = field(default_factory=list)
+    headers: list[TableCell] = field(default_factory=list)
+    rows: list[TableRow] = field(default_factory=list)
 
 @dataclass
 class Equation(Node):
@@ -136,4 +136,4 @@ class Equation(Node):
 @dataclass
 class Document(Node):
     """The root of the AST."""
-    children: TList[Node] = field(default_factory=list)
+    children: list[Node] = field(default_factory=list)

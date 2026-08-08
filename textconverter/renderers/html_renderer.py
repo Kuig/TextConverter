@@ -1,3 +1,4 @@
+from __future__ import annotations
 from ..ast import Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
 from .templates import get_template
 

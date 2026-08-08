@@ -1,9 +1,9 @@
+from __future__ import annotations
 import os
-from typing import Optional
 from ..ast import Document, Image
 from .markdown_parser import parse_markdown
 
-def parse_pdf(file_path: str, output_dir: Optional[str] = None, image_dir_name: Optional[str] = None, write_images: bool = True, code_parsing: bool = False) -> Document:
+def parse_pdf(file_path: str, output_dir: str | None = None, image_dir_name: str | None = None, write_images: bool = True, code_parsing: bool = False) -> Document:
     """Parses a PDF into an AST Document using pymupdf4llm layout engine."""
     try:
         import pymupdf4llm

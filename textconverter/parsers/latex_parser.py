@@ -1,5 +1,5 @@
+from __future__ import annotations
 import re
-from typing import List
 
 from ..ast import (
     Document, Paragraph, Heading, Text, Link, Image, CodeInline,
@@ -367,7 +367,7 @@ def _parse_latex_table(content: str) -> Table:
 
     return table
 
-def parse_inline_latex(text: str, is_bold: bool = False, is_italic: bool = False) -> List[InlineElement]:
+def parse_inline_latex(text: str, is_bold: bool = False, is_italic: bool = False) -> list[InlineElement]:
     elements = []
     pos = 0
     
