@@ -15,6 +15,8 @@ TextConverter converts between PDF, HTML, Markdown, LaTeX, and JSON formats. It 
 ## Installation
 
 ```powershell
+git clone https://github.com/Kuig/TextConverter.git
+cd TextConverter
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install .
@@ -27,6 +29,17 @@ Core conversion features (such as Markdown, HTML, LaTeX, PDF, and heuristic code
 If you want to use AI-powered image descriptions (`image_handling="describe"`, `image_handling="auto_latex"` or converting standalone image inputs), you must install the `unified_ai_client` package:
 ```powershell
 pip install -r requirements_prod.txt
+```
+
+### Development
+
+For local development, install in editable mode via `requirements_dev.txt`. This requires [`UnifiedAiClient`](https://github.com/Kuig/UnifiedAiClient) checked out as a sibling directory (`../UnifiedAiClient`, relative to this project's root):
+```powershell
+pip install -r requirements_dev.txt
+```
+This installs both `unified_ai_client` and `textconverter` itself in editable mode, so source changes in either project are picked up immediately without reinstalling. Run the test suite with:
+```powershell
+python -m unittest discover -s tests -p "test.py"
 ```
 
 ## Configuration
@@ -152,6 +165,46 @@ save_to_file(
 )
 ```
 
+#### API Reference
+
+```python
+def convert(
+    source: str,
+    to_format: str,
+    from_format: str | None = None,
+    template: str = "plain",
+    is_file: bool = False,
+    output_dir: str | None = None,
+    image_dir_name: str | None = None,
+    image_handling: str = "auto",
+    code_parsing: bool = False,
+    extract_html: bool = False,
+) -> str:
+    """Convert text or a file to a specific format and return the result as a string."""
+```
+- `source` — File path, remote URL (`http://`/`https://`), or raw text content.
+- `to_format` — Target format: `"markdown"`, `"html"`, `"latex"`, or `"json"`.
+- `from_format` — Source format hint (`"pdf"`, `"markdown"`, `"html"`, `"latex"`, `"json"`, `"image"`). Inferred from the file/URL extension when omitted; required when `source` is raw text with no extension to infer from.
+- `template` — HTML rendering template (see [renderers/templates.py](textconverter/renderers/templates.py)): `"plain"`, `"light-theme"`, or `"dark-theme"`.
+- `is_file` — Treat `source` as a file path rather than raw text.
+- `output_dir` / `image_dir_name` — Base directory and subdirectory name used to write downloaded/extracted images.
+- `image_handling` — `"auto"` (default, format-dependent), `"describe"`, `"embed"`, `"link"`, `"discard"`, or `"auto_latex"` (see [Image Handling](#image-handling)).
+- `code_parsing` — Enable heuristic code-block detection (Markdown/HTML sources).
+- `extract_html` — Strip boilerplate and isolate main content when parsing HTML.
+
+```python
+def save_to_file(
+    source: str,
+    output_path: str,
+    template: str = "plain",
+    image_handling: str = "auto",
+    code_parsing: bool = False,
+    extract_html: bool = False,
+) -> None:
+    """Convert and write the result directly to output_path (format inferred from its extension)."""
+```
+Same semantics as `convert()`, but infers both `to_format` (from `output_path`'s extension) and `is_file=True`, and writes the result to disk instead of returning it.
+
 ### Windows Context Menu Integration
 
 You can integrate `TextConverter` directly into the Windows Explorer right-click context menu. This allows you to right-click any supported file and quickly convert it to your desired format.
@@ -207,3 +260,39 @@ TextConverter/
     └── gui/                 ← Streamlit user interface
         └── app.py           ← Streamlit web interface entrypoint
 ```
+
+---
+
+## Architecture
+
+TextConverter is built around a **parser → AST → renderer** pipeline: every supported format is converted to and from a single, format-agnostic in-memory document tree, so adding a new format only requires a new parser and/or renderer — the rest of the pipeline (image handling, code detection, CLI/MCP/GUI) is shared automatically.
+
+### Pipeline
+
+1. **Parse** — [parsers/](textconverter/parsers/) turns a source (file, raw text, or downloaded URL content) into a [`Document`](textconverter/ast.py) tree: `pdf_parser.py` (via `pymupdf4llm`), `html_parser.py` (zero-dependency heuristic `HTMLParser` subclass, also used for `--extract-html` boilerplate stripping), `latex_parser.py`, `markdown_parser.py`, `json_parser.py`, and `image_parser.py` (delegates to the AI describer, then re-parses the resulting Markdown).
+2. **Transform** — [api.py](textconverter/api.py)'s `convert()` orchestrates cross-cutting steps on the AST: downloading and deduplicating remote images, resolving the `image_handling` strategy (`describe` / `embed` / `link` / `discard` / `auto_latex`, or `auto`'s per-format default — see [Image Handling](#image-handling)), and optionally running [code_detector.py](textconverter/code_detector.py)'s heuristic to fence detected code blocks.
+3. **Render** — [renderers/](textconverter/renderers/) turns the (possibly transformed) `Document` back into a string in the target format: `markdown_renderer.py`, `html_renderer.py` (using [templates.py](textconverter/renderers/templates.py)), `latex_renderer.py`, `json_renderer.py`.
+
+### The AST ([ast.py](textconverter/ast.py))
+
+A small set of `@dataclass` node types (`Document`, `Paragraph`, `Heading`, `Text`, `Link`, `Image`, `Table`, `CodeBlock`, `Equation`, `Citation`, `Footnote`, ...) models the structural and inline elements common across PDF, HTML, Markdown, LaTeX, and JSON. `Image` nodes carry both the raw source path and AI-derived metadata (`description`, `category`, `extracted_text`) populated during the transform step.
+
+### Interfaces
+
+All four interfaces are thin wrappers around the same `convert()`/`save_to_file()` API in [api.py](textconverter/api.py) — no business logic is duplicated between them:
+- **CLI** ([__main__.py](textconverter/__main__.py)) — `argparse` subcommands (`convert`, `mcp`, `gui`).
+- **MCP server** ([mcp_tools.py](textconverter/mcp_tools.py)) — FastMCP tools over stdio, for use from AI agents/IDEs.
+- **Python library** — direct import of `textconverter.api`.
+- **Streamlit GUI** ([gui/app.py](textconverter/gui/app.py)) — sidebar for options, main area for source/output and results.
+
+### AI image description ([image_describer.py](textconverter/image_describer.py))
+
+When `image_handling` requires it, each `Image` node is classified (one of 8 categories: photo, diagram, chart, text/table/formula, infographic, document scan, logo, map) and then described with a category-specific prompt, via [`unified_ai_client`](https://github.com/Kuig/UnifiedAiClient)'s `call_ai()`/`preload_model()`/`configure_provider()`. This is the project's only optional dependency — core parsing/rendering works without it installed.
+
+### Configuration ([config.py](textconverter/config.py))
+
+`config.json` is loaded into typed dataclasses (`AppConfig`/`AiConfig`), resolved in priority order **CWD → package root → built-in defaults**, so the app always starts even without a `config.json` present. Provider connection settings (e.g. the `"ollama"` block) intentionally stay a plain `dict` — their shape is provider-specific and owned by `unified_ai_client`, not by TextConverter.
+
+### Logging ([logger.py](textconverter/logger.py))
+
+A dual-backend logger (`log_success`, `log_error`, `log_action`, ...) prints to the console by default and switches to Streamlit widgets when `set_backend("streamlit")` is called by the GUI — the same business logic code path drives both interfaces without any conditional branching.

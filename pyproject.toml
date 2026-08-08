@@ -38,6 +38,11 @@ ai = [
     "unified-ai-client"
 ]
 
+[project.urls]
+Homepage = "https://github.com/Kuig/TextConverter"
+Repository = "https://github.com/Kuig/TextConverter"
+"Bug Tracker" = "https://github.com/Kuig/TextConverter/issues"
+
 [project.scripts]
 textconverter = "textconverter.__main__:main"
 
