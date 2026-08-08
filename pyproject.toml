@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "textconverter"
-version = "0.1.0"
+version = "0.1.1"
 description = "TextConverter — Multi-format document converter with AI-powered image description and heuristic code detection."
 readme = "README.md"
 license = { text = "MIT" }

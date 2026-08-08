@@ -422,6 +422,11 @@ def parse_inline(text: str, ref_map: dict | None = None) -> list[InlineElement]:
         r'(?P<reflink>(?<!!)(?<!\])\[(?P<rl_text>.*?)\]\[(?P<rl_id>[^\]]*)\])|'
         # Inline image: ![alt](url "title") with optional OCR block
         r'(?P<inlineimg>!\[(?P<img_alt>[^\]]*)\]\((?P<img_url>[^\)\s]*)(?:\s+"(?P<img_title>[^"]*)")?\)(?:<!--OCR:(?P<ocr_b64>[A-Za-z0-9+/=]+)-->)?)|'
+        # Linked image: [![alt](imgurl "imgtitle")](linkurl "linktitle") — an inline image
+        # used as the entire content of an inline link. Must come before inlinelink, whose
+        # link_text ([^\]]+) cannot span the nested image's own closing bracket/paren and
+        # would otherwise misparse the image's URL as the link's URL.
+        r'(?P<linkedimg>\[!\[(?P<li_alt>[^\]]*)\]\((?P<li_img_url>[^\)\s]*)(?:\s+"(?P<li_img_title>[^"]*)")?\)\]\((?P<li_link_url>[^\)\s]*)(?:\s+"(?P<li_link_title>[^"]*)")?\))|'
         # Inline link: [text](url "title")
         r'(?P<inlinelink>(?<!!)(?<!\])\[(?P<link_text>[^\]]+)\]\((?P<link_url>[^\)\s]*)(?:\s+"(?P<link_title>[^"]*)")?\))|'
         r'(?P<codeinline>`(?P<code_content>[^`]+)`)|'
@@ -492,6 +497,10 @@ def parse_inline(text: str, ref_map: dict | None = None) -> list[InlineElement]:
                 title=g.get('img_title'),
                 extracted_text=ocr_text,
             ))
+        elif g.get('linkedimg') is not None:
+            img = Image(src=g['li_img_url'], alt=g.get('li_alt', ''), title=g.get('li_img_title'))
+            link = Link(url=g['li_link_url'], title=g.get('li_link_title'), content=[img])
+            elements.append(link)
         elif g.get('inlinelink') is not None:
             link = Link(
                 url=g['link_url'],
