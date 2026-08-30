@@ -2,9 +2,53 @@ from __future__ import annotations
 import os
 import json
 from textconverter.logger import log_action, log_info, log_success, log_warning
-from .ast import Image
+from .ast import Image, Node
 
-from .config import AppConfig, load_config, get_ai_config, configure_provider_from_config
+from .config import AppConfig, load_config, get_ai_config
+
+
+def init_ai(config: AppConfig) -> None:
+    """Register provider settings and preload the AI models for a conversion.
+
+    Called once per ``process_images()`` run rather than once per image. Stable
+    connection settings (url, timeout, keep_alive) are registered with
+    ``configure_provider()``; ``context_size`` is passed to ``preload_model()``
+    instead, because Ollama allocates the context window at load time and a
+    later mismatch forces a model reload.
+
+    Setup failures (e.g. the provider being unreachable) are non-critical: they
+    are logged and swallowed so the pipeline can still attempt the per-image
+    calls and degrade gracefully.
+
+    Args:
+        config: The loaded application configuration.
+    """
+    try:
+        from unified_ai_client import configure_provider, preload_model, silence_sdks
+    except ImportError:
+        return
+
+    silence_sdks()
+
+    ai_cfg = config.ai
+    provider = ai_cfg.provider
+    provider_settings = dict(config.providers.get(provider, {}))
+    context_size = provider_settings.pop("context_size", None)
+    keep_alive = provider_settings.get("keep_alive")
+
+    preload_kwargs: dict = {"extra_options": {"use_generate": False}}
+    if context_size is not None:
+        preload_kwargs["context_size"] = context_size
+    if keep_alive is not None:
+        preload_kwargs["keep_alive"] = keep_alive
+
+    try:
+        if provider_settings:
+            configure_provider(provider, **provider_settings)
+        for model in dict.fromkeys([ai_cfg.classification_model, ai_cfg.description_model]):
+            preload_model(provider=provider, model=model, **preload_kwargs)
+    except Exception as exc:
+        log_warning(f"AI provider setup failed, continuing without preload: {exc}")
 
 
 def _call_ai(
@@ -20,8 +64,8 @@ def _call_ai(
     the image category, then a free-form description call with a category-specific
     prompt. UnifiedAiClient handles base64 encoding of the image internally.
 
-    The provider and its connection settings are read from the config and applied
-    via ``configure_provider_from_config()`` before any call is made.
+    Provider registration and model preloading are done once per process by
+    ``init_ai()``; this function only issues the per-image calls.
 
     Args:
         src: Image path (relative or absolute).
@@ -31,13 +75,15 @@ def _call_ai(
         extracted_text: Optional pre-extracted text from the image.
 
     Returns:
-        Tuple of (description_text, category). Description is None if skipped.
+        Tuple of (description_text, category). Description is None when the image
+        is missing, the call fails, or LaTeX-auto mode skips a non-formula image.
     """
     category = "default"
     img_path = src if os.path.isabs(src) else os.path.join(base_dir, src)
 
     if not os.path.exists(img_path):
-        return f"[Error: Image file not found at {img_path}]", "error"
+        log_warning(f"Image file not found, skipping description: {img_path}")
+        return None, "error"
 
     ai_cfg = get_ai_config(config)
     provider = ai_cfg.provider
@@ -51,21 +97,15 @@ def _call_ai(
 
     try:
         try:
-            from unified_ai_client import call_ai, preload_model
+            from unified_ai_client import call_ai
         except ImportError:
             raise ImportError(
                 "The 'unified_ai_client' package is required for AI-based image description. "
                 "Please install it first (e.g. via requirements_prod.txt)."
             )
 
-        # Apply provider connection settings (url, timeout, keep_alive, context_size, …)
-        # before any call so that UnifiedAiClient uses the correct configuration.
-        configure_provider_from_config(config)
-
-        # Pre-load models to ensure the provider is initialised with the correct context.
-        preload_model(provider=provider, model=c_model, extra_options={"use_generate": False})
-        if d_model != c_model:
-            preload_model(provider=provider, model=d_model, extra_options={"use_generate": False})
+        # Provider registration and model preloading happen once per process in
+        # ``init_ai()`` (called from ``process_images()``), not per image.
 
         # 1. Classification — JSON mode, UnifiedAiClient handles base64 encoding
         c_opts: dict = {"use_generate": False}
@@ -122,11 +162,11 @@ def _call_ai(
     except ImportError as exc:
         raise exc
     except Exception as exc:
-        log_warning(f"Classification failed, using default: {exc}")
-        return f"[Error generating description: {exc}]", category
+        log_warning(f"Image description failed, skipping: {exc}")
+        return None, category
 
 
-def _count_images(node) -> int:
+def _count_images(node: Node) -> int:
     """Recursively count Image nodes in the document AST.
 
     Args:
@@ -159,7 +199,7 @@ def _count_images(node) -> int:
     return count
 
 
-def _traverse(node, base_dir: str, config: AppConfig, state: dict, latex_auto: bool = False) -> None:
+def _traverse(node: Node, base_dir: str, config: AppConfig, state: dict, latex_auto: bool = False) -> None:
     """Recursively walk an AST node and process Image children in-place.
 
     Args:
@@ -187,7 +227,7 @@ def _traverse(node, base_dir: str, config: AppConfig, state: dict, latex_auto: b
             _traverse(header, base_dir, config, state, latex_auto)
 
 
-def _process_list(node_list: list, base_dir: str, config: AppConfig, state: dict, latex_auto: bool = False) -> list:
+def _process_list(node_list: list[Node], base_dir: str, config: AppConfig, state: dict, latex_auto: bool = False) -> list[Node]:
     """Process a list of AST nodes, replacing Image nodes with descriptions.
 
     Args:
@@ -261,7 +301,7 @@ def _process_list(node_list: list, base_dir: str, config: AppConfig, state: dict
     return new_list
 
 
-def process_images(doc, base_dir: str, latex_auto: bool = False) -> None:
+def process_images(doc: Node, base_dir: str, latex_auto: bool = False) -> None:
     """Classify and describe all Image nodes in a document AST using Ollama.
 
     Loads configuration from the project-root config.json, traverses the full
@@ -283,6 +323,7 @@ def process_images(doc, base_dir: str, latex_auto: bool = False) -> None:
         c_model = ai_cfg.classification_model
         d_model = ai_cfg.description_model
         log_info(f"Starting description of {total_images} images via {provider} (Class: {c_model}, Desc: {d_model})...")
+        init_ai(config)
 
     _traverse(doc, base_dir, config, state, latex_auto)
 

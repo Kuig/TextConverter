@@ -1,25 +1,33 @@
 from __future__ import annotations
 import json
 import os
-from ..ast import *
+from dataclasses import is_dataclass
 
-def from_dict(d):
+from ..ast import *
+from ..logger import log_warning
+
+def from_dict(d: object) -> object:
     if not isinstance(d, dict):
         return d
-        
+
     node_type = d.get('type')
     if not node_type:
         return d
-        
+
     # Get the class from global namespace (imported from ast)
     cls = globals().get(node_type)
-    if not cls:
+    if not cls or not is_dataclass(cls):
         return d
-        
-    # Prepare kwargs
+
+    # Prepare kwargs, tolerating (but reporting) keys the node does not define
+    fields = cls.__dataclass_fields__
     kwargs = {}
+    unknown = []
     for k, v in d.items():
         if k == 'type':
+            continue
+        if k not in fields:
+            unknown.append(k)
             continue
         if isinstance(v, list):
             kwargs[k] = [from_dict(item) for item in v]
@@ -27,7 +35,10 @@ def from_dict(d):
             kwargs[k] = from_dict(v)
         else:
             kwargs[k] = v
-            
+
+    if unknown:
+        log_warning(f"Ignoring unknown keys for {node_type}: {', '.join(sorted(unknown))}")
+
     return cls(**kwargs)
 
 def parse_json(source: str) -> Document:

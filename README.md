@@ -69,7 +69,7 @@ Configuration is resolved in priority order: **CWD** → package root → built-
 
 ### API Keys (Cloud Providers)
 
-The default provider (Ollama) runs fully locally and needs no API key. If you switch `"provider"` to a cloud backend (`google`, `openai`, `anthropic`, ...), copy [`secrets.json.example`](secrets.json.example) to `secrets.json` at the project root and fill in the relevant key (this file is git-ignored). Environment variables (e.g. `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) are also supported and take priority over `secrets.json`.
+TextConverter is Ollama-first: the default provider runs fully locally and needs no API key. If you switch `"provider"` to a cloud backend (`google`, `openai`, `anthropic`, ...), supply the key through an environment variable (`GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). A [`secrets.json.example`](secrets.json.example) template is provided for reference, but the app does not auto-load `secrets.json` — environment variables are the supported path.
 
 ## Image Handling
 

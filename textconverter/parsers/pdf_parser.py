@@ -1,6 +1,6 @@
 from __future__ import annotations
 import os
-from ..ast import Document, Image
+from ..ast import Document, Image, Node
 from .markdown_parser import parse_markdown
 
 def parse_pdf(file_path: str, output_dir: str | None = None, image_dir_name: str | None = None, write_images: bool = True, code_parsing: bool = False) -> Document:
@@ -10,7 +10,7 @@ def parse_pdf(file_path: str, output_dir: str | None = None, image_dir_name: str
     except ImportError:
         raise ImportError("pymupdf4llm is required to parse PDF files. Install it with `pip install pymupdf4llm`.")
         
-    # Extrae il markdown salvando le immagini nella cartella di destinazione
+    # Extract markdown, saving images into the target directory
     kwargs = {'write_images': write_images}
     created_dir = None
     if write_images and output_dir:
@@ -27,18 +27,19 @@ def parse_pdf(file_path: str, output_dir: str | None = None, image_dir_name: str
         try:
             if not os.listdir(created_dir):
                 os.rmdir(created_dir)
-        except Exception:
-            pass
+        except OSError as exc:
+            from ..logger import log_warning
+            log_warning(f"Could not remove empty image directory {created_dir}: {exc}")
     
     if not write_images:
         import re
         md_text = re.sub(r'\*\*==>\s*picture.*?<==\*\*\n?', '', md_text)
     
-    # Lo riconverte tramite il nostro parser garantendo coerenza nell'AST
+    # Re-parse through our own Markdown parser to keep the AST consistent
     doc = parse_markdown(md_text, code_parsing=code_parsing)
-    
-    # Rimuove il prefisso della cartella dalle immagini affinché il riferimento sia relativo al documento
-    def _fix_image_paths(node):
+
+    # Strip the directory prefix from image paths so references stay relative to the document
+    def _fix_image_paths(node: Node) -> None:
         if isinstance(node, Image):
             basename = os.path.basename(node.src)
             node.src = f"{image_dir_name}/{basename}" if image_dir_name else basename

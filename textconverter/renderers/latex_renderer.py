@@ -1,5 +1,5 @@
 from __future__ import annotations
-from ..ast import Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
+from ..ast import Node, Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
 
 def render_latex(doc: Document, image_handling: str = "auto") -> str:
     """Renders an AST Document to a compiling LaTeX document."""
@@ -19,8 +19,8 @@ def render_latex(doc: Document, image_handling: str = "auto") -> str:
             
     return preamble + '\n\n'.join(body) + "\n\n\\end{document}\n"
 
-def _has_type_in_doc(doc: Document, cls) -> bool:
-    def _check(node):
+def _has_type_in_doc(doc: Document, cls: type) -> bool:
+    def _check(node: Node) -> bool:
         if isinstance(node, cls): return True
         if hasattr(node, "children"):
             for c in node.children:
@@ -49,7 +49,7 @@ def _escape_latex(text: str) -> str:
     }
     return "".join(chars.get(c, c) for c in text)
 
-def _render_node(node, image_handling: str = "auto") -> str:
+def _render_node(node: Node, image_handling: str = "auto") -> str:
     if isinstance(node, Heading):
         cmd = ["section", "subsection", "subsubsection", "paragraph", "subparagraph"][min(node.level-1, 4)]
         content = ''.join(_render_node(c, image_handling) for c in node.children)

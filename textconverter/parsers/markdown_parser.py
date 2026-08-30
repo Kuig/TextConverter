@@ -4,7 +4,7 @@ import re
 from ..ast import (
     Document, Paragraph, Heading, Text, Link, Image, CodeInline,
     CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, InlineElement,
-    BlockQuote, HorizontalRule, Equation
+    BlockQuote, HorizontalRule, Equation, Node
 )
 
 def smart_preprocess_markdown(text: str) -> str:
@@ -176,7 +176,7 @@ def parse_markdown(
     text = _ref_def_re.sub('', text)
     
     # Pre-process code blocks to preserve empty lines inside them (first pass for existing fences)
-    def _encode_codeblock(m):
+    def _encode_codeblock(m: re.Match) -> str:
         import base64, json
         lang = m.group(1)
         code = m.group(2)
@@ -208,7 +208,7 @@ def parse_markdown(
     doc = Document()
     
     # Pre-process math blocks (before splitting into paragraphs)
-    def _encode_mathblock(m):
+    def _encode_mathblock(m: re.Match) -> str:
         import base64, json
         code = m.group(1).strip()
         payload = json.dumps({"code": code})
@@ -218,7 +218,7 @@ def parse_markdown(
     text = re.sub(r'(?<!\\)\$\$(.*?)(?<!\\)\$\$', _encode_mathblock, text, flags=re.MULTILINE | re.DOTALL)
     
     # Pre-process OCR text from images
-    def _encode_ocr(m):
+    def _encode_ocr(m: re.Match) -> str:
         import base64
         img_str = m.group(1)
         ocr_text = m.group(2).strip()
@@ -302,7 +302,7 @@ def parse_markdown(
             parsed_inner = parse_markdown(quote_text, code_parsing=code_parsing, parent_ref_map=ref_map)
             
             # Check if this is an Abstract blockquote by inspecting the first text node
-            def _get_first_text(n):
+            def _get_first_text(n: Node) -> Text | None:
                 from ..ast import Text
                 if isinstance(n, Text): return n
                 if hasattr(n, 'children') and n.children: return _get_first_text(n.children[0])
@@ -370,14 +370,14 @@ def _parse_formatting(text: str) -> list[InlineElement]:
     store = {}
     counter = [0]
     
-    def r_bold(m):
+    def r_bold(m: re.Match) -> str:
         counter[0] += 1
         k = f"@@B{counter[0]}@@"
         content = m.group(1) if m.group(1) is not None else m.group(2)
         store[k] = ('bold', content or "")
         return k
         
-    def r_italic(m):
+    def r_italic(m: re.Match) -> str:
         counter[0] += 1
         k = f"@@I{counter[0]}@@"
         content = m.group(1) if m.group(1) is not None else m.group(2)
@@ -387,7 +387,7 @@ def _parse_formatting(text: str) -> list[InlineElement]:
     text = re.sub(r'\*\*(.*?)\*\*|__(.*?)__', r_bold, text, flags=re.DOTALL)
     text = re.sub(r'\*(.*?)\*|_(.*?)_', r_italic, text, flags=re.DOTALL)
     
-    def resolve(string, is_b=False, is_i=False):
+    def resolve(string: str, is_b: bool = False, is_i: bool = False) -> list[InlineElement]:
         res = []
         parts = re.split(r'(@@[BI]\d+@@)', string)
         for p in parts:

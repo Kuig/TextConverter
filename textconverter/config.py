@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from textconverter.logger import log_warning
+
 # ---------------------------------------------------------------------------
 # Hardcoded defaults — used only when no config.json is found.
 # ---------------------------------------------------------------------------
@@ -72,42 +74,68 @@ class AppConfig:
 
     ``providers`` intentionally stays a raw dict: its schema is provider-specific
     (Ollama, Google, OpenAI, ...) and is owned by ``unified_ai_client``, not by
-    TextConverter, so it is dynamic/opaque data by design (see CONVENTIONS.md §5.1).
+    TextConverter, so it is dynamic/opaque data by design.
     """
 
     ai: AiConfig = field(default_factory=AiConfig)
     providers: dict[str, dict[str, Any]] = field(default_factory=lambda: dict(_DEFAULT_PROVIDERS))
+
+    @classmethod
+    def load(cls, path: str | Path | None = None) -> "AppConfig":
+        """Load configuration from JSON, falling back to defaults for missing keys.
+
+        Args:
+            path: Explicit config.json path. When omitted, the current working
+                directory is tried first, then the package root.
+
+        Returns:
+            An AppConfig populated from the file, or an all-default instance
+            when no readable config.json exists.
+        """
+        raw = _load_raw_dict(path)
+        if not raw:
+            return cls()
+
+        ai_config = _ai_config_from_dict(raw.get("ai"))
+        providers = {
+            k: v for k, v in raw.items()
+            if k != "ai" and isinstance(v, dict)
+        }
+        return cls(ai=ai_config, providers=providers or dict(_DEFAULT_PROVIDERS))
 
 
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
 
-def _load_raw_dict() -> dict:
+def _load_raw_dict(path: str | Path | None = None) -> dict:
     """Load the raw JSON configuration, prioritizing CWD, falling back to package root.
+
+    Args:
+        path: Explicit config.json path. When omitted, the current working
+            directory is tried first, then the package root.
 
     Returns:
         The parsed config.json content as a dict, or an empty dict if no file
-        was found or parsing failed (callers fall back to dataclass defaults).
+        was found (callers fall back to dataclass defaults). A file that exists
+        but cannot be read or parsed is reported via ``log_warning`` and skipped.
     """
-    # 1. Prioritize Current Working Directory
-    cwd_config = Path.cwd() / "config.json"
-    if cwd_config.exists():
-        try:
-            with open(cwd_config, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
+    if path is not None:
+        candidates = [Path(path)]
+    else:
+        candidates = [
+            Path.cwd() / "config.json",                     # 1. current working directory
+            Path(__file__).parent.parent / "config.json",   # 2. package root
+        ]
 
-    # 2. Fallback to Package Root
-    package_root = Path(__file__).parent.parent
-    package_config = package_root / "config.json"
-    if package_config.exists():
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
         try:
-            with open(package_config, encoding="utf-8") as f:
+            with open(candidate, encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
-            pass
+        except (OSError, json.JSONDecodeError) as exc:
+            log_warning(f"Ignoring unreadable config file {candidate}: {exc}")
 
     # 3. Fallback to hardcoded defaults
     return {}
@@ -116,8 +144,9 @@ def _load_raw_dict() -> dict:
 def _ai_config_from_dict(data: Any) -> AiConfig:
     """Build an AiConfig from the raw ``"ai"`` section of config.json.
 
-    Unknown keys are silently ignored (fail-soft, mirrors the previous dict
-    behavior). A missing or malformed section falls back to defaults.
+    Tolerant but noisy: unknown keys are dropped with a ``log_warning`` instead
+    of being silently ignored. A missing or malformed section falls back to
+    defaults.
 
     Args:
         data: The raw ``"ai"`` value from the parsed config.json.
@@ -129,26 +158,22 @@ def _ai_config_from_dict(data: Any) -> AiConfig:
         return AiConfig()
     fields = AiConfig.__dataclass_fields__
     filtered = {k: v for k, v in data.items() if k in fields}
+    unknown = sorted(set(data) - set(filtered))
+    if unknown:
+        log_warning(f"Ignoring unknown keys in config 'ai' section: {', '.join(unknown)}")
     return AiConfig(**filtered)
 
 
 def load_config() -> AppConfig:
     """Load configuration prioritizing CWD, falling back to package root.
 
+    Thin wrapper around :meth:`AppConfig.load`.
+
     Returns:
         An AppConfig instance. Falls back to dataclass defaults for any
         missing file, section, or field.
     """
-    raw = _load_raw_dict()
-    if not raw:
-        return AppConfig()
-
-    ai_config = _ai_config_from_dict(raw.get("ai"))
-    providers = {
-        k: v for k, v in raw.items()
-        if k != "ai" and isinstance(v, dict)
-    }
-    return AppConfig(ai=ai_config, providers=providers or dict(_DEFAULT_PROVIDERS))
+    return AppConfig.load()
 
 
 def get_ai_config(cfg: AppConfig) -> AiConfig:

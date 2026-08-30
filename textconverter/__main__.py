@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 from textconverter.api import save_to_file
+from textconverter import logger
 from textconverter.logger import log_success, log_error
 
 
@@ -40,6 +41,10 @@ def cmd_mcp(args: argparse.Namespace) -> None:
     except ImportError:
         log_error("'mcp' library not installed. Run: pip install mcp")
         sys.exit(1)
+    # In stdio transport, stdout carries the JSON-RPC framing. Route all log
+    # output to stderr before the server starts serving so business-logic
+    # messages during a tool call cannot corrupt the protocol stream.
+    logger.set_backend("mcp")
     from textconverter.mcp_tools import register_tools
     mcp = FastMCP("TextConverter")
     register_tools(mcp)

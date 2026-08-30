@@ -13,7 +13,7 @@ _INLINE_TAGS = frozenset([
 ])
 
 class ASTHTMLParser(HTMLParser):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._active_anon_paragraph = None
         self.doc = Document()
@@ -45,7 +45,7 @@ class ASTHTMLParser(HTMLParser):
         
         self.attr_stack = [self.current_text_attrs.copy()]
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
         classes = attr_dict.get('class', '').split()
         
@@ -206,7 +206,7 @@ class ASTHTMLParser(HTMLParser):
         if node is not None:
             self.stack.append(node)
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
         if getattr(self, 'in_math', False):
             if tag == 'annotation' and getattr(self, 'in_math_annotation', False):
                 self.in_math_annotation = False
@@ -286,7 +286,7 @@ class ASTHTMLParser(HTMLParser):
                         from ..ast import Abstract
                         node = Abstract(children=node.children)
                     else:
-                        def _get_first_text(n):
+                        def _get_first_text(n: Node) -> Text | None:
                             from ..ast import Text
                             if isinstance(n, Text): return n
                             if hasattr(n, 'children') and n.children: return _get_first_text(n.children[0])
@@ -311,7 +311,7 @@ class ASTHTMLParser(HTMLParser):
                 else:
                     self._append_to_parent(node, force_parent=parent)
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
         if getattr(self, 'in_alert_title', False):
             if data.strip().lower() == "abstract":
                 if len(self.stack) > 0 and isinstance(self.stack[-1], BlockQuote):
@@ -357,7 +357,7 @@ class ASTHTMLParser(HTMLParser):
         )
         self._append_to_parent(text, force_parent=parent)
 
-    def _append_to_parent(self, node, force_parent=None):
+    def _append_to_parent(self, node: Node, force_parent: Node | None = None) -> None:
         parent = force_parent or self.stack[-1]
         
         # Wrap consecutive orphan inline elements in a Paragraph 
@@ -386,7 +386,7 @@ class ASTHTMLParser(HTMLParser):
         elif hasattr(parent, 'content') and isinstance(node, Node): # Link content
             parent.content.append(node)
             
-    def parse_css(self, css_str):
+    def parse_css(self, css_str: str) -> None:
         import re
         for match in re.finditer(r'\.([a-zA-Z0-9_-]+)\s*\{([^}]+)\}', css_str):
             cls_name = match.group(1)
@@ -399,7 +399,7 @@ class ASTHTMLParser(HTMLParser):
             if style_dict:
                 self.css_styles[cls_name] = style_dict
 
-    def close(self):
+    def close(self) -> None:
         super().close()
         while len(self.stack) > 1:
             node = self.stack.pop()
@@ -423,7 +423,7 @@ class _ContentExtractor(HTMLParser):
       2. If <main>, <article>, or role=main is found -> return only that block
       3. Otherwise return the entire cleaned HTML
     """
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._depth = 0
         self._skip_tag = None   # Name of the active noise tag causing skip
@@ -431,7 +431,7 @@ class _ContentExtractor(HTMLParser):
         self._main_buf = []     # Main content block buffer
         self._main_depth = None
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if self._skip_tag is not None:
             return
         if tag in _NOISE:
@@ -455,7 +455,7 @@ class _ContentExtractor(HTMLParser):
         if self._main_depth is not None:
             self._main_buf.append(piece)
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
         if tag in _VOID:
             return
         if self._skip_tag is not None:
@@ -471,7 +471,7 @@ class _ContentExtractor(HTMLParser):
             if self._depth < self._main_depth:
                 self._main_depth = None  # Exited the main content block
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
         if self._skip_tag is not None:
             return
         self._buf.append(data)

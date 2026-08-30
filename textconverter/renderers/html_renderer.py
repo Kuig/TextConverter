@@ -1,5 +1,5 @@
 from __future__ import annotations
-from ..ast import Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
+from ..ast import Node, Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
 from .templates import get_template
 
 import html
@@ -17,7 +17,7 @@ def render_html(doc: Document, template_name: str = "plain") -> str:
     template = get_template(template_name)
     return template.replace('{{content}}', body_str)
 
-def _render_node(node) -> str:
+def _render_node(node: Node) -> str:
     if isinstance(node, Heading):
         content = ''.join(_render_node(c) for c in node.children)
         return f"<h{node.level}>{content}</h{node.level}>"

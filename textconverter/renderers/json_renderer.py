@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 from ..ast import Node, Document
 
-def to_dict(node):
+def to_dict(node: object) -> object:
     if hasattr(node, '__dataclass_fields__'):
         d = {'type': node.__class__.__name__}
         for f in getattr(node, '__dataclass_fields__'):

@@ -10,6 +10,14 @@ from textconverter.api import save_to_file
 
 logger.set_backend("streamlit")
 
+# The GUI runs as its own `streamlit run` process and never enters main(),
+# so silence the third-party SDK loggers here too.
+try:
+    from unified_ai_client import silence_sdks
+    silence_sdks()
+except ImportError:
+    pass
+
 st.set_page_config(page_title="TextConverter", page_icon="📝", layout="wide")
 st.title("📝 TextConverter — Document Conversion")
 st.caption("Convert between PDF, HTML, Markdown, and LaTeX formats with optional AI features.")

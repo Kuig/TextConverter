@@ -1,5 +1,5 @@
 from __future__ import annotations
-from ..ast import Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
+from ..ast import Node, Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
 
 def render_markdown(doc: Document) -> str:
     """Renders an AST Document to a Markdown string."""
@@ -10,7 +10,7 @@ def render_markdown(doc: Document) -> str:
             lines.append(rendered)
     return '\n\n'.join(filter(bool, lines)) + '\n'
 
-def _render_node(node) -> str:
+def _render_node(node: Node) -> str:
     if isinstance(node, Heading):
         return f"{'#' * node.level} {''.join(_render_node(c) for c in node.children)}"
         

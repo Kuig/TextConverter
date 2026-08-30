@@ -73,7 +73,7 @@ def _download_remote_images(doc: Document, output_dir: str | None, image_dir_nam
     import urllib.request
     import urllib.parse
     import os
-    from .ast import Image
+    from .ast import Image, Node
     from .logger import log_action, log_warning
 
     base_dir = os.getcwd()
@@ -88,7 +88,7 @@ def _download_remote_images(doc: Document, output_dir: str | None, image_dir_nam
     
     dir_created = False
 
-    def _process(node):
+    def _process(node: Node) -> None:
         nonlocal dir_created
         if isinstance(node, Image):
             is_node_url = node.src.startswith(("http://", "https://"))
@@ -314,8 +314,9 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
                 elif image_handling == "embed":
                     import base64
                     import mimetypes
-                    from .ast import Image
-                    def _embed(node):
+                    from .ast import Image, Node
+                    from .logger import log_warning
+                    def _embed(node: Node) -> None:
                         if isinstance(node, Image):
                             img_path = node.src
                             if not os.path.isabs(img_path):
@@ -328,8 +329,8 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
                                     with open(img_path, "rb") as f:
                                         img_b64 = base64.b64encode(f.read()).decode("utf-8")
                                     node.src = f"data:{mime_type};base64,{img_b64}"
-                                except Exception:
-                                    pass
+                                except OSError as exc:
+                                    log_warning(f"Could not embed image {img_path}: {exc}")
                         if hasattr(node, 'children'):
                             for c in node.children: _embed(c)
                         if hasattr(node, 'content') and isinstance(node.content, list):
@@ -345,8 +346,8 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
                     _embed(doc)
                     
             elif image_handling == "discard":
-                from .ast import Image
-                def _remove_images(node):
+                from .ast import Image, Node
+                def _remove_images(node: Node) -> None:
                     if hasattr(node, 'children'):
                         node.children = [c for c in node.children if not isinstance(c, Image)]
                         for c in node.children: _remove_images(c)
@@ -379,8 +380,9 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
         if temp_file_path and os.path.exists(temp_file_path):
             try:
                 os.remove(temp_file_path)
-            except Exception:
-                pass
+            except OSError as exc:
+                from .logger import log_warning
+                log_warning(f"Could not remove temporary file {temp_file_path}: {exc}")
 
 def save_to_file(source: str, output_path: str, template: str = "plain", image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False) -> None:
     """

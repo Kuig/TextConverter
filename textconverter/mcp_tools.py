@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-def register_tools(mcp) -> None:
+def register_tools(mcp: object) -> None:
     """Register all TextConverter MCP tools with the given FastMCP instance.
 
     Args:
