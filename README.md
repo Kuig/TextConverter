@@ -33,21 +33,14 @@ pip install -r requirements_prod.txt
 
 ### Development
 
-For local development, install in editable mode via `requirements_dev.txt`. This requires [`UnifiedAiClient`](https://github.com/Kuig/UnifiedAiClient) checked out as a sibling directory (`../UnifiedAiClient`, relative to this project's root):
-```powershell
-pip install -r requirements_dev.txt
-```
-This installs both `unified_ai_client` and `textconverter` itself in editable mode, so source changes in either project are picked up immediately without reinstalling. Run the test suite with:
-```powershell
-python -m unittest discover -s tests -p "test.py"
-```
+For local development (editable installs, running the test suite), see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Configuration
 
 `config.json` at the project root is split into two sections:
 
-- **`"ai"`** — TextConverter application-level settings: which provider to use, model names, prompts, and token budgets.
-- **`"<provider>"`** — Provider connection settings passed directly to `unified_ai_client` (URL, timeout, context size, etc.).
+- **`"ai"`**: TextConverter application-level settings, covering which provider to use, model names, prompts, and token budgets.
+- **`"<provider>"`**: Provider connection settings passed directly to `unified_ai_client` (URL, timeout, context size, etc.).
 
 ```json
 {
@@ -76,7 +69,7 @@ Configuration is resolved in priority order: **CWD** → package root → built-
 
 ### API Keys (Cloud Providers)
 
-The default provider (Ollama) runs fully locally and needs no API key. If you switch `"provider"` to a cloud backend (`google`, `openai`, `anthropic`, ...), copy [`secrets.json.example`](secrets.json.example) to `secrets.json` at the project root and fill in the relevant key — this file is git-ignored. Environment variables (e.g. `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) are also supported and take priority over `secrets.json`.
+The default provider (Ollama) runs fully locally and needs no API key. If you switch `"provider"` to a cloud backend (`google`, `openai`, `anthropic`, ...), copy [`secrets.json.example`](secrets.json.example) to `secrets.json` at the project root and fill in the relevant key (this file is git-ignored). Environment variables (e.g. `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) are also supported and take priority over `secrets.json`.
 
 ## Image Handling
 
@@ -88,7 +81,7 @@ The `--image-handling` option (or the `image_handling` parameter in the API) det
 * **`embed`**: Base64 inline embedding. Reads local or downloaded images from disk, guesses their MIME types, and encodes their binary data into inline Data URLs (`data:image/...;base64,...`). Perfect for creating self-contained documents (like HTML).
 * **`link`**: File-based referencing. Preserves or downloads images, sanitizing their filenames, and references them using standard relative paths (`![alt](path)` in Markdown, `<img>` in HTML, `\includegraphics{...}` in LaTeX). No AI processing is executed.
 * **`discard`**: Total removal. Strips all `Image` nodes from the AST, omitting them entirely from the final rendered output.
-* **`auto_latex`**: Hybrid mode designed for LaTeX/JSON. Traverses the document and uses Ollama to classify and transcribe only text/table/formula images (rendering the text inline). For drawings, photos, or diagrams, it skips the description to save resources and falls back to rendering standard graphics references.
+* **`auto_latex`** (internal): Hybrid mode designed for LaTeX/JSON, used automatically by `auto` for those formats (see below). Traverses the document and uses Ollama to classify and transcribe only text/table/formula images (rendering the text inline); for drawings, photos, or diagrams, it skips the description to save resources and falls back to rendering standard graphics references. It is not an explicit `--image-handling` CLI choice, and its behavior may change, so avoid setting it directly through the API/MCP `image_handling` parameter.
 
 ### The `auto` Strategy (`image_handling="auto"`)
 
@@ -140,8 +133,8 @@ textconverter mcp
 ```
 
 Available MCP tools:
-- `textconverter_convert_text` — convert text or a file to a target format
-- `textconverter_save_file` — convert and save a document to a file
+- `textconverter_convert_text`: convert text or a file to a target format
+- `textconverter_save_file`: convert and save a document to a file
 
 ### Streamlit GUI
 
@@ -182,15 +175,15 @@ def convert(
 ) -> str:
     """Convert text or a file to a specific format and return the result as a string."""
 ```
-- `source` — File path, remote URL (`http://`/`https://`), or raw text content.
-- `to_format` — Target format: `"markdown"`, `"html"`, `"latex"`, or `"json"`.
-- `from_format` — Source format hint (`"pdf"`, `"markdown"`, `"html"`, `"latex"`, `"json"`, `"image"`). Inferred from the file/URL extension when omitted; required when `source` is raw text with no extension to infer from.
-- `template` — HTML rendering template (see [renderers/templates.py](textconverter/renderers/templates.py)): `"plain"`, `"light-theme"`, or `"dark-theme"`.
-- `is_file` — Treat `source` as a file path rather than raw text.
-- `output_dir` / `image_dir_name` — Base directory and subdirectory name used to write downloaded/extracted images.
-- `image_handling` — `"auto"` (default, format-dependent), `"describe"`, `"embed"`, `"link"`, `"discard"`, or `"auto_latex"` (see [Image Handling](#image-handling)).
-- `code_parsing` — Enable heuristic code-block detection (Markdown/HTML sources).
-- `extract_html` — Strip boilerplate and isolate main content when parsing HTML.
+- `source`: File path, remote URL (`http://`/`https://`), or raw text content.
+- `to_format`: Target format: `"markdown"`, `"html"`, `"latex"`, or `"json"`.
+- `from_format`: Source format hint (`"pdf"`, `"markdown"`, `"html"`, `"latex"`, `"json"`, `"image"`). Inferred from the file/URL extension when omitted; required when `source` is raw text with no extension to infer from.
+- `template`: HTML rendering template (see [renderers/templates.py](textconverter/renderers/templates.py)): `"plain"`, `"light-theme"`, or `"dark-theme"`.
+- `is_file`: Treat `source` as a file path rather than raw text.
+- `output_dir` / `image_dir_name`: Base directory and subdirectory name used to write downloaded/extracted images.
+- `image_handling`: `"auto"` (default, format-dependent), `"describe"`, `"embed"`, `"link"`, or `"discard"` (see [Image Handling](#image-handling)). `"auto_latex"` is also accepted, as the internal fallback `auto` uses on LaTeX/JSON output, but it's not meant to be set directly since its behavior may change.
+- `code_parsing`: Enable heuristic code-block detection (Markdown/HTML sources).
+- `extract_html`: Strip boilerplate and isolate main content when parsing HTML.
 
 ```python
 def save_to_file(
@@ -231,68 +224,7 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
 
 ---
 
-## Project Structure
+## Documentation
 
-```
-TextConverter/
-├── config.json              ← AI provider and app-level configuration
-├── pyproject.toml           ← Packaging and project setup
-├── requirements_dev.txt     ← Development dependencies
-├── requirements_prod.txt    ← Production dependencies (includes unified_ai_client)
-├── test.py                  ← Local test and validation script
-├── README.md
-├── DocsInput/               ← Sample input documents
-├── DocsOutput/              ← Generated output documents
-├── Windows Integration/     ← Windows shell context menu integration
-│   └── generate_registry_files.ps1  ← Dynamic registry file generator
-└── textconverter/           ← Core package
-    ├── __init__.py          ← Package initializer
-    ├── __main__.py          ← CLI entry point (convert / mcp / gui subcommands)
-    ├── api.py               ← Public API: convert(), save_to_file()
-    ├── ast.py               ← Document AST node definitions
-    ├── code_detector.py     ← Heuristic code block detection
-    ├── config.py            ← Configuration loading and provider setup helpers
-    ├── image_describer.py   ← AI-assisted image classification + description
-    ├── logger.py            ← Dual-backend logger (console / Streamlit)
-    ├── mcp_tools.py         ← MCP tool definitions
-    ├── parsers/             ← Format-specific parsers
-    ├── renderers/           ← Format-specific renderers
-    └── gui/                 ← Streamlit user interface
-        └── app.py           ← Streamlit web interface entrypoint
-```
-
----
-
-## Architecture
-
-TextConverter is built around a **parser → AST → renderer** pipeline: every supported format is converted to and from a single, format-agnostic in-memory document tree, so adding a new format only requires a new parser and/or renderer — the rest of the pipeline (image handling, code detection, CLI/MCP/GUI) is shared automatically.
-
-### Pipeline
-
-1. **Parse** — [parsers/](textconverter/parsers/) turns a source (file, raw text, or downloaded URL content) into a [`Document`](textconverter/ast.py) tree: `pdf_parser.py` (via `pymupdf4llm`), `html_parser.py` (zero-dependency heuristic `HTMLParser` subclass, also used for `--extract-html` boilerplate stripping), `latex_parser.py`, `markdown_parser.py`, `json_parser.py`, and `image_parser.py` (delegates to the AI describer, then re-parses the resulting Markdown).
-2. **Transform** — [api.py](textconverter/api.py)'s `convert()` orchestrates cross-cutting steps on the AST: downloading and deduplicating remote images, resolving the `image_handling` strategy (`describe` / `embed` / `link` / `discard` / `auto_latex`, or `auto`'s per-format default — see [Image Handling](#image-handling)), and optionally running [code_detector.py](textconverter/code_detector.py)'s heuristic to fence detected code blocks.
-3. **Render** — [renderers/](textconverter/renderers/) turns the (possibly transformed) `Document` back into a string in the target format: `markdown_renderer.py`, `html_renderer.py` (using [templates.py](textconverter/renderers/templates.py)), `latex_renderer.py`, `json_renderer.py`.
-
-### The AST ([ast.py](textconverter/ast.py))
-
-A small set of `@dataclass` node types (`Document`, `Paragraph`, `Heading`, `Text`, `Link`, `Image`, `Table`, `CodeBlock`, `Equation`, `Citation`, `Footnote`, ...) models the structural and inline elements common across PDF, HTML, Markdown, LaTeX, and JSON. `Image` nodes carry both the raw source path and AI-derived metadata (`description`, `category`, `extracted_text`) populated during the transform step.
-
-### Interfaces
-
-All four interfaces are thin wrappers around the same `convert()`/`save_to_file()` API in [api.py](textconverter/api.py) — no business logic is duplicated between them:
-- **CLI** ([__main__.py](textconverter/__main__.py)) — `argparse` subcommands (`convert`, `mcp`, `gui`).
-- **MCP server** ([mcp_tools.py](textconverter/mcp_tools.py)) — FastMCP tools over stdio, for use from AI agents/IDEs.
-- **Python library** — direct import of `textconverter.api`.
-- **Streamlit GUI** ([gui/app.py](textconverter/gui/app.py)) — sidebar for options, main area for source/output and results.
-
-### AI image description ([image_describer.py](textconverter/image_describer.py))
-
-When `image_handling` requires it, each `Image` node is classified (one of 8 categories: photo, diagram, chart, text/table/formula, infographic, document scan, logo, map) and then described with a category-specific prompt, via [`unified_ai_client`](https://github.com/Kuig/UnifiedAiClient)'s `call_ai()`/`preload_model()`/`configure_provider()`. This is the project's only optional dependency — core parsing/rendering works without it installed.
-
-### Configuration ([config.py](textconverter/config.py))
-
-`config.json` is loaded into typed dataclasses (`AppConfig`/`AiConfig`), resolved in priority order **CWD → package root → built-in defaults**, so the app always starts even without a `config.json` present. Provider connection settings (e.g. the `"ollama"` block) intentionally stay a plain `dict` — their shape is provider-specific and owned by `unified_ai_client`, not by TextConverter.
-
-### Logging ([logger.py](textconverter/logger.py))
-
-A dual-backend logger (`log_success`, `log_error`, `log_action`, ...) prints to the console by default and switches to Streamlit widgets when `set_backend("streamlit")` is called by the GUI — the same business logic code path drives both interfaces without any conditional branching.
+- [ARCHITECTURE.md](ARCHITECTURE.md): pipeline design, module map, and internal data flow.
+- [CONTRIBUTING.md](CONTRIBUTING.md): development install and how to run the test suite.
