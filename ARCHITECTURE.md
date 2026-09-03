@@ -27,6 +27,7 @@ TextConverter/
     ├── ast.py                       ← Document AST node definitions
     ├── code_detector.py             ← Heuristic code block detection
     ├── config.py                    ← Configuration loading and provider setup helpers
+    ├── _net.py                      ← Outbound HTTP(S) helper; single point of TLS trust-store config
     ├── image_describer.py           ← AI-assisted image classification and description
     ├── logger.py                    ← Dual-backend logger (console / Streamlit)
     ├── mcp_tools.py                 ← MCP tool definitions
@@ -67,3 +68,5 @@ All four interfaces are thin wrappers around the same `convert()`/`save_to_file(
 **Configuration** (`config.py`): `config.json` is loaded into typed dataclasses (`AppConfig`/`AiConfig`), resolved in priority order CWD, then package root, then built-in defaults, so the app always starts even without a `config.json` present. Provider connection settings (e.g. the `"ollama"` block) intentionally stay a plain `dict`: their shape is provider-specific and owned by `unified_ai_client`, not by TextConverter.
 
 **Logging** (`logger.py`): a dual-backend logger (`log_success`, `log_error`, `log_action`, ...) prints to the console by default and switches to Streamlit widgets when `set_backend("streamlit")` is called by the GUI, so the same business logic code path drives both interfaces without any conditional branching.
+
+**Outbound HTTP / TLS** (`_net.py`): every download in `api.py` (URL source, remote images) goes through `_net.open_url()`, which is `urllib.request.urlopen()` plus a verifying `SSLContext` from `_net.ssl_context()`. That context uses the OS-native trust store via `truststore` (roots stay current through the OS), falling back to the `certifi` bundle, then to the stdlib default — so verification does not depend on the possibly-stale OpenSSL/system CA set. This is the only place TLS trust is configured; tests exercise the real path rather than disabling verification.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import pathlib
+from . import _net
 from .ast import Document
 
 from .parsers.markdown_parser import parse_markdown
@@ -112,7 +113,7 @@ def _download_remote_images(doc: Document, output_dir: str | None, image_dir_nam
 
                     log_action(f"Downloading remote image: {img_url}")
                     req = urllib.request.Request(img_url, headers={'User-Agent': 'Mozilla/5.0'})
-                    with urllib.request.urlopen(req, timeout=15) as response:
+                    with _net.open_url(req, timeout=15) as response:
                         img_data = response.read()
                         content_type = response.headers.get('Content-Type', '')
 
@@ -235,13 +236,13 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
                     parsed_url = urllib.parse.urlparse(source)
                     suffix = os.path.splitext(parsed_url.path)[1].lower() or f".{from_format}"
                     fd, temp_file_path = tempfile.mkstemp(suffix=suffix, dir=output_dir or os.getcwd())
-                    with urllib.request.urlopen(req, timeout=30) as response:
+                    with _net.open_url(req, timeout=30) as response:
                         with os.fdopen(fd, "wb") as f:
                             f.write(response.read())
                     source = temp_file_path
                     is_file = True
                 else:
-                    with urllib.request.urlopen(req, timeout=30) as response:
+                    with _net.open_url(req, timeout=30) as response:
                         text = response.read().decode('utf-8', errors='ignore')
                     source = text
                     is_file = False

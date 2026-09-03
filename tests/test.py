@@ -6,12 +6,6 @@ import shutil
 import socket
 from pathlib import Path
 from unittest.mock import patch, MagicMock
-import ssl
-
-try:
-    ssl._create_default_https_context = ssl._create_unverified_context
-except AttributeError:
-    pass
 
 # Add parent directory to sys.path to run textconverter locally
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
