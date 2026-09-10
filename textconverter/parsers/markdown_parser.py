@@ -77,6 +77,39 @@ def smart_preprocess_markdown(text: str) -> str:
     return '\n'.join(new_lines)
 
 
+def _split_table_cells(line: str) -> list[str]:
+    """Split a Markdown table row into raw cell strings.
+
+    Splits only on pipes that are genuine column delimiters: a pipe inside a
+    backtick code span, or one escaped as ``\\|``, is kept as literal cell text
+    (the backslash before an escaped pipe is dropped). Outer-pipe trimming and
+    ``.strip()`` are left to the caller, so for a line with no backslash and no
+    backtick this returns exactly what ``line.split('|')`` would.
+    """
+    cells: list[str] = []
+    buf: list[str] = []
+    in_code = False
+    i = 0
+    n = len(line)
+    while i < n:
+        ch = line[i]
+        if ch == '\\' and i + 1 < n and line[i + 1] == '|':
+            buf.append('|')
+            i += 2
+            continue
+        if ch == '`':
+            in_code = not in_code
+            buf.append(ch)
+        elif ch == '|' and not in_code:
+            cells.append(''.join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    cells.append(''.join(buf))
+    return cells
+
+
 def _parse_markdown_list(block_text: str, ref_map: dict | None = None) -> ListBlock:
     lines = block_text.split('\n')
     stack = []
@@ -343,16 +376,17 @@ def parse_markdown(
                 
                 if has_separator:
                     # Headers
-                    headers = [c.strip() for c in lines[0].split('|') if c.strip()]
+                    headers = [c.strip() for c in _split_table_cells(lines[0]) if c.strip()]
                     table.headers = [TableCell(children=parse_inline(h, ref_map=ref_map)) for h in headers]
                     start_idx = 2
-                    
+
                 # Rows
                 for line in lines[start_idx:]:
-                    cells = [c.strip() for c in line.split('|')]
+                    cells = _split_table_cells(line)
                     # Filter out empty outer pipes
                     if line.strip().startswith('|'): cells = cells[1:]
                     if line.strip().endswith('|'): cells = cells[:-1]
+                    cells = [c.strip() for c in cells]
                     
                     table.rows.append(TableRow(cells=[TableCell(children=parse_inline(c, ref_map=ref_map)) for c in cells]))
                 doc.children.append(table)

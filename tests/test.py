@@ -133,6 +133,31 @@ class TestMarkdownParser(BaseConverterTest):
         self.assertIn("[codoni](http://example.com/codon)", result)
         self.assertIn("[RNA messaggero](http://example.com/rna)", result)
 
+    def test_md_table_escaped_pipe_in_code(self):
+        r"""MD table: `\|` and pipes inside `code` spans stay inside their cell."""
+        import json as _json
+        md = (
+            "| Name | Type | Note |\n"
+            "|---|---|---|\n"
+            "| `file_paths` | `str \\| list[str] \\| None` | holds a `a|b` value |\n"
+        )
+        ast = _json.loads(textconverter.convert(md, to_format="json", from_format="markdown"))
+        row = ast["children"][0]["rows"][0]
+        self.assertEqual(len(row["cells"]), 3, "escaped/code-span pipes split the row into extra cells")
+        type_cell = row["cells"][1]["children"]
+        self.assertEqual([n["type"] for n in type_cell], ["CodeInline"])
+        self.assertEqual(type_cell[0]["code"], "str | list[str] | None")
+
+        html = textconverter.convert(md, to_format="html", from_format="markdown")
+        self.assertIn("<td><code>str | list[str] | None</code></td>", html)
+        self.assertNotIn("\\|", html)
+
+        # MD round-trip: literal pipe re-emitted escaped and still parses to 3 cells.
+        md2 = textconverter.convert(md, to_format="markdown", from_format="markdown")
+        self.assertIn(r"`str \| list[str] \| None`", md2)
+        ast2 = _json.loads(textconverter.convert(md2, to_format="json", from_format="markdown"))
+        self.assertEqual(len(ast2["children"][0]["rows"][0]["cells"]), 3)
+
 
 # ---------------------------------------------------------------------------
 # HTML Parser Tests
@@ -160,6 +185,42 @@ class TestHtmlParser(BaseConverterTest):
         self.assertIn("corsivo", content, "Missing list item content")
         # Link preserved
         self.assertIn("https://www.google.it", content, "Missing hyperlink")
+
+    def test_html_table_colspan_rowspan(self):
+        """HTML colspan/rowspan flatten to a rectangular grid in every target."""
+        import json as _json
+        html = (
+            "<table><tbody>"
+            "<tr><td rowspan='2'>ID</td><td colspan='2'>Group</td><td rowspan='2'>Tail</td></tr>"
+            "<tr><td>G1</td><td>G2</td></tr>"
+            "<tr><td>1</td><td><div>Left</div><div>Right</div></td><td>x</td><td>y</td></tr>"
+            "</tbody></table>"
+        )
+
+        def _data_rows(md_text):
+            return [l for l in md_text.splitlines()
+                    if l.strip().startswith("|") and set(l.strip()) - set("|-: ")]
+
+        md = textconverter.convert(html, to_format="markdown", from_format="html")
+        rows = _data_rows(md)
+        self.assertEqual(len({l.count("|") for l in rows}), 1, f"ragged markdown table: {rows}")
+        self.assertIn("Left Right", md, "adjacent <div> cell text glued together")
+        self.assertNotIn("LeftRight", md)
+
+        # extract_html path strips unknown attrs — colspan/rowspan must survive it too.
+        md_x = textconverter.convert(html, to_format="markdown", from_format="html", extract_html=True)
+        self.assertEqual(len({l.count("|") for l in _data_rows(md_x)}), 1, "ragged table after extract_html")
+
+        tex = textconverter.convert(html, to_format="latex", from_format="html")
+        body = [l for l in tex.splitlines() if l.rstrip().endswith("\\\\") and "&" in l]
+        self.assertTrue(body)
+        self.assertEqual(len({l.count("&") for l in body}), 1, f"ragged latex table: {body}")
+
+        ast = textconverter.convert(html, to_format="json", from_format="html")
+        self.assertNotIn("_colspan", ast)
+        self.assertNotIn("_rowspan", ast)
+        table = _json.loads(ast)["children"][0]
+        self.assertEqual({len(r["cells"]) for r in table["rows"]}, {4})
 
     def test_main_content_extraction(self):
         """MainContentTest.html → MD with extract_html=True: only main block, no nav/footer."""

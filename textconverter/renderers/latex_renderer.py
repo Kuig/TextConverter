@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from ..ast import Node, Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
 
 def render_latex(doc: Document, image_handling: str = "auto") -> str:
@@ -86,14 +87,19 @@ def _render_node(node: Node, image_handling: str = "auto") -> str:
         for row in node.rows:
             cells = [_render_node(c, image_handling) for c in row.cells]
             while len(cells) < num_cols: cells.append("")
+            if num_cols and len(cells) > num_cols: cells = cells[:num_cols]
             lines.append(" & ".join(cells) + " \\\\")
             lines.append("\\hline")
-            
+
         lines.append("\\end{tabular}")
         return '\n'.join(lines)
-        
+
     elif isinstance(node, TableCell):
-        return ''.join(_render_node(c, image_handling) for c in node.children).strip()
+        rendered = ''.join(_render_node(c, image_handling) for c in node.children)
+        # A cell must stay on a single tabular row: neutralise hard breaks
+        # (rendered LineBreak = "\\") and stray newlines.
+        rendered = rendered.replace('\\\\', ' ').replace('\r', ' ').replace('\n', ' ')
+        return re.sub(r'\s{2,}', ' ', rendered).strip()
         
     elif isinstance(node, Text):
         content = _escape_latex(node.content)

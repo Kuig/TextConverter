@@ -1,5 +1,18 @@
 from __future__ import annotations
+import re
 from ..ast import Node, Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
+
+def _sanitize_table_cell(text: str) -> str:
+    """Flatten a rendered cell so it can never break its one-line table row.
+
+    Newlines / hard breaks become ``<br>`` (GFM renders it inside cells) and a
+    literal ``|`` is escaped as ``\\|`` (understood back by the Markdown table
+    parser's cell splitter and by GFM renderers).
+    """
+    text = text.replace('\r\n', '\n').replace('\r', '\n').strip()
+    text = re.sub(r'[ \t]*\n[ \t]*', '<br>', text)
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+    return text.replace('|', r'\|')
 
 def render_markdown(doc: Document) -> str:
     """Renders an AST Document to a Markdown string."""
@@ -48,18 +61,20 @@ def _render_node(node: Node) -> str:
         
     elif isinstance(node, Table):
         if not node.headers and not node.rows: return ""
-        headers = [_render_node(c) for c in node.headers] if node.headers else []
+        headers = [_sanitize_table_cell(_render_node(c)) for c in node.headers] if node.headers else []
         if not headers and node.rows:
-            headers = [""] * len(node.rows[0].cells)
-            
+            headers = [""] * max((len(r.cells) for r in node.rows), default=0)
+
         lines = []
         lines.append("| " + " | ".join(headers) + " |")
         lines.append("|" + "|".join(["---"] * len(headers)) + "|")
-        
+
         for row in node.rows:
-            cells = [_render_node(c) for c in row.cells]
+            cells = [_sanitize_table_cell(_render_node(c)) for c in row.cells]
             while len(cells) < len(headers):
                 cells.append("")
+            if len(headers) and len(cells) > len(headers):
+                cells = cells[:len(headers)]
             lines.append("| " + " | ".join(cells) + " |")
         return '\n'.join(lines)
         

@@ -22,6 +22,9 @@ class ASTHTMLParser(HTMLParser):
         self.in_pre = False
         self.in_thead = False
         self.ignore_data = False
+        # Active vertical cell merges carried into following <tr>s:
+        # list of {'col': <output column index>, 'rows_left': <int>}.
+        self._rowspan_carry: list[dict] = []
         
         self.css_styles = {} # e.g. {'c10': {'bold': True}, ...}
         self.in_style_tag = False
@@ -90,7 +93,14 @@ class ASTHTMLParser(HTMLParser):
             while len(self.stack) > 1 and isinstance(self.stack[-1], TableCell):
                 node = self.stack.pop()
                 self._append_to_parent(node)
-        
+
+        # A new block chunk inside a table cell (word-processor HTML wraps each
+        # cell line in its own <div>/<p> with no whitespace between): keep the
+        # words apart. Runs after the implicit block-close above so the cell,
+        # not a just-closed inner paragraph, is on top of the stack.
+        if tag not in _INLINE_TAGS and tag not in ('td', 'th', 'tr', 'table'):
+            self._maybe_cell_separator()
+
         if tag == 'style':
             self.in_style_tag = True
             self.ignore_data = True
@@ -154,14 +164,22 @@ class ASTHTMLParser(HTMLParser):
             node = ListItem()
         elif tag == 'table':
             node = Table()
+            self._rowspan_carry = []  # spans do not cross table boundaries
         elif tag == 'thead':
             self.in_thead = True
         elif tag == 'tr':
             node = TableRow()
         elif tag in ('td', 'th'):
             node = TableCell()
-            # If th and parent is TableRow, we just treat it nicely. 
+            # If th and parent is TableRow, we just treat it nicely.
             # We'll map it to headers if in_thead is True or if headers are empty
+            def _span(name: str) -> int:
+                try:
+                    return max(1, int(attr_dict.get(name, '1')))
+                except (TypeError, ValueError):
+                    return 1
+            node._colspan = _span('colspan')
+            node._rowspan = _span('rowspan')
         elif tag == 'pre':
             self.in_pre = True
             # Looking for class="language-xyz"
@@ -277,9 +295,13 @@ class ASTHTMLParser(HTMLParser):
             # Only pop if we actually pushed something (ignoring structural mismatches)
             if len(self.stack) > 1:
                 node = self.stack.pop()
-                
+
                 parent = self.stack[-1]
-                
+
+                # Flatten colspan/rowspan into a rectangular grid of plain cells
+                if tag == 'tr' and isinstance(node, TableRow):
+                    self._resolve_row_spans(node)
+
                 # Check if this is an Abstract blockquote
                 if tag == 'blockquote' and isinstance(node, BlockQuote):
                     if getattr(node, '_is_abstract', False):
@@ -357,6 +379,66 @@ class ASTHTMLParser(HTMLParser):
         )
         self._append_to_parent(text, force_parent=parent)
 
+    def _maybe_cell_separator(self) -> None:
+        """Insert a space between adjacent block chunks inside a table cell.
+
+        Word-processor HTML frequently wraps each visual line of a cell in its
+        own ``<div>``/``<p>`` with no whitespace between them; without this the
+        renderers would glue the words together ("Enter" + "Service").
+        """
+        if not self.stack or not isinstance(self.stack[-1], TableCell):
+            return
+        cell = self.stack[-1]
+        if not cell.children:
+            return
+        last = cell.children[-1]
+        if isinstance(last, LineBreak):
+            return
+        if isinstance(last, Text) and (not last.content or last.content[-1].isspace()):
+            return
+        cell.children.append(Text(content=" "))
+
+    def _resolve_row_spans(self, row: TableRow) -> None:
+        """Expand ``colspan``/``rowspan`` on a just-closed row into plain cells.
+
+        ``colspan`` becomes N cells (content in the first, blanks after);
+        ``rowspan`` records a carry so the following rows get a blank
+        placeholder at the same column. The private ``_colspan``/``_rowspan``
+        attributes are removed so the emitted AST is span-free and the JSON
+        schema is unchanged.
+        """
+        src = row.cells
+        out: list[TableCell] = []
+        i = 0
+        # Cap iterations defensively against pathological span values.
+        while len(out) < 4096:
+            idx = len(out)
+            carry = next((c for c in self._rowspan_carry
+                          if c['col'] == idx and c['rows_left'] > 0), None)
+            if carry is not None:
+                out.append(TableCell())
+                carry['rows_left'] -= 1
+                continue
+            if i >= len(src):
+                if any(c['rows_left'] > 0 and c['col'] > idx for c in self._rowspan_carry):
+                    out.append(TableCell())  # gap column before a later carry
+                    continue
+                break
+            cell = src[i]
+            i += 1
+            colspan = getattr(cell, '_colspan', 1) or 1
+            rowspan = getattr(cell, '_rowspan', 1) or 1
+            for attr in ('_colspan', '_rowspan'):
+                if hasattr(cell, attr):
+                    delattr(cell, attr)
+            for k in range(colspan):
+                start_col = len(out)
+                out.append(cell if k == 0 else TableCell())
+                if rowspan > 1:
+                    self._rowspan_carry.append({'col': start_col, 'rows_left': rowspan - 1})
+        self._rowspan_carry = [c for c in self._rowspan_carry if c['rows_left'] > 0]
+        row.cells = out
+
     def _append_to_parent(self, node: Node, force_parent: Node | None = None) -> None:
         parent = force_parent or self.stack[-1]
         
@@ -412,7 +494,7 @@ _VOID = frozenset([
     'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
     'link', 'meta', 'param', 'source', 'track', 'wbr'
 ])
-_SAFE_ATTRS = frozenset(['href', 'src', 'alt', 'title', 'class', 'id', 'role', 'encoding', 'display'])
+_SAFE_ATTRS = frozenset(['href', 'src', 'alt', 'title', 'class', 'id', 'role', 'encoding', 'display', 'colspan', 'rowspan'])
 
 
 class _ContentExtractor(HTMLParser):
