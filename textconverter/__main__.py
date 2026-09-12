@@ -23,6 +23,8 @@ def cmd_convert(args: argparse.Namespace) -> None:
             image_handling=args.image_handling,
             code_parsing=args.code_parsing,
             extract_html=args.extract_html,
+            discard_links=args.discard_links,
+            site_cleanup=False if args.no_site_cleanup else None,
         )
         log_success(f"Saved to {args.output}")
     except Exception as exc:
@@ -84,6 +86,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_convert.add_argument("--code-parsing", action="store_true", help="Enable AI-assisted code block detection.")
     p_convert.add_argument("--extract-html", action="store_true", help="Filter noise and extract main content from HTML.")
+    p_convert.add_argument("--no-site-cleanup", action="store_true", help="Skip site-specific HTML cleanup (e.g. Wikipedia) even with --extract-html.")
+    p_convert.add_argument("--discard-links", action="store_true", help="Replace every hyperlink with its visible text.")
     p_convert.set_defaults(func=cmd_convert)
 
     p_mcp = subparsers.add_parser("mcp", help="Start the MCP server on stdio.")

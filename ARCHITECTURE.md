@@ -33,14 +33,15 @@ TextConverter/
     ├── mcp_tools.py                 ← MCP tool definitions
     ├── parsers/                     ← Format-specific parsers
     ├── renderers/                   ← Format-specific renderers
+    ├── site_profiles/               ← Source-specific HTML cleanup (base.py, wikipedia.py)
     └── gui/                         ← Streamlit user interface
         └── app.py                   ← Streamlit web interface entrypoint
 ```
 
 Every format flows through the same **parser → AST → renderer** pipeline: it is converted to and from a single, format-agnostic in-memory document tree, so adding a new format only requires a new parser and/or renderer; the rest of the pipeline (image handling, code detection, CLI/MCP/GUI) is shared automatically.
 
-1. **Parse**: `parsers/` turns a source (file, raw text, or downloaded URL content) into a `Document` tree (`ast.py`): `pdf_parser.py` (via `pymupdf4llm`), `html_parser.py` (zero-dependency heuristic `HTMLParser` subclass, also used for `--extract-html` boilerplate stripping), `latex_parser.py`, `markdown_parser.py`, `json_parser.py`, and `image_parser.py` (delegates to the AI describer, then re-parses the resulting Markdown).
-2. **Transform**: `api.py`'s `convert()` orchestrates cross-cutting steps on the AST: downloading and deduplicating remote images, resolving the `image_handling` strategy (`describe`, `embed`, `link`, `discard`, `auto_latex`, or `auto`'s per-format default; see the README's [Image Handling](README.md#image-handling) section), and optionally running `code_detector.py`'s heuristic to fence detected code blocks.
+1. **Parse**: `parsers/` turns a source (file, raw text, or downloaded URL content) into a `Document` tree (`ast.py`): `pdf_parser.py` (via `pymupdf4llm`), `html_parser.py` (zero-dependency heuristic `HTMLParser` subclass, also used for `--extract-html` boilerplate stripping and, with `site_profiles/`, source-specific cleanup), `latex_parser.py`, `markdown_parser.py`, `json_parser.py`, and `image_parser.py` (delegates to the AI describer, then re-parses the resulting Markdown).
+2. **Transform**: `api.py`'s `convert()` orchestrates cross-cutting steps on the AST: downloading and deduplicating remote images, resolving the `image_handling` strategy (`describe`, `embed`, `link`, `discard`, `auto_latex`, or `auto`'s per-format default; see the README's [Image Handling](README.md#image-handling) section), optionally running `code_detector.py`'s heuristic to fence detected code blocks, and optionally unwrapping every `Link` to its text (`discard_links`).
 3. **Render**: `renderers/` turns the (possibly transformed) `Document` back into a string in the target format: `markdown_renderer.py`, `html_renderer.py` (using `templates.py`), `latex_renderer.py`, `json_renderer.py`.
 
 ### The AST
@@ -65,8 +66,10 @@ All four interfaces are thin wrappers around the same `convert()`/`save_to_file(
 
 **AI image description** (`image_describer.py`): when `image_handling` requires it, each `Image` node is classified (one of 8 categories: photo, diagram, chart, text/table/formula, infographic, document scan, logo, map) and then described with a category-specific prompt, via `unified_ai_client`'s `call_ai()`/`preload_model()`/`configure_provider()`.
 
-**Configuration** (`config.py`): `config.json` is loaded into typed dataclasses (`AppConfig`/`AiConfig`), resolved in priority order CWD, then package root, then built-in defaults, so the app always starts even without a `config.json` present. Provider connection settings (e.g. the `"ollama"` block) intentionally stay a plain `dict`: their shape is provider-specific and owned by `unified_ai_client`, not by TextConverter.
+**Configuration** (`config.py`): `config.json` is loaded into typed dataclasses (`AppConfig`/`AiConfig`/`HtmlConfig`/`WikipediaCleanupConfig`), resolved in priority order CWD, then package root, then built-in defaults, so the app always starts even without a `config.json` present. Provider connection settings (e.g. the `"ollama"` block) intentionally stay a plain `dict`: their shape is provider-specific and owned by `unified_ai_client`, not by TextConverter.
 
 **Logging** (`logger.py`): a dual-backend logger (`log_success`, `log_error`, `log_action`, ...) prints to the console by default and switches to Streamlit widgets when `set_backend("streamlit")` is called by the GUI, so the same business logic code path drives both interfaces without any conditional branching.
+
+**Site cleanup profiles** (`site_profiles/`): during `--extract-html`, `convert()` asks `resolve_profiles()` which `SiteProfile` subclasses recognize the page (by origin URL or an HTML fingerprint). Each matched profile contributes two cleanup hooks: `skip_subtree()` is consulted by `html_parser.py`'s `_ContentExtractor` for every start tag to drop site chrome before the AST is built, and `clean_ast()` runs once on the finished tree for structural edits. `WikipediaProfile` is the only profile today; its per-site settings live in the `html.wikipedia` config dataclass. Profiles never touch `Image` nodes — image handling stays in `api.py`. The default for whether profiles run is `html.site_cleanup`, overridable per call via `site_cleanup` / `--no-site-cleanup`.
 
 **Outbound HTTP / TLS** (`_net.py`): every download in `api.py` (URL source, remote images) goes through `_net.open_url()`, which is `urllib.request.urlopen()` plus a verifying `SSLContext` from `_net.ssl_context()`. That context uses the OS-native trust store via `truststore` (roots stay current through the OS), falling back to the `certifi` bundle, then to the stdlib default — so verification does not depend on the possibly-stale OpenSSL/system CA set. This is the only place TLS trust is configured; tests exercise the real path rather than disabling verification.

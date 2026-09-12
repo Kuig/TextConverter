@@ -37,9 +37,10 @@ For local development (editable installs, running the test suite), see [CONTRIBU
 
 ## Configuration
 
-`config.json` at the project root is split into two sections:
+`config.json` at the project root is split into these sections:
 
 - **`"ai"`**: TextConverter application-level settings, covering which provider to use, model names, prompts, and token budgets.
+- **`"html"`**: HTML input handling. `site_cleanup` is the default for whether source-specific cleanup profiles run during `--extract-html`; `wikipedia` tunes the Wikipedia profile (which end-matter sections to drop, whether to remove inline `[n]` citation markers, whether to keep the full reference list, and any extra MediaWiki selectors to strip).
 - **`"<provider>"`**: Provider connection settings passed directly to `unified_ai_client` (URL, timeout, context size, etc.).
 
 ```json
@@ -53,6 +54,15 @@ For local development (editable installs, running the test suite), see [CONTRIBU
     "provide_extracted_text_to_describer": true,
     "classification_prompt": "...",
     "prompts": { "...": "..." }
+  },
+  "html": {
+    "site_cleanup": true,
+    "wikipedia": {
+      "drop_sections": ["see also", "external links", "further reading"],
+      "drop_citation_marks": true,
+      "keep_reference_list": true,
+      "extra_strip_selectors": []
+    }
   },
   "ollama": {
     "url": "http://localhost:11434",
@@ -105,6 +115,17 @@ When set to `auto` (the default), the tool dynamically maps the strategy based o
 
 ---
 
+## HTML Extraction & Site Cleanup
+
+`--extract-html` (API: `extract_html=True`) runs a generic pre-pass that drops noise tags (`script`, `nav`, `footer`, …), whitelists attributes, and isolates the `<main>` / `<article>` block.
+
+On top of that, **site-specific cleanup profiles** activate automatically for pages they recognize. The only profile today is **Wikipedia** (any language edition), matched by a `*.wikipedia.org` URL or a MediaWiki fingerprint in the HTML. It removes `[edit]` links, navboxes, maintenance banners, hatnotes, the table of contents, category footers and inline `[n]` citation markers, and prunes a configurable set of end-matter sections (`See also`, `External links`, `Further reading` by default, including their known translations). The infobox, the reference list, and all images are kept — image handling stays governed by `--image-handling`.
+
+- Turn site profiles off for one run with `--no-site-cleanup` (API: `site_cleanup=False`); the run then behaves like plain `--extract-html`.
+- Change the default, or tune the Wikipedia profile, in the `"html"` section of `config.json` (see [Configuration](#configuration)). Non-English wikis can add their own section titles to `drop_sections`.
+
+`--discard-links` (API: `discard_links=True`) is independent of HTML extraction and of the source format: it replaces every hyperlink with its visible text (a link wrapping an image keeps the image).
+
 ## Usage
 
 ### CLI
@@ -118,6 +139,10 @@ textconverter convert https://example.com DocsOutput/example.md
 
 # Convert a webpage with clean HTML content extraction (strips noise, isolates main body)
 textconverter convert https://example.com DocsOutput/example.md --extract-html
+
+# Wikipedia article: --extract-html also runs the Wikipedia cleanup profile automatically
+textconverter convert https://en.wikipedia.org/wiki/Modena DocsOutput/modena.md --extract-html
+#   ...add --no-site-cleanup to fall back to generic extraction, or --discard-links to drop hyperlinks
 
 # Convert with AI image description
 textconverter convert DocsInput/document.pdf DocsOutput/document.md --image-handling describe
@@ -172,6 +197,8 @@ def convert(
     image_handling: str = "auto",
     code_parsing: bool = False,
     extract_html: bool = False,
+    discard_links: bool = False,
+    site_cleanup: bool | None = None,
 ) -> str:
     """Convert text or a file to a specific format and return the result as a string."""
 ```
@@ -184,6 +211,8 @@ def convert(
 - `image_handling`: `"auto"` (default, format-dependent), `"describe"`, `"embed"`, `"link"`, or `"discard"` (see [Image Handling](#image-handling)). `"auto_latex"` is also accepted, as the internal fallback `auto` uses on LaTeX/JSON output, but it's not meant to be set directly since its behavior may change.
 - `code_parsing`: Enable heuristic code-block detection (Markdown/HTML sources).
 - `extract_html`: Strip boilerplate and isolate main content when parsing HTML.
+- `discard_links`: Replace every hyperlink with its visible text (any source format).
+- `site_cleanup`: Override for site-specific HTML cleanup during `extract_html`. `None` uses the `html.site_cleanup` config default; `False` disables it for this call.
 
 ```python
 def save_to_file(
@@ -193,6 +222,8 @@ def save_to_file(
     image_handling: str = "auto",
     code_parsing: bool = False,
     extract_html: bool = False,
+    discard_links: bool = False,
+    site_cleanup: bool | None = None,
 ) -> None:
     """Convert and write the result directly to output_path (format inferred from its extension)."""
 ```
@@ -221,6 +252,14 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
    This dynamically detects your Python virtual environment path and generates two registry files: `register.reg` and `unregister.reg`.
 3. Double-click `register.reg` and approve the prompt to register the context menu.
 4. To remove the integration, double-click `unregister.reg`.
+
+#### GUI Launcher
+
+A `launch_gui.bat` shortcut in the `Windows Integration/` folder activates the virtual environment and launches the Streamlit web interface with a double-click, without needing to open a terminal.
+
+You can also:
+- Create a shortcut to `launch_gui.bat` on your Desktop or Start Menu for quick access.
+- Pin it to the Start Menu or taskbar for even faster launching.
 
 ---
 

@@ -31,6 +31,8 @@ with st.sidebar:
     )
     code_parsing = st.checkbox("Enable code detection")
     extract_html = st.checkbox("Clean HTML & extract main content")
+    site_cleanup = st.checkbox("Site-specific cleanup (e.g. Wikipedia)", value=True, disabled=not extract_html)
+    discard_links = st.checkbox("Discard links (keep text)")
     st.divider()
     st.caption("'describe' requires Ollama running locally.")
 
@@ -128,6 +130,8 @@ if st.button("Convert", type="primary", use_container_width=True):
                     image_handling=image_handling,
                     code_parsing=code_parsing,
                     extract_html=extract_html,
+                    discard_links=discard_links,
+                    site_cleanup=site_cleanup,
                 )
                 st.success(f"Saved to: `{output}`")
             except Exception as exc:

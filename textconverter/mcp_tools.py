@@ -20,6 +20,8 @@ def register_tools(mcp: object) -> None:
         image_handling: str = "auto",
         code_parsing: bool = False,
         extract_html: bool = False,
+        discard_links: bool = False,
+        site_cleanup: bool | None = None,
     ) -> str:
         """Convert text or a file to a target document format.
 
@@ -34,6 +36,9 @@ def register_tools(mcp: object) -> None:
             image_handling: Image handling strategy ('auto', 'describe', 'embed', 'link', 'discard').
             code_parsing: If True, enables AI-assisted code block detection for Markdown output.
             extract_html: If True, filters noise and extracts main content from HTML.
+            discard_links: If True, replaces every hyperlink with its visible text.
+            site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during
+                extract_html. None uses the config default; False disables it.
 
         Returns:
             Converted document as a string.
@@ -45,6 +50,8 @@ def register_tools(mcp: object) -> None:
                 is_file, output_dir, image_dir_name, image_handling,
                 code_parsing=code_parsing,
                 extract_html=extract_html,
+                discard_links=discard_links,
+                site_cleanup=site_cleanup,
             )
         except Exception as exc:
             return f"Error: {exc}"
@@ -57,6 +64,8 @@ def register_tools(mcp: object) -> None:
         image_handling: str = "auto",
         code_parsing: bool = False,
         extract_html: bool = False,
+        discard_links: bool = False,
+        site_cleanup: bool | None = None,
     ) -> str:
         """Convert a document and save it to a file.
 
@@ -67,13 +76,16 @@ def register_tools(mcp: object) -> None:
             image_handling: Image handling strategy ('auto', 'describe', 'embed', 'link', 'discard').
             code_parsing: If True, enables AI-assisted code block detection.
             extract_html: If True, filters noise and extracts main content from HTML.
+            discard_links: If True, replaces every hyperlink with its visible text.
+            site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during
+                extract_html. None uses the config default; False disables it.
 
         Returns:
             Confirmation message with the output path.
         """
         try:
             from textconverter.api import save_to_file
-            save_to_file(source, output_path, template, image_handling, code_parsing=code_parsing, extract_html=extract_html)
+            save_to_file(source, output_path, template, image_handling, code_parsing=code_parsing, extract_html=extract_html, discard_links=discard_links, site_cleanup=site_cleanup)
             return f"Successfully saved to {output_path}"
         except Exception as exc:
             return f"Error: {exc}"

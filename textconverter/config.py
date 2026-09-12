@@ -69,6 +69,45 @@ class AiConfig:
 
 
 @dataclass
+class WikipediaCleanupConfig:
+    """Settings for the Wikipedia HTML cleanup profile.
+
+    Attributes:
+        drop_sections: End-matter section titles to remove (heading plus its
+            block). An entry that matches an English canonical name
+            (``see also``, ``external links``, ``further reading``) also removes
+            that section's known translations; any other entry is matched
+            literally, so non-English wikis can list their own titles here.
+        drop_citation_marks: Remove inline ``[n]`` citation superscripts.
+        keep_reference_list: Keep the full citation list at the end of the
+            article; set False to strip it too.
+        extra_strip_selectors: Additional MediaWiki class names or element ids
+            to remove, on top of the built-in list.
+    """
+
+    drop_sections: list[str] = field(
+        default_factory=lambda: ["see also", "external links", "further reading"]
+    )
+    drop_citation_marks: bool = True
+    keep_reference_list: bool = True
+    extra_strip_selectors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class HtmlConfig:
+    """HTML input handling settings.
+
+    Attributes:
+        site_cleanup: Default for whether site-specific cleanup profiles run
+            during ``--extract-html``. A per-run flag can still override it.
+        wikipedia: Settings for the Wikipedia cleanup profile.
+    """
+
+    site_cleanup: bool = True
+    wikipedia: WikipediaCleanupConfig = field(default_factory=WikipediaCleanupConfig)
+
+
+@dataclass
 class AppConfig:
     """Root application configuration loaded from config.json.
 
@@ -78,6 +117,7 @@ class AppConfig:
     """
 
     ai: AiConfig = field(default_factory=AiConfig)
+    html: HtmlConfig = field(default_factory=HtmlConfig)
     providers: dict[str, dict[str, Any]] = field(default_factory=lambda: dict(_DEFAULT_PROVIDERS))
 
     @classmethod
@@ -97,11 +137,12 @@ class AppConfig:
             return cls()
 
         ai_config = _ai_config_from_dict(raw.get("ai"))
+        html_config = _html_config_from_dict(raw.get("html"))
         providers = {
             k: v for k, v in raw.items()
-            if k != "ai" and isinstance(v, dict)
+            if k not in ("ai", "html") and isinstance(v, dict)
         }
-        return cls(ai=ai_config, providers=providers or dict(_DEFAULT_PROVIDERS))
+        return cls(ai=ai_config, html=html_config, providers=providers or dict(_DEFAULT_PROVIDERS))
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +203,50 @@ def _ai_config_from_dict(data: Any) -> AiConfig:
     if unknown:
         log_warning(f"Ignoring unknown keys in config 'ai' section: {', '.join(unknown)}")
     return AiConfig(**filtered)
+
+
+def _wikipedia_cleanup_from_dict(data: Any) -> WikipediaCleanupConfig:
+    """Build a WikipediaCleanupConfig from the raw ``"html.wikipedia"`` section.
+
+    Tolerant but noisy: unknown keys are dropped with a ``log_warning``. A
+    missing or malformed section falls back to defaults.
+
+    Args:
+        data: The raw ``"wikipedia"`` value from the parsed ``"html"`` section.
+
+    Returns:
+        A populated WikipediaCleanupConfig instance.
+    """
+    if not isinstance(data, dict):
+        return WikipediaCleanupConfig()
+    fields = WikipediaCleanupConfig.__dataclass_fields__
+    filtered = {k: v for k, v in data.items() if k in fields}
+    unknown = sorted(set(data) - set(filtered))
+    if unknown:
+        log_warning(f"Ignoring unknown keys in config 'html.wikipedia' section: {', '.join(unknown)}")
+    return WikipediaCleanupConfig(**filtered)
+
+
+def _html_config_from_dict(data: Any) -> HtmlConfig:
+    """Build an HtmlConfig from the raw ``"html"`` section of config.json.
+
+    Tolerant but noisy: unknown keys are dropped with a ``log_warning``. A
+    missing or malformed section falls back to defaults.
+
+    Args:
+        data: The raw ``"html"`` value from the parsed config.json.
+
+    Returns:
+        A populated HtmlConfig instance.
+    """
+    if not isinstance(data, dict):
+        return HtmlConfig()
+    fields = HtmlConfig.__dataclass_fields__
+    filtered = {k: v for k, v in data.items() if k in fields and k != "wikipedia"}
+    unknown = sorted(set(data) - set(fields))
+    if unknown:
+        log_warning(f"Ignoring unknown keys in config 'html' section: {', '.join(unknown)}")
+    return HtmlConfig(wikipedia=_wikipedia_cleanup_from_dict(data.get("wikipedia")), **filtered)
 
 
 def load_config() -> AppConfig:

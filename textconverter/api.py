@@ -15,6 +15,8 @@ from .renderers.html_renderer import render_html
 from .renderers.latex_renderer import render_latex
 from .renderers.json_renderer import render_json
 
+from .site_profiles import resolve_profiles
+
 def _extract_image_filename(url: str) -> str:
     """Extracts a clean filename from a remote URL, handling nested/proxied URL structures.
 
@@ -59,6 +61,41 @@ def _sanitize_filename(name: str) -> str:
         base = base[:80]
     ext = re.sub(r'[^a-zA-Z0-9.]', '', ext)[:10]
     return f"{base}{ext}"
+
+
+def _discard_links(node: object) -> None:
+    """Recursively replace every Link node with its inline content.
+
+    The link text (and any image it wrapped) is kept in place; the URL is
+    dropped. Traversal mirrors the other AST passes in this module.
+
+    Args:
+        node: An AST node to descend into.
+    """
+    from .ast import Link
+
+    def _unwrap(nodes: list) -> list:
+        out: list = []
+        for n in nodes:
+            if isinstance(n, Link):
+                out.extend(_unwrap(n.content))
+            else:
+                out.append(n)
+        return out
+
+    if hasattr(node, 'children') and isinstance(node.children, list):
+        node.children = _unwrap(node.children)
+        for c in node.children:
+            _discard_links(c)
+    if hasattr(node, 'content') and isinstance(node.content, list):
+        node.content = _unwrap(node.content)
+        for c in node.content:
+            _discard_links(c)
+    for attr in ('items', 'rows', 'cells', 'headers'):
+        seq = getattr(node, attr, None)
+        if seq:
+            for c in seq:
+                _discard_links(c)
 
 
 def _download_remote_images(doc: Document, output_dir: str | None, image_dir_name: str | None, is_url: bool, source: str) -> None:
@@ -184,11 +221,17 @@ def _download_remote_images(doc: Document, output_dir: str | None, image_dir_nam
 
 
 
-def convert(source: str, to_format: str, from_format: str | None = None, template: str = "plain", is_file: bool = False, output_dir: str | None = None, image_dir_name: str | None = None, image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False) -> str:
+def convert(source: str, to_format: str, from_format: str | None = None, template: str = "plain", is_file: bool = False, output_dir: str | None = None, image_dir_name: str | None = None, image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False, discard_links: bool = False, site_cleanup: bool | None = None) -> str:
     """
     Convert text or file to a specific format.
     If is_file is True, source is presumed to be a file path.
     Otherwise, if source ends with .pdf, .md, .html, .tex, it will try to infer it if from_format is not given.
+
+    ``extract_html`` cleans HTML input and isolates its main content. When it is
+    on, site-specific cleanup profiles (e.g. Wikipedia) also run for pages they
+    recognize, unless ``site_cleanup`` is False (or ``html.site_cleanup`` is
+    False in config.json and ``site_cleanup`` is left None).
+    ``discard_links`` replaces every hyperlink with its visible text.
     """
     is_url = source.startswith(("http://", "https://"))
     original_source = source
@@ -278,7 +321,14 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
             if from_format == 'markdown':
                 doc = parse_markdown(text, code_parsing=code_parsing)
             elif from_format == 'html':
-                doc = parse_html(text, extract=extract_html)
+                from .config import load_config
+                html_cfg = load_config().html
+                use_profiles = html_cfg.site_cleanup if site_cleanup is None else site_cleanup
+                active_profiles = (
+                    resolve_profiles(original_source if is_url else None, text, html_cfg)
+                    if (extract_html and use_profiles) else ()
+                )
+                doc = parse_html(text, extract=extract_html, profiles=active_profiles)
             elif from_format == 'latex':
                 doc = parse_latex(text)
             else:
@@ -365,6 +415,9 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
                         for c in node.headers: _remove_images(c)
                 _remove_images(doc)
 
+        if discard_links:
+            _discard_links(doc)
+
         # 2. Render from AST
         if to_format == 'markdown':
             return render_markdown(doc)
@@ -385,7 +438,7 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
                 from .logger import log_warning
                 log_warning(f"Could not remove temporary file {temp_file_path}: {exc}")
 
-def save_to_file(source: str, output_path: str, template: str = "plain", image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False) -> None:
+def save_to_file(source: str, output_path: str, template: str = "plain", image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False, discard_links: bool = False, site_cleanup: bool | None = None) -> None:
     """
     Convert and save directly to file, inferring to_format and from_format.
     """
@@ -398,6 +451,6 @@ def save_to_file(source: str, output_path: str, template: str = "plain", image_h
     else:
         raise ValueError("Could not infer output format from extension.")
 
-    result = convert(source, to_format=to_format, template=template, is_file=True, output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images", image_handling=image_handling, code_parsing=code_parsing, extract_html=extract_html)
+    result = convert(source, to_format=to_format, template=template, is_file=True, output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images", image_handling=image_handling, code_parsing=code_parsing, extract_html=extract_html, discard_links=discard_links, site_cleanup=site_cleanup)
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(result)

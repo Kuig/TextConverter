@@ -1,10 +1,14 @@
 from __future__ import annotations
 from html.parser import HTMLParser
+from typing import TYPE_CHECKING, Sequence
 from ..ast import (
     Document, Paragraph, Heading, Text, Link, Image, CodeInline, LineBreak,
     CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, Node,
     BlockQuote, HorizontalRule, Equation
 )
+
+if TYPE_CHECKING:
+    from ..site_profiles.base import SiteProfile
 
 _INLINE_TAGS = frozenset([
     'a', 'b', 'strong', 'i', 'em', 'span', 'code', 'img', 'br', 'sub', 'sup',
@@ -504,26 +508,35 @@ class _ContentExtractor(HTMLParser):
       1. Skip noise tags (and all their children)
       2. If <main>, <article>, or role=main is found -> return only that block
       3. Otherwise return the entire cleaned HTML
+
+    ``profiles`` are ``(profile, config)`` pairs for the sites this page was
+    recognized as; each profile can veto extra subtrees via ``skip_subtree``.
     """
-    def __init__(self) -> None:
+    def __init__(self, profiles: Sequence[tuple["SiteProfile", object]] = ()) -> None:
         super().__init__()
+        self._profiles = list(profiles)
         self._depth = 0
-        self._skip_tag = None   # Name of the active noise tag causing skip
+        # Tree depth of the subtree currently being skipped, or None.
+        self._skip_depth: int | None = None
         self._buf = []     # Complete cleaned HTML buffer
         self._main_buf = []     # Main content block buffer
         self._main_depth = None
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if self._skip_tag is not None:
-            return
+    def _is_dropped(self, tag: str, ad: dict[str, str | None]) -> bool:
         if tag in _NOISE:
-            self._skip_tag = tag
-            return
+            return True
+        return any(profile.skip_subtree(tag, ad, cfg) for profile, cfg in self._profiles)
 
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        ad = dict(attrs)
         if tag not in _VOID:
             self._depth += 1
+        if self._skip_depth is not None:
+            return
+        if self._is_dropped(tag, ad):
+            self._skip_depth = self._depth
+            return
 
-        ad = dict(attrs)
         if tag in ('main', 'article') or ad.get('role') == 'main':
             if self._main_depth is None:
                 self._main_depth = self._depth
@@ -540,12 +553,12 @@ class _ContentExtractor(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag in _VOID:
             return
-        if self._skip_tag is not None:
-            if tag == self._skip_tag:
-                self._skip_tag = None
+        self._depth -= 1
+        if self._skip_depth is not None:
+            if self._depth < self._skip_depth:
+                self._skip_depth = None  # Closed the root of the skipped subtree
             return
 
-        self._depth -= 1
         piece = f'</{tag}>'
         self._buf.append(piece)
         if self._main_depth is not None:
@@ -554,7 +567,7 @@ class _ContentExtractor(HTMLParser):
                 self._main_depth = None  # Exited the main content block
 
     def handle_data(self, data: str) -> None:
-        if self._skip_tag is not None:
+        if self._skip_depth is not None:
             return
         self._buf.append(data)
         if self._main_depth is not None:
@@ -564,17 +577,23 @@ class _ContentExtractor(HTMLParser):
         return ''.join(self._main_buf or self._buf)
 
 
-def extract_content(html: str) -> str:
-    ex = _ContentExtractor()
+def extract_content(html: str, profiles: Sequence[tuple["SiteProfile", object]] = ()) -> str:
+    ex = _ContentExtractor(profiles)
     ex.feed(html)
     return ex.get_html()
 
 
-def parse_html(text: str, extract: bool = False) -> Document:
+def parse_html(
+    text: str,
+    extract: bool = False,
+    profiles: Sequence[tuple["SiteProfile", object]] = (),
+) -> Document:
     if extract:
-        text = extract_content(text)
+        text = extract_content(text, profiles)
     parser = ASTHTMLParser()
     parser.feed(text)
     parser.close()
+    for profile, cfg in profiles:
+        profile.clean_ast(parser.doc, cfg)
     return parser.doc
 

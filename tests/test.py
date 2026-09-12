@@ -238,6 +238,96 @@ class TestHtmlParser(BaseConverterTest):
 
 
 # ---------------------------------------------------------------------------
+# Wikipedia site-cleanup profile
+# ---------------------------------------------------------------------------
+
+class TestWikipediaCleanup(BaseConverterTest):
+
+    WIKI_URL = "https://en.wikipedia.org/wiki/Example"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.html = _read(INPUT_DIR / "WikipediaSample.html")
+
+    def _render(self, *, url=None, profiles=None):
+        """parse_html → markdown, driving profiles explicitly (offline)."""
+        from textconverter.parsers.html_parser import parse_html
+        from textconverter.renderers.markdown_renderer import render_markdown
+        from textconverter.config import load_config
+        from textconverter.site_profiles import resolve_profiles
+
+        if profiles is None:
+            profiles = resolve_profiles(url, self.html, load_config().html)
+        return render_markdown(parse_html(self.html, extract=True, profiles=profiles))
+
+    def test_profile_strips_chrome_keeps_content(self):
+        """Wikipedia URL → edit links, navbox, banners, categories, [n] markers gone; prose/infobox/reflist kept."""
+        md = self._render(url=self.WIKI_URL)
+        for gone in ("[edit]", "Navlink A", "additional citations", "Categories",
+                     "cite_note", "[[1]]", "From Wikipedia", "For other uses"):
+            self.assertNotIn(gone, md, f"{gone!r} should be stripped")
+        for kept in ("## History", "history section body text", "Founded", "1861",
+                     "/media/pic.jpg", "Full citation text", "## References"):
+            self.assertIn(kept, md, f"{kept!r} should be kept")
+
+    def test_end_sections_pruned_multilingual(self):
+        """Default drop_sections removes 'See also' and its localized 'Voci correlate'."""
+        md = self._render(url=self.WIKI_URL)
+        self.assertNotIn("See also", md)
+        self.assertNotIn("Related topic", md)
+        self.assertNotIn("Voci correlate", md)
+        self.assertNotIn("Altro argomento", md)
+
+    def test_not_triggered_without_profile(self):
+        """extract_html alone (no matching profile) leaves Wikipedia chrome in place."""
+        md = self._render(profiles=())
+        self.assertIn("Navlink A", md)
+        self.assertIn("See also", md)
+        self.assertIn("[[1]](#cite_note-1)", md)
+
+    def test_fingerprint_activation_via_convert(self):
+        """No URL: the <body class="mediawiki"> fingerprint still activates the profile."""
+        md = textconverter.convert(self.html, to_format="markdown",
+                                   from_format="html", extract_html=True)
+        self.assertNotIn("Navlink A", md)
+        self.assertNotIn("[edit]", md)
+        self.assertIn("## History", md)
+
+    def test_site_cleanup_opt_out(self):
+        """site_cleanup=False downgrades to generic extraction even on a Wikipedia page."""
+        md = textconverter.convert(self.html, to_format="markdown", from_format="html",
+                                   extract_html=True, site_cleanup=False)
+        self.assertIn("Navlink A", md)
+        self.assertIn("See also", md)
+
+    def test_config_toggles(self):
+        """keep_reference_list / drop_citation_marks / extra_strip_selectors honoured."""
+        from textconverter.config import WikipediaCleanupConfig
+        from textconverter.site_profiles import WikipediaProfile
+        prof = WikipediaProfile()
+
+        md = self._render(profiles=[(prof, WikipediaCleanupConfig(keep_reference_list=False))])
+        self.assertNotIn("Full citation text", md)
+
+        md = self._render(profiles=[(prof, WikipediaCleanupConfig(drop_citation_marks=False))])
+        self.assertIn("[[1]](#cite_note-1)", md)
+
+        md = self._render(profiles=[(prof, WikipediaCleanupConfig(extra_strip_selectors=["infobox"]))])
+        self.assertNotIn("Founded", md)
+
+    def test_discard_links_is_source_independent(self):
+        """--discard-links unwraps every link to its text, keeping a link-wrapped image."""
+        src = ("[Modena](https://en.wikipedia.org/wiki/Modena) is a [city](http://x.test). "
+               "[![alt](pic.jpg)](http://y.test)")
+        md = textconverter.convert(src, to_format="markdown", from_format="markdown",
+                                   discard_links=True)
+        self.assertIn("Modena is a city.", md)
+        self.assertNotIn("http", md)
+        self.assertIn("![alt](pic.jpg)", md)
+
+
+# ---------------------------------------------------------------------------
 # LaTeX Parser Tests
 # ---------------------------------------------------------------------------
 
@@ -551,6 +641,9 @@ class TestRemoteIntegration(BaseConverterTest):
         self.assertTrue(out_path.exists(), "Output HTML file not created")
         content = _read(out_path)
         self.assertIn("Swish", content, "Expected 'Swish' keyword not found in output")
+        # Wikipedia cleanup profile ran: chrome should be gone.
+        self.assertNotIn("[edit]", content, "Section edit links not stripped")
+        self.assertNotIn("Retrieved from", content, "Category/footer chrome not stripped")
 
 
 if __name__ == "__main__":
