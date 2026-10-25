@@ -37,49 +37,9 @@ For local development (editable installs, running the test suite), see [CONTRIBU
 
 ## Configuration
 
-`config.json` at the project root is split into these sections:
+`config.json` (read from the working directory, then the project root) selects the AI provider, models and prompts (`"ai"`), tunes HTML cleanup (`"html"`), and holds the provider connection settings (e.g. `"ollama"`). The default provider is a local Ollama server and needs no API key; cloud providers read their key from an environment variable.
 
-- **`"ai"`**: TextConverter application-level settings, covering which provider to use, model names, prompts, and token budgets.
-- **`"html"`**: HTML input handling. `site_cleanup` is the default for whether source-specific cleanup profiles run during `--extract-html`; `wikipedia` tunes the Wikipedia profile (which end-matter sections to drop, whether to remove inline `[n]` citation markers, whether to keep the full reference list, and any extra MediaWiki selectors to strip).
-- **`"<provider>"`**: Provider connection settings passed directly to `unified_ai_client` (URL, timeout, context size, etc.).
-
-```json
-{
-  "ai": {
-    "provider": "ollama",
-    "classification_model": "gemma4:12b",
-    "description_model": "gemma4:12b",
-    "classification_visual_token_budget": 70,
-    "description_visual_token_budget": 1120,
-    "provide_extracted_text_to_describer": true,
-    "classification_prompt": "...",
-    "prompts": { "...": "..." }
-  },
-  "html": {
-    "site_cleanup": true,
-    "wikipedia": {
-      "drop_sections": ["see also", "external links", "further reading"],
-      "drop_citation_marks": true,
-      "keep_reference_list": true,
-      "extra_strip_selectors": []
-    }
-  },
-  "ollama": {
-    "url": "http://localhost:11434",
-    "timeout": 300,
-    "keep_alive": "15m",
-    "context_size": 8192
-  }
-}
-```
-
-The `"ai"` section is provider-agnostic: switching to a different backend only requires changing `"provider"` and adding the corresponding connection block (e.g. `"google"`, `"openai"`).
-
-Configuration is resolved in priority order: **CWD** → package root → built-in defaults. This means you can place a local `config.json` in your working directory to override the project-level settings without modifying the package.
-
-### API Keys (Cloud Providers)
-
-TextConverter is Ollama-first: the default provider runs fully locally and needs no API key. If you switch `"provider"` to a cloud backend (`google`, `openai`, `anthropic`, ...), supply the key through an environment variable (`GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). A [`secrets.json.example`](secrets.json.example) template is provided for reference, but the app does not auto-load `secrets.json` — environment variables are the supported path.
+Every field is documented in **[docs/configuration.md](docs/configuration.md)**.
 
 ## Image Handling
 
@@ -122,7 +82,7 @@ When set to `auto` (the default), the tool dynamically maps the strategy based o
 On top of that, **site-specific cleanup profiles** activate automatically for pages they recognize. The only profile today is **Wikipedia** (any language edition), matched by a `*.wikipedia.org` URL or a MediaWiki fingerprint in the HTML. It removes `[edit]` links, navboxes, maintenance banners, hatnotes, the table of contents, category footers and inline `[n]` citation markers, and prunes a configurable set of end-matter sections (`See also`, `External links`, `Further reading` by default, including their known translations). The infobox, the reference list, and all images are kept — image handling stays governed by `--image-handling`.
 
 - Turn site profiles off for one run with `--no-site-cleanup` (API: `site_cleanup=False`); the run then behaves like plain `--extract-html`.
-- Change the default, or tune the Wikipedia profile, in the `"html"` section of `config.json` (see [Configuration](#configuration)). Non-English wikis can add their own section titles to `drop_sections`.
+- Change the default, or tune the Wikipedia profile, in the `"html"` section of `config.json` (see [docs/configuration.md](docs/configuration.md#html)). Non-English wikis can add their own section titles to `drop_sections`.
 
 `--discard-links` (API: `discard_links=True`) is independent of HTML extraction and of the source format: it replaces every hyperlink with its visible text (a link wrapping an image keeps the image).
 
@@ -265,5 +225,7 @@ You can also:
 
 ## Documentation
 
+- [docs/configuration.md](docs/configuration.md): every `config.json` field.
+- [CHANGELOG.md](CHANGELOG.md): notable changes per release.
 - [ARCHITECTURE.md](ARCHITECTURE.md): pipeline design, module map, and internal data flow.
 - [CONTRIBUTING.md](CONTRIBUTING.md): development install and how to run the test suite.

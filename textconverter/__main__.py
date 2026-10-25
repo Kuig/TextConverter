@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["auto", "describe", "embed", "link", "discard"],
         help="Image handling strategy.",
     )
-    p_convert.add_argument("--code-parsing", action="store_true", help="Enable AI-assisted code block detection.")
+    p_convert.add_argument("--code-parsing", action="store_true", help="Enable heuristic code block detection.")
     p_convert.add_argument("--extract-html", action="store_true", help="Filter noise and extract main content from HTML.")
     p_convert.add_argument("--no-site-cleanup", action="store_true", help="Skip site-specific HTML cleanup (e.g. Wikipedia) even with --extract-html.")
     p_convert.add_argument("--discard-links", action="store_true", help="Replace every hyperlink with its visible text.")

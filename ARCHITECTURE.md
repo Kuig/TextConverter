@@ -15,6 +15,9 @@ TextConverter/
 ├── README.md
 ├── ARCHITECTURE.md
 ├── CONTRIBUTING.md
+├── CHANGELOG.md
+├── docs/
+│   └── configuration.md             ← Reference for every config.json field
 ├── DocsInput/                       ← Sample input documents
 ├── DocsOutput/                      ← Generated output documents
 ├── tests/                           ← Unit test suite (unittest)

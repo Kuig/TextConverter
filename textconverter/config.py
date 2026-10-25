@@ -59,8 +59,8 @@ class AiConfig:
     """TextConverter application-level AI settings (provider-agnostic)."""
 
     provider: str = "ollama"
-    classification_model: str = "gemma4:12b"
-    description_model: str = "gemma4:12b"
+    classification_model: str = "gemma4:e2b"
+    description_model: str = "gemma4:e2b"
     classification_visual_token_budget: int = 70
     description_visual_token_budget: int = 1120
     provide_extracted_text_to_describer: bool = False
@@ -272,27 +272,3 @@ def get_ai_config(cfg: AppConfig) -> AiConfig:
         prompts, and token budgets.
     """
     return cfg.ai
-
-
-def configure_provider_from_config(cfg: AppConfig) -> None:
-    """Call ``unified_ai_client.configure_provider()`` for the active provider.
-
-    Reads the provider name from ``cfg.ai.provider`` (default ``"ollama"``),
-    then passes the matching provider section (e.g. ``cfg.providers["ollama"]``)
-    as keyword arguments to ``configure_provider()``.
-
-    This is a no-op if ``unified_ai_client`` is not installed.
-
-    Args:
-        cfg: An AppConfig instance as returned by ``load_config()``.
-    """
-    try:
-        from unified_ai_client import configure_provider
-    except ImportError:
-        return
-
-    provider_name = cfg.ai.provider
-    provider_settings = cfg.providers.get(provider_name, {})
-
-    if provider_settings:
-        configure_provider(provider_name, **provider_settings)

@@ -34,7 +34,7 @@ def register_tools(mcp: object) -> None:
             output_dir: Optional directory for extracted assets (images, etc.).
             image_dir_name: Optional name for the image assets subdirectory.
             image_handling: Image handling strategy ('auto', 'describe', 'embed', 'link', 'discard').
-            code_parsing: If True, enables AI-assisted code block detection for Markdown output.
+            code_parsing: If True, enables heuristic code block detection for Markdown output.
             extract_html: If True, filters noise and extracts main content from HTML.
             discard_links: If True, replaces every hyperlink with its visible text.
             site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during
@@ -74,7 +74,7 @@ def register_tools(mcp: object) -> None:
             output_path: Full output file path (format inferred from extension).
             template: Rendering template name (default: 'plain').
             image_handling: Image handling strategy ('auto', 'describe', 'embed', 'link', 'discard').
-            code_parsing: If True, enables AI-assisted code block detection.
+            code_parsing: If True, enables heuristic code block detection.
             extract_html: If True, filters noise and extracts main content from HTML.
             discard_links: If True, replaces every hyperlink with its visible text.
             site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during
