@@ -33,7 +33,11 @@
   "html": {
     "site_cleanup": true,
     "wikipedia": {
-      "drop_sections": ["see also", "external links", "further reading"],
+      "drop_sections": [
+        "see also",
+        "external links",
+        "further reading"
+      ],
       "drop_citation_marks": true,
       "keep_reference_list": true,
       "extra_strip_selectors": []

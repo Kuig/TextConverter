@@ -1,4 +1,5 @@
 from __future__ import annotations
+import dataclasses
 import streamlit as st
 import sys
 from pathlib import Path
@@ -7,116 +8,198 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import textconverter.logger as logger
 from textconverter.api import save_to_file
+from textconverter.config import AppConfig, load_config
+from textconverter.gui.file_dialog import ask_path
 
 logger.set_backend("streamlit")
 
 # The GUI runs as its own `streamlit run` process and never enters main(),
 # so silence the third-party SDK loggers here too.
 try:
-    from unified_ai_client import silence_sdks
+    from unified_ai_client import list_models, list_providers, silence_sdks
     silence_sdks()
+    AI_AVAILABLE = True
 except ImportError:
-    pass
+    AI_AVAILABLE = False
+
+INPUT_FILETYPES = [
+    ("All Supported Files", "*.pdf;*.html;*.htm;*.md;*.tex;*.json;*.txt;*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp"),
+    ("PDF Files", "*.pdf"),
+    ("HTML Files", "*.html;*.htm"),
+    ("Markdown Files", "*.md"),
+    ("LaTeX Files", "*.tex"),
+    ("JSON Files", "*.json"),
+    ("Images", "*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp"),
+    ("Text Files", "*.txt"),
+    ("All Files", "*.*"),
+]
+OUTPUT_FILETYPES = [
+    ("Markdown Files", "*.md"),
+    ("HTML Files", "*.html"),
+    ("PDF Files", "*.pdf"),
+    ("LaTeX Files", "*.tex"),
+    ("JSON Files", "*.json"),
+    ("All Files", "*.*"),
+]
+# Session keys of the AI selection, each mirroring the AiConfig field of the same name.
+MODEL_KEYS = ("classification_model", "description_model", "ocr_model")
+NO_OCR_LABEL = "(none: description model transcribes)"
+
+
+@st.cache_data(show_spinner=False)
+def _available_providers() -> list[str]:
+    """Providers that can take images now: local servers that answer, cloud providers with a key."""
+    return [p.name for p in list_providers() if "image" in p.file_types]
+
+
+@st.cache_data(show_spinner=False)
+def _available_models(provider: str) -> tuple[list[str], str]:
+    """Image-capable model ids of a provider, and the error if they could not be listed.
+
+    A model whose input types are unknown is kept.
+
+    Returns:
+        (model ids, '') on success, ([], error message) on failure.
+    """
+    try:
+        models = list_models(provider)
+    except Exception as exc:
+        return [], str(exc) or type(exc).__name__
+    return [m.id for m in models
+            if not m.embeddings and (m.file_types is None or "image" in m.file_types)], ""
+
+
+def _init_state() -> None:
+    """Fill the session state with the paths and the AI selection from config.json."""
+    ai = load_config().ai
+    defaults = {"source": "", "output": "", "provider": ai.provider}
+    defaults.update({key: getattr(ai, key) for key in MODEL_KEYS})
+    for key, value in defaults.items():
+        st.session_state.setdefault(key, value)
+
+
+def _path_field(label: str, key: str, placeholder: str, filetypes: list, save: bool) -> str:
+    """A text input bound to st.session_state[key], with a button opening a file dialog."""
+    col_text, col_btn = st.columns([4, 1])
+    with col_btn:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        if st.button("💾" if save else "📁", key=f"{key}_btn", use_container_width=True,
+                     help="Browse for output path" if save else "Browse for source file"):
+            selected = ask_path(st.session_state[key], filetypes, save=save)
+            if selected:
+                st.session_state[key] = selected
+    with col_text:
+        return st.text_input(label, key=key, placeholder=placeholder)
+
+
+def _provider_picker() -> str:
+    """Provider selectbox; a saved provider that is unavailable stays selectable, with a warning."""
+    options = _available_providers()
+    current = st.session_state.provider
+    if current not in options:
+        options = [current, *options]
+        st.caption(f"⚠️ '{current}' is not available now: server not running or no API key.")
+    return st.selectbox(
+        "Provider", options, key="provider",
+        on_change=st.session_state.update, kwargs={key: "" for key in MODEL_KEYS},
+    )
+
+
+def _model_picker(label: str, key: str, provider: str, optional: bool = False) -> None:
+    """Model selectbox bound to st.session_state[key].
+
+    Falls back to a text input when the provider cannot list its models. A
+    saved model that is not offered stays selectable, with a warning.
+
+    Args:
+        label: Widget label.
+        key: Session state key, also the AiConfig field name.
+        provider: Provider whose models are offered.
+        optional: Offer "" (no model) as the first choice.
+    """
+    models, error = _available_models(provider)
+    if not models:
+        st.text_input(label, key=key)
+        reason = error.rstrip(".") or "the provider offers none"
+        st.caption(f"⚠️ Models of '{provider}' could not be listed ({reason}). Type the model name.")
+        return
+    current = st.session_state[key]
+    # Ollama lists "name:latest" for a model configured as plain "name".
+    if current and current not in models and f"{current}:latest" in models:
+        current = st.session_state[key] = f"{current}:latest"
+    options = ([""] if optional else []) + models
+    if not current and not optional:
+        st.session_state[key] = models[0]
+    elif current not in options:
+        options = [current, *options]
+        st.caption(f"⚠️ '{current}' is not offered by '{provider}' now.")
+    st.selectbox(label, options, key=key,
+                 format_func=lambda m: NO_OCR_LABEL if m == "" else m)
+
+
+def _selected_config() -> AppConfig:
+    """config.json with the provider and models chosen in the sidebar."""
+    config = load_config()
+    if AI_AVAILABLE:
+        chosen = {key: st.session_state[key] for key in ("provider", *MODEL_KEYS)}
+        config.ai = dataclasses.replace(config.ai, **chosen)
+    return config
+
 
 st.set_page_config(page_title="TextConverter", page_icon="📝", layout="wide")
-st.title("📝 TextConverter — Document Conversion")
-st.caption("Convert between PDF, HTML, Markdown, and LaTeX formats with optional AI features.")
+st.title("📝 TextConverter: Document Conversion")
+st.caption("Convert between PDF, HTML, Markdown, LaTeX and JSON, and to PDF, with optional AI features.")
+_init_state()
 
 with st.sidebar:
     st.header("⚙️ Options")
-    template = st.selectbox("Template", ["plain", "light-theme", "dark-theme"])
+    template = st.selectbox("Template", ["plain", "light-theme", "dark-theme"],
+                            help="HTML output only; PDF output always uses the light theme.")
     image_handling = st.selectbox(
         "Image handling",
         ["auto", "describe", "embed", "link", "discard"],
+    )
+    pdf_mode = st.selectbox(
+        "PDF input", ["text", "raster"],
+        format_func={"text": "Text layer", "raster": "Raster pages + AI transcription"}.get,
+        help="Raster renders every page and transcribes it with the AI models below (for scans).",
     )
     code_parsing = st.checkbox("Enable code detection")
     extract_html = st.checkbox("Clean HTML & extract main content")
     site_cleanup = st.checkbox("Site-specific cleanup (e.g. Wikipedia)", value=True, disabled=not extract_html)
     discard_links = st.checkbox("Discard links (keep text)")
     st.divider()
-    st.caption("'describe' requires Ollama running locally.")
 
-if "source" not in st.session_state:
-    st.session_state.source = ""
-if "output" not in st.session_state:
-    st.session_state.output = ""
+    st.header("🤖 AI models")
+    if not AI_AVAILABLE:
+        st.caption("AI features need the 'unified_ai_client' package (see requirements_prod.txt).")
+    else:
+        st.caption("Used by 'describe', image inputs, raster PDF input, and LaTeX/JSON output.")
+        provider = _provider_picker()
+        _model_picker("Classification model", "classification_model", provider)
+        _model_picker("Description model", "description_model", provider)
+        _model_picker("OCR model", "ocr_model", provider, optional=True)
+        col_refresh, col_save = st.columns(2)
+        with col_refresh:
+            if st.button("🔄 Refresh", use_container_width=True, help="Reload providers and models"):
+                _available_providers.clear()
+                _available_models.clear()
+                st.rerun()
+        with col_save:
+            if st.button("💾 Save as default", use_container_width=True,
+                         help="Write these choices to config.json in the working directory"):
+                try:
+                    st.success(f"Saved to {_selected_config().save()}")
+                except OSError as exc:
+                    st.error(f"Save failed: {exc}")
 
 col1, col2 = st.columns(2)
 with col1:
-    col_src, col_src_btn = st.columns([4, 1])
-    with col_src:
-        source = st.text_input("Source file path or URL", value=st.session_state.source, placeholder="DocsInput/document.pdf or https://example.com")
-        st.session_state.source = source
-    with col_src_btn:
-        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-        if st.button("📁", key="source_btn", help="Browse for source file", use_container_width=True):
-            import tkinter as tk
-            from tkinter import filedialog
-            root = tk.Tk()
-            root.withdraw()
-            root.wm_attributes('-topmost', 1)
-            
-            init_dir = str(Path(st.session_state.source).parent) if st.session_state.source else str(Path.cwd())
-            if not Path(init_dir).is_absolute():
-                init_dir = str(Path.cwd() / init_dir)
-                
-            selected_file = filedialog.askopenfilename(
-                initialdir=init_dir,
-                filetypes=[
-                    ("All Supported Files", "*.pdf;*.html;*.md;*.tex;*.json;*.txt"),
-                    ("PDF Files", "*.pdf"),
-                    ("HTML Files", "*.html"),
-                    ("Markdown Files", "*.md"),
-                    ("LaTeX Files", "*.tex"),
-                    ("JSON Files", "*.json"),
-                    ("Text Files", "*.txt"),
-                    ("All Files", "*.*")
-                ]
-            )
-            if selected_file:
-                try:
-                    rel_path = Path(selected_file).relative_to(Path.cwd())
-                    st.session_state.source = rel_path.as_posix()
-                except ValueError:
-                    st.session_state.source = Path(selected_file).as_posix()
-                st.rerun()
-
+    source = _path_field("Source file path or URL", "source",
+                         "DocsInput/document.pdf or https://example.com", INPUT_FILETYPES, save=False)
 with col2:
-    col_out, col_out_btn = st.columns([4, 1])
-    with col_out:
-        output = st.text_input("Output file path", value=st.session_state.output, placeholder="DocsOutput/document.md")
-        st.session_state.output = output
-    with col_out_btn:
-        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-        if st.button("💾", key="output_btn", help="Browse for output path", use_container_width=True):
-            import tkinter as tk
-            from tkinter import filedialog
-            root = tk.Tk()
-            root.withdraw()
-            root.wm_attributes('-topmost', 1)
-            
-            init_dir = str(Path(st.session_state.output).parent) if st.session_state.output else str(Path.cwd())
-            if not Path(init_dir).is_absolute():
-                init_dir = str(Path.cwd() / init_dir)
-                
-            selected_file = filedialog.asksaveasfilename(
-                initialdir=init_dir,
-                filetypes=[
-                    ("Markdown Files", "*.md"),
-                    ("HTML Files", "*.html"),
-                    ("LaTeX Files", "*.tex"),
-                    ("JSON Files", "*.json"),
-                    ("Text Files", "*.txt"),
-                    ("All Files", "*.*")
-                ]
-            )
-            if selected_file:
-                try:
-                    rel_path = Path(selected_file).relative_to(Path.cwd())
-                    st.session_state.output = rel_path.as_posix()
-                except ValueError:
-                    st.session_state.output = Path(selected_file).as_posix()
-                st.rerun()
+    output = _path_field("Output file path", "output",
+                         "DocsOutput/document.md", OUTPUT_FILETYPES, save=True)
 
 if st.button("Convert", type="primary", use_container_width=True):
     if not source or not output:
@@ -132,6 +215,8 @@ if st.button("Convert", type="primary", use_container_width=True):
                     extract_html=extract_html,
                     discard_links=discard_links,
                     site_cleanup=site_cleanup,
+                    config=_selected_config(),
+                    pdf_mode=pdf_mode,
                 )
                 st.success(f"Saved to: `{output}`")
             except Exception as exc:

@@ -16,6 +16,7 @@ TextConverter/
 ├── CONTRIBUTING.md
 ├── CHANGELOG.md
 ├── docs/
+│   ├── api.md                       ← Library functions and parameters
 │   └── configuration.md             ← Reference for every config.json field
 ├── DocsInput/                       ← Sample input documents
 ├── DocsOutput/                      ← Generated output documents
@@ -37,7 +38,8 @@ TextConverter/
     ├── renderers/                   ← Format-specific renderers
     ├── site_profiles/               ← Source-specific HTML cleanup (base.py, wikipedia.py)
     └── gui/                         ← Streamlit user interface
-        └── app.py                   ← Streamlit web interface entrypoint
+        ├── app.py                   ← Streamlit web interface entrypoint
+        └── file_dialog.py           ← Native file dialogs, run in a child process
 ```
 
 Every format flows through the same **parser → AST → renderer** pipeline: it is converted to and from a single, format-agnostic in-memory document tree, so adding a new format only requires a new parser and/or renderer; the rest of the pipeline (image handling, code detection, CLI/MCP/GUI) is shared automatically.
@@ -59,7 +61,7 @@ All four interfaces are thin wrappers around the same `convert()`/`save_to_file(
 - **CLI** (`__main__.py`): `argparse` subcommands (`convert`, `mcp`, `gui`).
 - **MCP server** (`mcp_tools.py`): FastMCP tools over stdio, for use from AI agents/IDEs.
 - **Python library**: direct import of `textconverter.api`.
-- **Streamlit GUI** (`gui/app.py`): sidebar for options, main area for source/output and results.
+- **Streamlit GUI** (`gui/app.py`): sidebar for options and for the AI provider and models (listed live by `unified_ai_client`, saved to `config.json` on request), main area for source/output and results. The chosen models reach `save_to_file()` as a `config` override, so the GUI holds no conversion logic.
 
 ## Invariants
 

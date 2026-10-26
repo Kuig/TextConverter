@@ -1,6 +1,6 @@
 from __future__ import annotations
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -165,6 +165,24 @@ class AppConfig:
             if k not in ("ai", "html") and isinstance(v, dict)
         }
         return cls(ai=ai_config, html=html_config, providers=providers or dict(_DEFAULT_PROVIDERS))
+
+    def save(self, path: str | Path | None = None) -> Path:
+        """Write this configuration as JSON, in the layout ``load()`` reads.
+
+        Unlike ``load()``, which falls back to the package root, saving always
+        targets the working directory: a saved configuration belongs to the
+        workspace, never inside an installed package.
+
+        Args:
+            path: Destination file. Defaults to ``./config.json``.
+
+        Returns:
+            The path written.
+        """
+        target = Path(path) if path is not None else Path.cwd() / "config.json"
+        data = {"ai": asdict(self.ai), "html": asdict(self.html), **self.providers}
+        target.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+        return target
 
 
 # ---------------------------------------------------------------------------

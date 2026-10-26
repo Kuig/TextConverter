@@ -82,6 +82,10 @@ The categories are `photo_drawing_or_comic`, `diagram`, `text`, `table`, `formul
 | `wikipedia.keep_reference_list` | `true` | Keep the citation list at the end of the article |
 | `wikipedia.extra_strip_selectors` | `[]` | Additional MediaWiki class names or element ids to remove |
 
+## Saving from the GUI
+
+The GUI starts from `config.json` and offers the provider and the three models as menus. **Save as default** writes the whole configuration, with the chosen provider and models, to `config.json` in the **working directory** (never into the installed package), in the same layout as the committed file, so the change shows up as a small diff.
+
 ## API keys (cloud providers)
 
-TextConverter is Ollama-first: the default provider runs fully locally and needs no API key. If you switch `"provider"` to a cloud backend (`google`, `openai`, `anthropic`, ...), supply the key through an environment variable (`GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). A [`secrets.json.example`](../secrets.json.example) template is provided for reference, but the app does not auto-load `secrets.json`: environment variables are the supported path.
+TextConverter is Ollama-first: the default provider runs fully locally and needs no API key. If you switch `"provider"` to a cloud backend (`google`, `openai`, `anthropic`, ...), supply the key through an environment variable (`GOOGLE_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). Conversions read the key from the environment only. The GUI provider menu, which asks `unified_ai_client` which providers are usable, also reads a `secrets.json` in the working directory (see [`secrets.json.example`](../secrets.json.example)), so cloud providers with a key there are offered too.

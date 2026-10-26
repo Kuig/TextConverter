@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for scanned PDFs or PDFs with an unusable text layer. A page that cannot be transcribed is
   kept as an image.
 - Opt-in live tests against the configured AI provider (`TEXTCONVERTER_LIVE_AI=1`).
+- **The GUI offers the available providers and models as menus**, listed by UnifiedAiClient:
+  local servers that answer and cloud providers with a key, and the models that accept images,
+  for classification, description and OCR. A saved value that is not available stays selected,
+  with a warning; a provider that cannot list its models falls back to a text field; a refresh
+  button reloads the lists. **Save as default** writes the choice to `./config.json`
+  (`AppConfig.save()`).
+- The GUI also offers the PDF input mode, PDF as an output type, and images as input files.
+- `docs/api.md` documents the library functions (moved out of the README).
 - **PDF output.** An output path ending in `.pdf` prints the light-theme HTML rendering, with
   images embedded: through a headless Edge, Chrome or Chromium when one is installed
   (formulas typeset by MathJax), otherwise through PyMuPDF's built-in layout engine. No new
@@ -61,6 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The `--code-parsing` help text described the detection as AI-assisted; it is heuristic.
+- The GUI file dialogs sometimes failed with "main thread is not in main loop"; they now run
+  in a separate process.
 - PDF input no longer prints the `pymupdf_layout` recommendation on stdout, which could also
   corrupt the MCP protocol stream.
 - LaTeX output omitted `\usepackage{graphicx}` (or `hyperref`) when the only image or link sat
