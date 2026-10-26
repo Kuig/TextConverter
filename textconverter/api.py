@@ -8,7 +8,7 @@ from dataclasses import replace
 
 from . import _net
 from .ast import Document
-from .images import ImagePaths, discard_links, embed_images, remove_images
+from .images import ImagePaths, discard_links, embed_images, lower_image_descriptions, remove_images
 from .logger import log_action, log_warning
 
 from .parsers.markdown_parser import parse_markdown
@@ -145,6 +145,8 @@ def _transform_and_render(
     if options.discard_links:
         discard_links(doc)
 
+    if to_format != "json":
+        lower_image_descriptions(doc)
     return _RENDERERS[to_format](doc, options)
 
 

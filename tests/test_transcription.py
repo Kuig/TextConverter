@@ -31,3 +31,15 @@ class TestTranscriptionParser(BaseConverterTest):
         self.assertEqual(equation_code("a+b", bare_is_formula=True), "a+b")
         self.assertEqual(equation_code("$a+b$", bare_is_formula=True), "a+b")
         self.assertIsNone(equation_code("$5 and $6", bare_is_formula=False))
+
+
+class TestTranscriptionNodes(BaseConverterTest):
+
+    def test_formula_table_and_text(self):
+        from textconverter.ast import Equation, Paragraph, Table
+        from textconverter.parsers.transcription_parser import transcription_nodes
+        self.assertEqual(transcription_nodes("$$x^2$$"), [Equation(code="x^2", inline=False)])
+        self.assertEqual(transcription_nodes("x^2", "formula"), [Equation(code="x^2", inline=False)])
+        self.assertIsInstance(transcription_nodes("x^2")[0], Paragraph)
+        nodes = transcription_nodes("<table><tr><td>a</td></tr></table>", "table")
+        self.assertIsInstance(nodes[0], Table)

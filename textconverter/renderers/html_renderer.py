@@ -78,13 +78,8 @@ def _render_node(node: Node) -> str:
         return f'<a href="{html.escape(node.url)}"{title_str}>{content_str}</a>'
         
     elif isinstance(node, Image):
-        if hasattr(node, 'description') and node.description:
-            if not getattr(node, 'render_metadata', True):
-                return html.escape(node.description).replace(chr(10), "<br />")
-            cat_str = f" - Class: {html.escape(node.category)}" if getattr(node, 'category', None) else ""
-            return f'<p><strong>[Image Reference: {html.escape(node.src)}{cat_str}]</strong><br /><strong>----- Start of picture description -----</strong><br />{html.escape(node.description).replace(chr(10), "<br />")}<br /><strong>----- End of picture description -----</strong></p>'
         title_str = f' title="{html.escape(node.title)}"' if node.title else ''
-        return f'<img src="{html.escape(node.url if hasattr(node, "url") else node.src)}" alt="{html.escape(node.alt)}"{title_str} />'
+        return f'<img src="{html.escape(node.src)}" alt="{html.escape(node.alt)}"{title_str} />'
         
     elif isinstance(node, CodeInline):
         return f"<code>{html.escape(node.code)}</code>"

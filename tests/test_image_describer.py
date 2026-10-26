@@ -90,18 +90,36 @@ class TestPhasedProcessing(BaseConverterTest):
         self.assertEqual(fake.calls[1], ("desc", AppConfig().ai.prompts["formula"]))
         self.assertEqual(preloaded, ["cls", "desc"])
 
-    def test_latex_auto_inlines_transcriptions_only(self):
-        """auto_latex: a bare formula becomes an Equation, text is inlined, a photo is not described."""
-        from textconverter.ast import Equation, Image, walk
+    def test_latex_auto_replaces_transcribed_images(self):
+        """auto_latex: a bare formula becomes an Equation, text a paragraph, a photo is not described."""
+        from textconverter.ast import Equation, Paragraph, Text
         fake = FakeAi(["formula", "text", "photo_drawing_or_comic"],
                        {"Formula Recognition:": "E = mc^2", "Text Recognition:": "Some words."})
         doc = _doc_with_images(3)
         self._run(fake, doc, latex_auto=True)
-        nodes = [n for n in walk(doc) if isinstance(n, (Equation, Image))]
-        self.assertEqual(nodes[0], Equation(code="E = mc^2", inline=False))
-        self.assertEqual((nodes[1].description, nodes[1].render_metadata), ("Some words.", False))
-        self.assertIsNone(nodes[2].description)
+        self.assertEqual(doc.children[0], Equation(code="E = mc^2", inline=False))
+        self.assertEqual(doc.children[1], Paragraph(children=[Text(content="Some words.")]))
+        self.assertIsNone(doc.children[2].children[0].description)
         self.assertNotIn("desc", [m for m, _ in fake.calls])
+
+    def test_latex_auto_table_in_a_paragraph_becomes_a_table(self):
+        """A table image amid text splits the paragraph: text, real Table, text."""
+        from textconverter.ast import Document, Image, Paragraph, Table, Text
+        fake = FakeAi(["table"], {"Table Recognition:": HTML_TABLE})
+        doc = Document(children=[Paragraph(children=[
+            Text(content="Before."), Image(src=FOTO), Text(content="After.")])])
+        self._run(fake, doc, latex_auto=True)
+        self.assertEqual([type(n) for n in doc.children], [Paragraph, Table, Paragraph])
+        self.assertEqual(doc.children[2].children, [Text(content="After.")])
+
+    def test_latex_auto_in_a_table_cell_stays_inline(self):
+        """Where blocks cannot go, a transcribed formula becomes an inline Equation."""
+        from textconverter.ast import Document, Equation, Image, Table, TableCell, TableRow
+        fake = FakeAi(["formula"], {"Formula Recognition:": "$$a+b$$"})
+        cell = TableCell(children=[Image(src=FOTO)])
+        doc = Document(children=[Table(rows=[TableRow(cells=[cell])])])
+        self._run(fake, doc, latex_auto=True)
+        self.assertEqual(cell.children, [Equation(code="a+b", inline=True)])
 
     def test_latex_auto_without_client_keeps_images(self):
         """Without unified_ai_client, auto_latex degrades to plain references; describe raises."""
@@ -130,3 +148,35 @@ class TestTranscribeImages(BaseConverterTest):
         self.assertEqual(doc.children[1], Equation(code="a+b", inline=False))
         self.assertIsInstance(doc.children[2], Paragraph)
         self.assertEqual(doc.children[2].children[0].src, FOTO)
+
+
+class TestDescribedImagesInOutput(BaseConverterTest):
+    """describe mode: the description reaches every output as real document content."""
+
+    def _convert(self, to_format: str) -> str:
+        import textconverter
+        fake = FakeAi(["table"], {"Table Recognition:": HTML_TABLE})
+        with patch("unified_ai_client.call_ai", side_effect=fake), \
+             patch("unified_ai_client.preload_model"), \
+             patch("textconverter.api.load_config", return_value=_config()):
+            return textconverter.convert_text(f"Intro.\n\n![pic]({FOTO})\n", "markdown", to_format,
+                                              textconverter.ConvertOptions(image_handling="describe"))
+
+    def test_markdown_keeps_reference_markers_and_table(self):
+        md = self._convert("markdown")
+        self.assertIn("Image Reference:", md)
+        self.assertIn("----- Start of picture description -----", md)
+        self.assertIn("| a | b |", md)
+        self.assertIn("----- End of picture description -----", md)
+
+    def test_html_and_latex_get_a_real_table(self):
+        """The described table used to be escaped text in HTML and LaTeX."""
+        self.assertIn("<table>", self._convert("html"))
+        self.assertIn(r"\begin{tabular}", self._convert("latex"))
+
+    def test_json_keeps_the_described_image(self):
+        import json
+        doc = json.loads(self._convert("json"))
+        images = [n for n in doc["children"][1]["children"] if n["type"] == "Image"]
+        self.assertEqual(images[0]["category"], "table")
+        self.assertIn("| a | b |", images[0]["description"])

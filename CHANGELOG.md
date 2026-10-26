@@ -76,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   network paths on Windows; `data:` images are no longer looked up as files.
 - With LaTeX or JSON output, image sources and PDF pages in raster mode are no longer sent to
   the AI a second time.
+- A table or formula transcribed from an image inside a document becomes a real table or
+  equation, as it already did for an image given as the source: with LaTeX output a table
+  used to come out as escaped Markdown text. An image amid text splits its paragraph around
+  the transcription. The JSON output holds the transcribed nodes too.
+- Image descriptions (`describe`) are parsed like transcriptions in every output: in HTML and
+  LaTeX a described table or formula used to be printed as escaped Markdown.
+- An AI answer with no text is reported and skipped instead of raising `AttributeError`.
 - Without a `config.json`, changing a setting in the GUI (e.g. the context size) no longer
   changes the built-in defaults for every later configuration in the same process.
 - A `config.json` section that is not a JSON object (e.g. `"wikipedia": [...]`) is reported

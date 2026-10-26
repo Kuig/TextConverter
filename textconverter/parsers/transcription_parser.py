@@ -6,7 +6,7 @@ output into AST nodes so every caller treats it the same way.
 """
 from __future__ import annotations
 import re
-from ..ast import Document
+from ..ast import Document, Equation, Node
 from .html_parser import parse_html
 from .markdown_parser import parse_markdown
 
@@ -46,6 +46,24 @@ def parse_transcription(text: str) -> Document:
         pos = match.end()
     doc.children.extend(parse_markdown(text[pos:]).children)
     return doc
+
+
+def transcription_nodes(text: str, category: str | None = None) -> list[Node]:
+    """Return the AST blocks for an image's transcription or description.
+
+    Args:
+        text: Model output.
+        category: The image category; for ``"formula"`` an undelimited answer
+            is taken as the formula itself.
+
+    Returns:
+        ``[Equation]`` when the whole text is one display formula, otherwise
+        the blocks of ``parse_transcription``.
+    """
+    code = equation_code(text, bare_is_formula=category == "formula")
+    if code:
+        return [Equation(code=code, inline=False)]
+    return parse_transcription(text).children
 
 
 def normalize_transcription(text: str) -> str:

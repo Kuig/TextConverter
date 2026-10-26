@@ -93,13 +93,8 @@ def _render_node(node: Node) -> str:
         return f"[{content_str}]({node.url}{title_str})"
         
     elif isinstance(node, Image):
-        if hasattr(node, 'description') and node.description:
-            if not getattr(node, 'render_metadata', True):
-                return node.description
-            cat_str = f" - Class: {node.category}" if getattr(node, 'category', None) else ""
-            return f"**[Image Reference: {node.src}{cat_str}]**  \n**----- Start of picture description -----**  \n{node.description}  \n**----- End of picture description -----**\n\n"
         title_str = f' "{node.title}"' if node.title else ''
-        return f'![{node.alt}]({node.url if hasattr(node, "url") else node.src}{title_str})'
+        return f'![{node.alt}]({node.src}{title_str})'
         
     elif isinstance(node, CodeInline):
         return f"`{node.code}`"

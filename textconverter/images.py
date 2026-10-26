@@ -15,8 +15,13 @@ import os
 import re
 import urllib.parse
 
+from collections.abc import Callable
+
 from . import _net
-from .ast import Image, Link, Node, child_lists, walk
+from .ast import (
+    DESCRIPTION_END, DESCRIPTION_START, Abstract, BlockQuote, Document, Equation, Image,
+    LineBreak, Link, ListItem, Node, Paragraph, Text, child_lists, walk,
+)
 from .logger import log_action, log_warning
 
 
@@ -215,6 +220,110 @@ def embed_images(doc: Node) -> None:
             continue
         mime_type = mimetypes.guess_type(path)[0] or "image/png"
         node.src = f"data:{mime_type};base64,{data}"
+
+
+# Nodes whose children are blocks: a paragraph in them can be split in two.
+_BLOCK_CONTAINERS = (Document, BlockQuote, Abstract, ListItem)
+
+# Returns the blocks that replace an image, or None to keep the image.
+Expander = Callable[[Image], "list[Node] | None"]
+
+
+def _has_content(inlines: list[Node]) -> bool:
+    return any(not isinstance(n, LineBreak) and not (isinstance(n, Text) and not n.content.strip())
+               for n in inlines)
+
+
+def _as_inline(blocks: list[Node]) -> list[Node]:
+    """Inline stand-in for blocks, where blocks cannot go (table cell, heading, link)."""
+    if len(blocks) == 1 and isinstance(blocks[0], Paragraph):
+        return blocks[0].children
+    if len(blocks) == 1 and isinstance(blocks[0], Equation):
+        return [Equation(code=blocks[0].code, inline=True)]
+    text = " ".join(n.content.strip() for b in blocks for n in walk(b) if isinstance(n, Text))
+    return [Text(content=text)] if text else []
+
+
+def _split_paragraph(par: Paragraph, expand: Expander) -> list[Node]:
+    """The paragraph, split around each image that ``expand`` turns into blocks."""
+    result: list[Node] = []
+    current: list[Node] = []
+    changed = False
+    for child in par.children:
+        blocks = expand(child) if isinstance(child, Image) else None
+        if blocks is None:
+            if not isinstance(child, Image):
+                expand_images(child, expand)
+            current.append(child)
+            continue
+        changed = True
+        if _has_content(current):
+            result.append(Paragraph(children=current))
+        current = []
+        result.extend(blocks)
+    if not changed:
+        return [par]
+    if _has_content(current):
+        result.append(Paragraph(children=current))
+    return result
+
+
+def expand_images(node: Node, expand: Expander) -> None:
+    """Replace images with the blocks ``expand`` returns for them, in place.
+
+    An image in a paragraph splits it: the text before and after the image
+    stays in paragraphs of its own around the blocks. Where blocks cannot go
+    (a table cell, a heading, a link), the image is replaced inline by the
+    content of a one-paragraph result, an inline formula, or else the text.
+    """
+    if isinstance(node, _BLOCK_CONTAINERS):
+        out: list[Node] = []
+        for child in node.children:
+            if isinstance(child, Paragraph):
+                out.extend(_split_paragraph(child, expand))
+            else:
+                expand_images(child, expand)
+                out.append(child)
+        node.children[:] = out
+        return
+    for lst in child_lists(node):
+        out = []
+        for child in lst:
+            blocks = expand(child) if isinstance(child, Image) else None
+            if blocks is None:
+                if not isinstance(child, Image):
+                    expand_images(child, expand)
+                out.append(child)
+            else:
+                out.extend(_as_inline(blocks))
+        lst[:] = out
+
+
+def _description_blocks(img: Image) -> list[Node] | None:
+    from .parsers.transcription_parser import transcription_nodes
+    if not img.description:
+        return None
+    body = transcription_nodes(img.description, img.category)
+    if not img.render_metadata:
+        return body
+    category = f" - Class: {img.category}" if img.category else ""
+    header = Paragraph(children=[
+        Text(content=f"[Image Reference: {img.src}{category}]", bold=True), LineBreak(),
+        Text(content=DESCRIPTION_START, bold=True),
+    ])
+    return [header, *body, Paragraph(children=[Text(content=DESCRIPTION_END, bold=True)])]
+
+
+def lower_image_descriptions(doc: Node) -> None:
+    """Turn every described image into ordinary nodes, so renderers need no image metadata.
+
+    An image with a ``description`` becomes a reference line and the
+    description between ``DESCRIPTION_START`` / ``DESCRIPTION_END`` markers,
+    parsed like a transcription (tables, formulas and formatting become real
+    nodes); with ``render_metadata`` off, only the parsed description. Run
+    before rendering text formats; the JSON output keeps the images as they are.
+    """
+    expand_images(doc, _description_blocks)
 
 
 def remove_images(node: Node) -> None:

@@ -47,11 +47,11 @@ The `--image-handling` option (or the `image_handling` parameter in the API) det
 
 ### Supported Strategies
 
-* **`describe`**: AI-powered analysis and description. Classifies every image, then describes photos, diagrams, charts and the like with the description model, and transcribes text, tables, formulas and page scans with the OCR model (GLM-OCR by default; without one, the description model transcribes them). The calls are grouped by model, so each model is loaded once per conversion. The description is embedded in the output.
+* **`describe`**: AI-powered analysis and description. Classifies every image, then describes photos, diagrams, charts and the like with the description model, and transcribes text, tables, formulas and page scans with the OCR model (GLM-OCR by default; without one, the description model transcribes them). The calls are grouped by model, so each model is loaded once per conversion. In the output, each image becomes a reference line followed by its description between `----- Start/End of picture description -----` markers; tables, formulas and formatting in the answer become real tables, equations and text in every format (JSON output keeps the image node with its `description` and `category`).
 * **`embed`**: Base64 inline embedding. Reads local or downloaded images from disk, guesses their MIME types, and encodes their binary data into inline Data URLs (`data:image/...;base64,...`). Perfect for creating self-contained documents (like HTML).
 * **`link`**: File-based referencing. Preserves or downloads images, sanitizing their filenames, and references them using standard relative paths (`![alt](path)` in Markdown, `<img>` in HTML, `\includegraphics{...}` in LaTeX). No AI processing is executed.
 * **`discard`**: Total removal. Strips all `Image` nodes from the AST, omitting them entirely from the final rendered output.
-* **`auto_latex`** (internal): Hybrid mode designed for LaTeX/JSON, used automatically by `auto` for those formats (see below). Traverses the document and uses Ollama to classify and transcribe only text/table/formula images (rendering the text inline); for drawings, photos, or diagrams, it skips the description to save resources and falls back to rendering standard graphics references. It is not an explicit `--image-handling` CLI choice, and its behavior may change, so avoid setting it directly through the API/MCP `image_handling` parameter.
+* **`auto_latex`** (internal): Hybrid mode designed for LaTeX/JSON, used automatically by `auto` for those formats (see below). Traverses the document and uses the AI models to classify and transcribe only text/table/formula images, replacing each one with its content (paragraphs, a table, an equation); for drawings, photos, or diagrams, it skips the description to save resources and falls back to rendering standard graphics references. It is not an explicit `--image-handling` CLI choice, and its behavior may change, so avoid setting it directly through the API/MCP `image_handling` parameter.
 
 ### The `auto` Strategy (`image_handling="auto"`)
 
@@ -63,7 +63,7 @@ When set to `auto` (the default), the tool dynamically maps the strategy based o
 
 * **LaTeX output (`to_format="latex"`)**: Resolves to **`auto_latex`**.
   - The system utilizes the vision AI model to classify the image.
-  - If the image is classified as `text`, `table` or `formula`, the AI transcribes it. The transcript is rendered as text inline (a formula becomes an equation), and `render_metadata` is set to `False` to prevent the raw LaTeX image reference from compiling.
+  - If the image is classified as `text`, `table` or `formula`, the AI transcribes it and the transcript replaces the image: a formula becomes an equation, a table a `tabular`, text paragraphs. An image alone in its paragraph replaces the paragraph; one amid text splits it around the content.
   - If the image is classified as any other type (e.g., diagrams or photos), the AI description is skipped to conserve resources, and standard `\includegraphics{...}` markup is rendered.
 
 * **Markdown output (`to_format="markdown"`)**: Resolves to **`link`**.

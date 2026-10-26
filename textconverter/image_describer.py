@@ -2,10 +2,11 @@ from __future__ import annotations
 import json
 import os
 from textconverter.logger import log_action, log_info, log_success, log_warning
-from .ast import Document, Equation, Image, Node, Paragraph, child_lists, walk
+from collections.abc import Callable
+from .ast import Document, Image, Node, Paragraph, walk
 from .config import AppConfig
-from .images import resolve_local
-from .parsers.transcription_parser import equation_code, normalize_transcription, parse_transcription
+from .images import expand_images, resolve_local
+from .parsers.transcription_parser import normalize_transcription, transcription_nodes
 
 # Categories that ``auto_latex`` transcribes; every other image keeps a plain reference.
 LATEX_AUTO_CATEGORIES = ("text", "table", "formula")
@@ -92,6 +93,9 @@ def _ask(
     except Exception as exc:
         log_warning(f"AI call failed for {img_path}, skipping: {exc}")
         return None
+    if not getattr(response, "text", None):
+        log_warning(f"Empty AI answer for {img_path}, skipping.")
+        return None
     return response.text.strip()
 
 
@@ -161,16 +165,23 @@ def describe_images(images: list[Image], base_dir: str, *, config: AppConfig, la
     total = len(jobs)
     loaded: set[str] = set()
 
-    def load(model: str) -> None:
+    def run_phase(verb: str, model: str, phase_jobs: list[tuple[Image, str]],
+                  ask: Callable[[Image, str], None]) -> None:
+        """Load ``model`` once, then run ``ask`` on each job with a progress line."""
+        if not phase_jobs:
+            return
         if model not in loaded:
             _preload(model, config)
             loaded.add(model)
+        for i, (img, img_path) in enumerate(phase_jobs, 1):
+            log_action(f"[{i}/{len(phase_jobs)}] {verb}: {img.src}")
+            ask(img, img_path)
 
-    load(ai.classification_model)
-    for i, (img, img_path) in enumerate(jobs, 1):
-        log_action(f"[{i}/{total}] Classifying: {img.src}")
+    def classify(img: Image, img_path: str) -> None:
         img.category = _classify(img_path, config)
         log_action(f"Classified as: {img.category}")
+
+    run_phase("Classifying", ai.classification_model, jobs, classify)
 
     to_describe = [job for job in jobs if not latex_auto and job[0].category not in ai.ocr_prompts]
     to_transcribe = [
@@ -181,42 +192,38 @@ def describe_images(images: list[Image], base_dir: str, *, config: AppConfig, la
     if latex_auto and total > len(to_transcribe):
         log_action("(LaTeX Auto mode: skipping description for non-text/table/formula images)")
 
-    if to_describe:
-        load(ai.description_model)
-    for i, (img, img_path) in enumerate(to_describe, 1):
-        log_action(f"[{i}/{len(to_describe)}] Describing: {img.src}")
+    def describe(img: Image, img_path: str) -> None:
         img.description = _ask(
             ai.description_model, _description_prompt(img, config), img_path, config,
             visual_token_budget=ai.description_visual_token_budget,
         )
 
-    ocr_model = ai.ocr_model or ai.description_model
-    if to_transcribe:
-        load(ocr_model)
-    for i, (img, img_path) in enumerate(to_transcribe, 1):
-        log_action(f"[{i}/{len(to_transcribe)}] Transcribing: {img.src}")
+    def transcribe(img: Image, img_path: str) -> None:
         if ai.ocr_model:
-            text = _ask(ocr_model, ai.ocr_prompts[img.category], img_path, config,
+            text = _ask(ai.ocr_model, ai.ocr_prompts[img.category], img_path, config,
                         temperature=ai.ocr_temperature)
         else:
-            text = _ask(ocr_model, _description_prompt(img, config), img_path, config,
+            text = _ask(ai.description_model, _description_prompt(img, config), img_path, config,
                         visual_token_budget=ai.description_visual_token_budget)
         img.description = normalize_transcription(text) if text else None
 
+    run_phase("Describing", ai.description_model, to_describe, describe)
+    run_phase("Transcribing", ai.ocr_model or ai.description_model, to_transcribe, transcribe)
+
 
 def _apply_latex_auto(node: Node) -> None:
-    """Inline the transcribed images: hide their reference, promote formulas to Equation."""
-    for lst in child_lists(node):
-        for i, child in enumerate(lst):
-            if not isinstance(child, Image):
-                _apply_latex_auto(child)
-                continue
-            if child.category not in LATEX_AUTO_CATEGORIES or not child.description:
-                continue
-            child.render_metadata = False
-            code = equation_code(child.description, bare_is_formula=child.category == "formula")
-            if code:
-                lst[i] = Equation(code=code, inline=False)
+    """Replace each transcribed image with its content as AST nodes.
+
+    A formula becomes an Equation, a table a Table, and so on (see
+    ``transcription_nodes``); an image alone in its paragraph replaces the
+    whole paragraph. Images that were not transcribed stay as references.
+    """
+    def blocks(img: Image) -> list[Node] | None:
+        if img.category not in LATEX_AUTO_CATEGORIES or not img.description:
+            return None
+        return transcription_nodes(img.description, img.category)
+
+    expand_images(node, blocks)
 
 
 def process_images(doc: Node, base_dir: str, *, config: AppConfig, latex_auto: bool = False) -> None:
@@ -230,7 +237,8 @@ def process_images(doc: Node, base_dir: str, *, config: AppConfig, latex_auto: b
         doc: Root AST document node.
         base_dir: Base directory for resolving relative image paths.
         config: Application configuration.
-        latex_auto: Transcribe only text/table/formula images and inline them.
+        latex_auto: Transcribe only text/table/formula images and replace them
+            with their content (see ``_apply_latex_auto``).
     """
     images = [node for node in walk(doc) if isinstance(node, Image)]
     if not images:
@@ -278,9 +286,5 @@ def transcribe_images(paths: list[str], *, config: AppConfig) -> Document:
             log_warning(f"No description generated for image {img.src}; keeping image reference.")
             doc.children.append(Paragraph(children=[img]))
             continue
-        code = equation_code(img.description, bare_is_formula=img.category == "formula")
-        if code:
-            doc.children.append(Equation(code=code, inline=False))
-        else:
-            doc.children.extend(parse_transcription(img.description).children)
+        doc.children.extend(transcription_nodes(img.description, img.category))
     return doc

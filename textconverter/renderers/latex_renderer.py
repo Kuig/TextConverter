@@ -98,14 +98,7 @@ def _render_node(node: Node) -> str:
         return f"\\href{{{url}}}{{{content_str}}}"
         
     elif isinstance(node, Image):
-        if hasattr(node, 'description') and node.description:
-            desc = _escape_latex(node.description)
-            if not getattr(node, 'render_metadata', True):
-                return desc
-            src = _escape_latex(node.src)
-            cat_str = f" - Class: {_escape_latex(node.category)}" if getattr(node, 'category', None) else ""
-            return f"\\textbf{{[Image Reference: {src}{cat_str}]}}\\\\\\textbf{{----- Start of picture description -----}}\\\\{desc}\\\\\\textbf{{----- End of picture description -----}}"
-        return f"\\includegraphics{{{getattr(node, 'src', getattr(node, 'url', ''))}}}"
+        return f"\\includegraphics{{{node.src}}}"
         
     elif isinstance(node, CodeInline):
         return f"\\texttt{{{_escape_latex(node.code)}}}"

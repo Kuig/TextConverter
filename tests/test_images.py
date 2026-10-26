@@ -94,7 +94,9 @@ class TestSourceDownload(_WebTest):
         self.assertEqual(list(self.tmp.iterdir()), [])
 
     def test_forbidden_source_raises_download_error(self):
-        self.serve({"https://x.test/p": urllib.error.HTTPError("https://x.test/p", 403, "Forbidden", Message(), io.BytesIO())})
+        forbidden = urllib.error.HTTPError("https://x.test/p", 403, "Forbidden", Message(), io.BytesIO())
+        self.addCleanup(forbidden.close)
+        self.serve({"https://x.test/p": forbidden})
         with self.assertRaisesRegex(DownloadError, "403"):
             textconverter.convert("https://x.test/p", "markdown")
 
