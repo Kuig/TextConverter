@@ -9,7 +9,11 @@ class Node:
 
 @dataclass
 class Text(Node):
-    """A plain text node with optional formatting."""
+    """A plain text node with optional formatting.
+
+    ``content`` is literal text. A ``\\n`` inside it is a hard line break;
+    parsers turn soft line breaks of their source into spaces.
+    """
     content: str
     bold: bool = False
     italic: bool = False
@@ -130,14 +134,36 @@ class Table(Node):
 
 @dataclass
 class Equation(Node):
-    """A mathematical equation node."""
+    """A mathematical equation node.
+
+    ``env`` names the display environment the equation came from (``align``,
+    ``gather*``, ...) when its body depends on it; None means a plain
+    display (or inline) equation.
+    """
     code: str
     inline: bool = False
+    env: str | None = None
 
 @dataclass
 class Document(Node):
     """The root of the AST."""
     children: list[Node] = field(default_factory=list)
+
+
+# Every concrete node type by class name: the "type" key of the JSON form.
+NODE_TYPES: dict[str, type[Node]] = {
+    cls.__name__: cls
+    for cls in (
+        Text, Link, Image, CodeInline, LineBreak, Footnote, Citation, Reference, Label,
+        Paragraph, Heading, CodeBlock, BlockQuote, Abstract, HorizontalRule,
+        ListItem, ListBlock, TableCell, TableRow, Table, Equation, Document,
+    )
+}
+
+# Lines that frame an image description when it is rendered as text, so the
+# Markdown parser can rebuild Image.description from a rendered document.
+DESCRIPTION_START = "----- Start of picture description -----"
+DESCRIPTION_END = "----- End of picture description -----"
 
 
 # Every attribute through which a node can hold child nodes. A new container

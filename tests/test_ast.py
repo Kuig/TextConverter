@@ -40,3 +40,48 @@ class TestWalk(BaseConverterTest):
             to_format="markdown", from_format="markdown", image_handling="discard",
         )
         self.assertNotIn(".png", md)
+
+
+class TestJsonForm(BaseConverterTest):
+
+    def test_node_types_lists_every_node_class(self):
+        """NODE_TYPES names every concrete node class defined in ast.py, and not the base."""
+        import inspect
+        from textconverter import ast
+        classes = {name for name, obj in inspect.getmembers(ast, inspect.isclass)
+                   if issubclass(obj, ast.Node) and obj is not ast.Node}
+        self.assertEqual(set(ast.NODE_TYPES), classes)
+
+    def test_equation_env_round_trips(self):
+        """A display environment survives JSON output and input."""
+        from textconverter.ast import Equation
+        from textconverter.parsers.json_parser import parse_json
+        from textconverter.renderers.json_renderer import render_json
+        doc = Document(children=[Equation(code="a &= b", env="align*")])
+        self.assertEqual(parse_json(render_json(doc)), doc)
+
+    def test_unknown_node_type_is_an_error(self):
+        """A misspelled type no longer vanishes from the output."""
+        from textconverter.parsers.json_parser import parse_json
+        bad = '{"type": "Document", "children": [{"type": "Paragraph", "children": [{"type": "Txt", "content": "x"}]}]}'
+        with self.assertRaisesRegex(ValueError, "Txt"):
+            parse_json(bad)
+
+    def test_base_node_and_untyped_objects_are_rejected(self):
+        from textconverter.parsers.json_parser import parse_json
+        for bad in ('{"type": "Node"}', '{"type": "Document", "children": [{"content": "x"}]}'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_json(bad)
+
+    def test_missing_required_field_and_wrong_list_are_errors(self):
+        from textconverter.parsers.json_parser import parse_json
+        for bad in ('{"type": "Document", "children": [{"type": "Text"}]}',
+                    '{"type": "Document", "children": "abc"}'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                parse_json(bad)
+
+    def test_unknown_keys_are_ignored(self):
+        """Keys a node does not define are reported and dropped, not fatal."""
+        from textconverter.parsers.json_parser import parse_json
+        doc = parse_json('{"type": "Document", "children": [{"type": "Text", "content": "x", "colour": "red"}]}')
+        self.assertEqual(doc.children, [Text(content="x")])

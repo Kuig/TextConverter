@@ -82,3 +82,36 @@ class BaseConverterTest(unittest.TestCase):
         if p.exists():
             p.unlink()
         return p
+
+    def convert_fixture(self, name: str, out_name: str, **opts) -> str:
+        """Convert ``Input/<name>`` to ``Output/<out_name>`` and return the output text.
+
+        ``opts`` are passed to ``save_to_file``; the test fails if no file is written.
+        """
+        from textconverter import save_to_file
+        out_path = self._out(out_name)
+        save_to_file(str(INPUT_DIR / name), str(out_path), **opts)
+        self.assertTrue(out_path.exists(), f"{out_name} was not written")
+        return read(out_path)
+
+
+class FakeAi:
+    """Stands in for ``call_ai``: classifies images in order, then answers per model.
+
+    JSON-mode calls (classification) return the next category; other calls
+    return the answer keyed by prompt, else by model, else "". Every
+    (model, prompt) pair is recorded so tests can check routing and ordering.
+    """
+
+    def __init__(self, categories: list[str], answers: dict[str, str]):
+        self.categories = iter(categories)
+        self.answers = answers
+        self.calls: list[tuple[str, str]] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append((kwargs["model"], kwargs["prompt"]))
+        if kwargs.get("format_json"):
+            text = f'{{"category": "{next(self.categories)}"}}'
+        else:
+            text = self.answers.get(kwargs["prompt"], self.answers.get(kwargs["model"], ""))
+        return MagicMock(text=text)

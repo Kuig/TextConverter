@@ -1,18 +1,26 @@
 from __future__ import annotations
 import json
-from ..ast import Node, Document
+from dataclasses import fields, is_dataclass
+from ..ast import Document
 
 def to_dict(node: object) -> object:
-    if hasattr(node, '__dataclass_fields__'):
+    """Convert an AST node (or list, or scalar) to plain JSON-ready values.
+
+    Each node becomes a dict with a ``"type"`` key holding its class name
+    (see ``ast.NODE_TYPES``) plus one key per dataclass field.
+
+    Args:
+        node: A node, a list of nodes, or a scalar field value.
+
+    Returns:
+        The JSON-ready value.
+    """
+    if isinstance(node, list):
+        return [to_dict(v) for v in node]
+    if is_dataclass(node):
         d = {'type': node.__class__.__name__}
-        for f in getattr(node, '__dataclass_fields__'):
-            val = getattr(node, f)
-            if isinstance(val, list):
-                d[f] = [to_dict(v) for v in val]
-            elif hasattr(val, '__dataclass_fields__'):
-                d[f] = to_dict(val)
-            else:
-                d[f] = val
+        for f in fields(node):
+            d[f.name] = to_dict(getattr(node, f.name))
         return d
     return node
 

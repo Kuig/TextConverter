@@ -12,10 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The GUI exposes the provider's context size as a slider (4k to 256k tokens), saved to
   `config.json` with **Save as default**.
 
+- `Equation` nodes carry an optional `env` (e.g. `align`, `gather*`), so a display environment
+  can be reproduced instead of being forced into `equation`.
+
 ### Changed
 
 - The committed `config.json` sets the Ollama `context_size` to 8192: at 4096, a page
   transcribed in PDF raster mode could fill the window by itself and come out truncated.
+- JSON input is checked against an explicit registry of node types: an unknown or missing
+  `type`, a missing required field or a child list that is not a list raises `ValueError`
+  instead of silently dropping the node from the output.
 
 ## [0.2.0] - 2026-10-26
 

@@ -5,8 +5,7 @@ Usage: python -m unittest discover -s tests -p "test_image_describer.py"
 from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
-import textconverter
-from _support import BaseConverterTest, setUpModule, tearDownModule, INPUT_DIR, read
+from _support import BaseConverterTest, FakeAi, setUpModule, tearDownModule, INPUT_DIR
 
 
 class TestImageDescriber(BaseConverterTest):
@@ -21,13 +20,7 @@ class TestImageDescriber(BaseConverterTest):
         mock_desc_resp.text = "This is a detailed mock description of the diagram."
         mock_call.side_effect = [mock_class_resp, mock_desc_resp]
 
-        in_path = INPUT_DIR / "Foto.jpg"
-        out_path = self._out("Foto_described.md")
-
-        textconverter.save_to_file(str(in_path), str(out_path), image_handling="describe")
-        self.assertTrue(out_path.exists())
-
-        content = read(out_path)
+        content = self.convert_fixture("Foto.jpg", "Foto_described.md", image_handling="describe")
         self.assertIn("This is a detailed mock description of the diagram.", content,
                       "Description text not found in output")
         # Verify both calls were made (classification + description)
@@ -54,26 +47,6 @@ def _doc_with_images(n: int):
     return Document(children=[Paragraph(children=[Image(src=FOTO, alt=f"img{i}")]) for i in range(n)])
 
 
-class _FakeAi:
-    """Stands in for call_ai: classifies images in order, then answers per model.
-
-    Records every (model, prompt) pair so tests can check routing and ordering.
-    """
-
-    def __init__(self, categories: list[str], answers: dict[str, str]):
-        self.categories = iter(categories)
-        self.answers = answers
-        self.calls: list[tuple[str, str]] = []
-
-    def __call__(self, **kwargs):
-        self.calls.append((kwargs["model"], kwargs["prompt"]))
-        if kwargs.get("format_json"):
-            text = f'{{"category": "{next(self.categories)}"}}'
-        else:
-            text = self.answers.get(kwargs["prompt"], self.answers.get(kwargs["model"], ""))
-        return MagicMock(text=text)
-
-
 class TestPhasedProcessing(BaseConverterTest):
 
     def _run(self, fake, doc, latex_auto=False, config=None):
@@ -85,7 +58,7 @@ class TestPhasedProcessing(BaseConverterTest):
 
     def test_calls_are_grouped_by_model(self):
         """All classifications first, then descriptions, then OCR: each model preloaded once."""
-        fake = _FakeAi(["photo_drawing_or_comic", "table", "map", "formula"],
+        fake = FakeAi(["photo_drawing_or_comic", "table", "map", "formula"],
                        {"desc": "A description.", "ocr": "x"})
         preloaded = self._run(fake, _doc_with_images(4))
         self.assertEqual([m for m, _ in fake.calls], ["cls"] * 4 + ["desc"] * 2 + ["ocr"] * 2)
@@ -93,7 +66,7 @@ class TestPhasedProcessing(BaseConverterTest):
 
     def test_ocr_categories_use_ocr_prompts(self):
         """Text, table, formula and document scans get the OCR model's task prompt."""
-        fake = _FakeAi(["text", "table", "formula", "document_scan"], {})
+        fake = FakeAi(["text", "table", "formula", "document_scan"], {})
         self._run(fake, _doc_with_images(4))
         self.assertEqual([p for m, p in fake.calls if m == "ocr"],
                          ["Text Recognition:", "Table Recognition:",
@@ -102,7 +75,7 @@ class TestPhasedProcessing(BaseConverterTest):
     def test_html_table_is_normalized_to_markdown(self):
         """An OCR answer with an HTML table is stored as a Markdown table."""
         from textconverter.ast import Image, walk
-        fake = _FakeAi(["table"], {"Table Recognition:": HTML_TABLE})
+        fake = FakeAi(["table"], {"Table Recognition:": HTML_TABLE})
         doc = _doc_with_images(1)
         self._run(fake, doc)
         (img,) = [n for n in walk(doc) if isinstance(n, Image)]
@@ -112,7 +85,7 @@ class TestPhasedProcessing(BaseConverterTest):
     def test_without_ocr_model_description_model_transcribes(self):
         """With no ocr_model, OCR categories go to the description model with the category prompt."""
         from textconverter.config import AppConfig
-        fake = _FakeAi(["formula"], {})
+        fake = FakeAi(["formula"], {})
         preloaded = self._run(fake, _doc_with_images(1), config=_config(ocr_model=""))
         self.assertEqual(fake.calls[1], ("desc", AppConfig().ai.prompts["formula"]))
         self.assertEqual(preloaded, ["cls", "desc"])
@@ -120,7 +93,7 @@ class TestPhasedProcessing(BaseConverterTest):
     def test_latex_auto_inlines_transcriptions_only(self):
         """auto_latex: a bare formula becomes an Equation, text is inlined, a photo is not described."""
         from textconverter.ast import Equation, Image, walk
-        fake = _FakeAi(["formula", "text", "photo_drawing_or_comic"],
+        fake = FakeAi(["formula", "text", "photo_drawing_or_comic"],
                        {"Formula Recognition:": "E = mc^2", "Text Recognition:": "Some words."})
         doc = _doc_with_images(3)
         self._run(fake, doc, latex_auto=True)
@@ -150,7 +123,7 @@ class TestTranscribeImages(BaseConverterTest):
     def test_answers_become_ast_nodes_in_order(self):
         """HTML table → Table, formula → Equation, failed call → image reference."""
         from textconverter.ast import Equation, Paragraph, Table
-        fake = _FakeAi(["table", "formula", "map"],
+        fake = FakeAi(["table", "formula", "map"],
                        {"Table Recognition:": HTML_TABLE, "Formula Recognition:": "$$a+b$$"})
         doc = self._transcribe(fake)
         self.assertIsInstance(doc.children[0], Table)
