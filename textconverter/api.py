@@ -16,6 +16,7 @@ from .renderers.latex_renderer import render_latex
 from .renderers.json_renderer import render_json
 
 from .site_profiles import resolve_profiles
+from .config import AppConfig, load_config
 
 def _extract_image_filename(url: str) -> str:
     """Extracts a clean filename from a remote URL, handling nested/proxied URL structures.
@@ -205,7 +206,7 @@ def _download_remote_images(doc: Document, output_dir: str | None, image_dir_nam
 
 
 
-def convert(source: str, to_format: str, from_format: str | None = None, template: str = "plain", is_file: bool = False, output_dir: str | None = None, image_dir_name: str | None = None, image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False, discard_links: bool = False, site_cleanup: bool | None = None) -> str:
+def convert(source: str, to_format: str, from_format: str | None = None, template: str = "plain", is_file: bool = False, output_dir: str | None = None, image_dir_name: str | None = None, image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False, discard_links: bool = False, site_cleanup: bool | None = None, config: AppConfig | None = None) -> str:
     """
     Convert text or file to a specific format.
     If is_file is True, source is presumed to be a file path.
@@ -216,7 +217,10 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
     recognize, unless ``site_cleanup`` is False (or ``html.site_cleanup`` is
     False in config.json and ``site_cleanup`` is left None).
     ``discard_links`` replaces every hyperlink with its visible text.
+    ``config`` overrides the configuration loaded from config.json (e.g. the
+    AI provider and models chosen in the GUI).
     """
+    config = config or load_config()
     is_url = source.startswith(("http://", "https://"))
     original_source = source
     if from_format is None:
@@ -293,7 +297,7 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
         elif from_format == 'image':
             if not is_file and not pathlib.Path(source).exists():
                 raise ValueError("Image parsing requires a file path.")
-            doc = parse_image(source)
+            doc = parse_image(source, config)
         elif from_format == 'json':
             doc = parse_json(source)
         else:
@@ -305,8 +309,7 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
             if from_format == 'markdown':
                 doc = parse_markdown(text, code_parsing=code_parsing)
             elif from_format == 'html':
-                from .config import load_config
-                html_cfg = load_config().html
+                html_cfg = config.html
                 use_profiles = html_cfg.site_cleanup if site_cleanup is None else site_cleanup
                 active_profiles = (
                     resolve_profiles(original_source if is_url else None, text, html_cfg)
@@ -342,10 +345,10 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
                     
                 if image_handling == "describe":
                     from .image_describer import process_images
-                    process_images(doc, base_dir)
+                    process_images(doc, base_dir, config=config)
                 elif image_handling == "auto_latex":
                     from .image_describer import process_images
-                    process_images(doc, base_dir, latex_auto=True)
+                    process_images(doc, base_dir, latex_auto=True, config=config)
                 elif image_handling == "embed":
                     import base64
                     import mimetypes
@@ -394,7 +397,7 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
                 from .logger import log_warning
                 log_warning(f"Could not remove temporary file {temp_file_path}: {exc}")
 
-def save_to_file(source: str, output_path: str, template: str = "plain", image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False, discard_links: bool = False, site_cleanup: bool | None = None) -> None:
+def save_to_file(source: str, output_path: str, template: str = "plain", image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False, discard_links: bool = False, site_cleanup: bool | None = None, config: AppConfig | None = None) -> None:
     """
     Convert and save directly to file, inferring to_format and from_format.
     """
@@ -407,6 +410,6 @@ def save_to_file(source: str, output_path: str, template: str = "plain", image_h
     else:
         raise ValueError("Could not infer output format from extension.")
 
-    result = convert(source, to_format=to_format, template=template, is_file=True, output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images", image_handling=image_handling, code_parsing=code_parsing, extract_html=extract_html, discard_links=discard_links, site_cleanup=site_cleanup)
+    result = convert(source, to_format=to_format, template=template, is_file=True, output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images", image_handling=image_handling, code_parsing=code_parsing, extract_html=extract_html, discard_links=discard_links, site_cleanup=site_cleanup, config=config)
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(result)

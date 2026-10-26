@@ -12,8 +12,10 @@ from textconverter.logger import log_warning
 
 _DEFAULT_CLASSIFICATION_PROMPT = (
     "Analyze the image and classify it into exactly one of the following categories: "
-    "'photo_drawing_or_comic', 'diagram', 'short_text_table_or_formula', 'chart', "
-    "'infographic_or_depliant', 'document_scan', 'logo_or_icon', 'map'. "
+    "'photo_drawing_or_comic', 'diagram', 'text' (mostly a short passage of text), "
+    "'table' (mostly a table), 'formula' (mostly a mathematical formula or equation), "
+    "'chart', 'infographic_or_depliant', 'document_scan' (a whole scanned or photographed "
+    "page), 'logo_or_icon', 'map'. "
     "Reply ONLY with a valid JSON object containing a single key 'category' and the "
     "chosen category as the value. Do not include markdown blocks."
 )
@@ -21,10 +23,12 @@ _DEFAULT_CLASSIFICATION_PROMPT = (
 _DEFAULT_PROMPTS: dict[str, str] = {
     "photo_drawing_or_comic": "Accurate description of scene and subjects.",
     "diagram": "Detailed description of the diagram.",
-    "short_text_table_or_formula": (
+    "text": (
         "Transcription only, strictly preserving the original layout and formatting "
-        "(e.g. use markdown tables and latex math for formulas)."
+        "(use markdown)."
     ),
+    "table": "Transcription only: reproduce the table as a markdown table, keeping every row and column.",
+    "formula": "Transcription only: write the formula in LaTeX between $$ delimiters, nothing else.",
     "chart": (
         "Extract key trends. Create a data table ONLY if exact numerical values are "
         "clearly readable; do NOT guess or hallucinate numbers."
@@ -44,6 +48,14 @@ _DEFAULT_PROMPTS: dict[str, str] = {
     "default": "Describe the image in detail.",
 }
 
+# Task prompts of GLM-OCR, keyed by the categories routed to the OCR phase.
+_DEFAULT_OCR_PROMPTS: dict[str, str] = {
+    "text": "Text Recognition:",
+    "table": "Table Recognition:",
+    "formula": "Formula Recognition:",
+    "document_scan": "Text Recognition:",
+}
+
 _DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
     "ollama": {
         "url": "http://localhost:11434",
@@ -56,7 +68,13 @@ _DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
 
 @dataclass
 class AiConfig:
-    """TextConverter application-level AI settings (provider-agnostic)."""
+    """TextConverter application-level AI settings (provider-agnostic).
+
+    Images whose category is a key of ``ocr_prompts`` are transcribed rather
+    than described: by ``ocr_model`` with the matching OCR prompt when it is
+    set, otherwise by ``description_model`` with the category's entry in
+    ``prompts``. A temperature of ``None`` leaves the model default in place.
+    """
 
     provider: str = "ollama"
     classification_model: str = "gemma4:e2b"
@@ -66,6 +84,10 @@ class AiConfig:
     provide_extracted_text_to_describer: bool = False
     classification_prompt: str = _DEFAULT_CLASSIFICATION_PROMPT
     prompts: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_PROMPTS))
+    ocr_model: str = ""
+    ocr_prompts: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_OCR_PROMPTS))
+    classification_temperature: float | None = 0.0
+    ocr_temperature: float | None = 0.0
 
 
 @dataclass

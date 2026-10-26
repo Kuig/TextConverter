@@ -6,18 +6,29 @@
     "classification_visual_token_budget": 70,
     "description_visual_token_budget": 1120,
     "provide_extracted_text_to_describer": true,
-    "classification_prompt": "Analyze the image and classify it into exactly one of the following categories: 'photo_drawing_or_comic', 'diagram', 'short_text_table_or_formula', 'chart', 'infographic_or_depliant', 'document_scan', 'logo_or_icon', 'map'. Reply ONLY with a valid JSON object containing a single key 'category' and the chosen category as the value. Do not include markdown blocks.",
+    "classification_prompt": "Analyze the image and classify it into exactly one of the following categories: 'photo_drawing_or_comic', 'diagram', 'text' (mostly a short passage of text), 'table' (mostly a table), 'formula' (mostly a mathematical formula or equation), 'chart', 'infographic_or_depliant', 'document_scan' (a whole scanned or photographed page), 'logo_or_icon', 'map'. Reply ONLY with a valid JSON object containing a single key 'category' and the chosen category as the value. Do not include markdown blocks.",
     "prompts": {
       "photo_drawing_or_comic": "Accurate description of scene and subjects.",
       "diagram": "Detailed description of the diagram.",
-      "short_text_table_or_formula": "Transcription only, strictly preserving the original layout and formatting (e.g. use markdown for tables and latex math for formulas).",
+      "text": "Transcription only, strictly preserving the original layout and formatting (use markdown).",
+      "table": "Transcription only: reproduce the table as a markdown table, keeping every row and column.",
+      "formula": "Transcription only: write the formula in LaTeX between $$ delimiters, nothing else.",
       "chart": "Extract key trends. Create a data table ONLY if exact numerical values are clearly readable; do NOT guess or hallucinate numbers.",
       "infographic_or_depliant": "Describe the layout and visual flow of the information.",
       "document_scan": "Transcribe all the text exactly as it appears in the scan, preserving the structure and formatting as much as possible.",
       "logo_or_icon": "Briefly describe the logo, symbol, or icon without overcomplicating it.",
       "map": "Describe the map, its geographic or thematic focus, and any key legends or paths shown.",
       "default": "Describe the image in detail."
-    }
+    },
+    "ocr_model": "glm-ocr",
+    "ocr_prompts": {
+      "text": "Text Recognition:",
+      "table": "Table Recognition:",
+      "formula": "Formula Recognition:",
+      "document_scan": "Text Recognition:"
+    },
+    "classification_temperature": 0,
+    "ocr_temperature": 0
   },
   "html": {
     "site_cleanup": true,

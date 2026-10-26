@@ -1,275 +1,284 @@
 from __future__ import annotations
-import os
 import json
+import os
 from textconverter.logger import log_action, log_info, log_success, log_warning
-from .ast import Image, Node, child_lists, walk
+from .ast import Document, Equation, Image, Node, Paragraph, child_lists, walk
+from .config import AppConfig, load_config
+from .parsers.transcription_parser import equation_code, normalize_transcription, parse_transcription
 
-from .config import AppConfig, load_config, get_ai_config
+# Categories that ``auto_latex`` transcribes; every other image keeps a plain reference.
+LATEX_AUTO_CATEGORIES = ("text", "table", "formula")
+
+_FALLBACK_PROMPT = "Describe the image in detail."
+_MISSING_CLIENT = (
+    "The 'unified_ai_client' package is required for AI-based image description. "
+    "Please install it first (e.g. via requirements_prod.txt)."
+)
+
+
+def ai_client_available() -> bool:
+    """True if the optional ``unified_ai_client`` package can be imported."""
+    try:
+        import unified_ai_client  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
 def init_ai(config: AppConfig) -> None:
-    """Register provider settings and preload the AI models for a conversion.
+    """Register the provider connection settings, once per run.
 
-    Called once per ``process_images()`` run rather than once per image. Stable
-    connection settings (url, timeout, keep_alive) are registered with
-    ``configure_provider()``; ``context_size`` is passed to ``preload_model()``
-    instead, because Ollama allocates the context window at load time and a
-    later mismatch forces a model reload.
-
-    Setup failures (e.g. the provider being unreachable) are non-critical: they
-    are logged and swallowed so the pipeline can still attempt the per-image
-    calls and degrade gracefully.
+    ``context_size`` is left out: it is passed to ``preload_model()`` instead,
+    because Ollama allocates the context window at load time and a later
+    mismatch forces a reload. A setup failure is logged, not raised: the calls
+    that follow report the error per image.
 
     Args:
-        config: The loaded application configuration.
+        config: The application configuration.
     """
-    try:
-        from unified_ai_client import configure_provider, preload_model, silence_sdks
-    except ImportError:
-        return
+    from unified_ai_client import configure_provider, silence_sdks
 
     silence_sdks()
-
-    ai_cfg = config.ai
-    provider = ai_cfg.provider
-    provider_settings = dict(config.providers.get(provider, {}))
-    context_size = provider_settings.pop("context_size", None)
-    keep_alive = provider_settings.get("keep_alive")
-
-    preload_kwargs: dict = {"extra_options": {"use_generate": False}}
-    if context_size is not None:
-        preload_kwargs["context_size"] = context_size
-    if keep_alive is not None:
-        preload_kwargs["keep_alive"] = keep_alive
-
+    settings = dict(config.providers.get(config.ai.provider, {}))
+    settings.pop("context_size", None)
+    if not settings:
+        return
     try:
-        if provider_settings:
-            configure_provider(provider, **provider_settings)
-        for model in dict.fromkeys([ai_cfg.classification_model, ai_cfg.description_model]):
-            preload_model(provider=provider, model=model, **preload_kwargs)
+        configure_provider(config.ai.provider, **settings)
     except Exception as exc:
-        log_warning(f"AI provider setup failed, continuing without preload: {exc}")
+        log_warning(f"AI provider setup failed: {exc}")
 
 
-def _call_ai(
-    src: str,
-    base_dir: str,
+def _preload(model: str, config: AppConfig) -> None:
+    """Load a model before its phase; a failure is logged and left to the calls."""
+    from unified_ai_client import preload_model
+
+    context_size = config.providers.get(config.ai.provider, {}).get("context_size")
+    try:
+        preload_model(config.ai.provider, model, context_size=context_size)
+    except Exception as exc:
+        log_warning(f"Could not preload {model}: {exc}")
+
+
+def _ask(
+    model: str,
+    prompt: str,
+    img_path: str,
     config: AppConfig,
-    latex_auto: bool = False,
-    extracted_text: str | None = None,
-) -> tuple[str | None, str]:
-    """Classify and describe an image using the configured AI provider via UnifiedAiClient.
-
-    Makes two sequential calls: first a JSON-mode classification to determine
-    the image category, then a free-form description call with a category-specific
-    prompt. UnifiedAiClient handles base64 encoding of the image internally.
-
-    Provider registration and model preloading are done once per process by
-    ``init_ai()``; this function only issues the per-image calls.
-
-    Args:
-        src: Image path (relative or absolute).
-        base_dir: Base directory for resolving relative paths.
-        config: Loaded configuration dictionary.
-        latex_auto: If True, skip description for non-formula images.
-        extracted_text: Optional pre-extracted text from the image.
+    *,
+    temperature: float | None = None,
+    visual_token_budget: int = 0,
+    format_json: bool = False,
+) -> str | None:
+    """Make one AI call on one image.
 
     Returns:
-        Tuple of (description_text, category). Description is None when the image
-        is missing, the call fails, or LaTeX-auto mode skips a non-formula image.
+        The stripped answer, or None if the call failed (the failure is logged).
     """
-    category = "default"
-    img_path = src if os.path.isabs(src) else os.path.join(base_dir, src)
+    from unified_ai_client import call_ai
 
-    if not os.path.exists(img_path):
-        log_warning(f"Image file not found, skipping description: {img_path}")
-        return None, "error"
-
-    ai_cfg = get_ai_config(config)
-    provider = ai_cfg.provider
-    provider_settings = config.providers.get(provider, {})
-    provider_timeout = provider_settings.get("timeout", 300)
-    c_model = ai_cfg.classification_model
-    d_model = ai_cfg.description_model
-    classification_prompt = ai_cfg.classification_prompt
-    c_budget = ai_cfg.classification_visual_token_budget
-    d_budget = ai_cfg.description_visual_token_budget
-
+    options = {"visual_token_budget": visual_token_budget} if visual_token_budget > 0 else None
     try:
-        try:
-            from unified_ai_client import call_ai
-        except ImportError:
-            raise ImportError(
-                "The 'unified_ai_client' package is required for AI-based image description. "
-                "Please install it first (e.g. via requirements_prod.txt)."
-            )
-
-        # Provider registration and model preloading happen once per process in
-        # ``init_ai()`` (called from ``process_images()``), not per image.
-
-        # 1. Classification — JSON mode, UnifiedAiClient handles base64 encoding
-        c_opts: dict = {"use_generate": False}
-        if c_budget > 0:
-            c_opts["visual_token_budget"] = c_budget
-
-        class_response = call_ai(
-            provider=provider,
-            model=c_model,
-            prompt=classification_prompt,
+        response = call_ai(
+            provider=config.ai.provider,
+            model=model,
+            prompt=prompt,
             file_path=img_path,
-            format_json=True,
-            timeout=provider_timeout,
-            extra_options=c_opts,
+            temperature=temperature,
+            format_json=format_json,
+            extra_options=options,
         )
-        try:
-            category_data = json.loads(class_response.text)
-            category = category_data.get("category", "default")
-        except Exception:
-            category = "default"
-
-        # 2. Description
-        prompts = ai_cfg.prompts
-        if category not in prompts:
-            category = "default"
-
-        final_prompt = prompts.get(category, "Describe the image in detail.")
-        if extracted_text and ai_cfg.provide_extracted_text_to_describer:
-            final_prompt += (
-                f"\n\nThis image was originally vector-based and contained the following "
-                f"extracted text:\n{extracted_text}"
-            )
-
-        log_action(f"Classified as: {category}")
-
-        if latex_auto and category != "short_text_table_or_formula":
-            log_action("(LaTeX Auto mode: skipping description for non-table/formula image)")
-            return None, category
-
-        d_opts: dict = {"use_generate": False}
-        if d_budget > 0:
-            d_opts["visual_token_budget"] = d_budget
-
-        desc_response = call_ai(
-            provider=provider,
-            model=d_model,
-            prompt=final_prompt,
-            file_path=img_path,
-            timeout=provider_timeout,
-            extra_options=d_opts,
-        )
-        return desc_response.text.strip(), category
-
-    except ImportError as exc:
-        raise exc
     except Exception as exc:
-        log_warning(f"Image description failed, skipping: {exc}")
-        return None, category
+        log_warning(f"AI call failed for {img_path}, skipping: {exc}")
+        return None
+    return response.text.strip()
 
 
-def _traverse(node: Node, base_dir: str, config: AppConfig, state: dict, latex_auto: bool = False) -> None:
-    """Recursively walk an AST node and process Image children in-place.
+def _classify(img_path: str, config: AppConfig) -> str:
+    """Return the image category, or ``"default"`` when the answer is not a known one."""
+    ai = config.ai
+    answer = _ask(
+        ai.classification_model,
+        ai.classification_prompt,
+        img_path,
+        config,
+        temperature=ai.classification_temperature,
+        visual_token_budget=ai.classification_visual_token_budget,
+        format_json=True,
+    )
+    try:
+        category = json.loads(answer).get("category")
+    except (TypeError, ValueError, AttributeError):
+        return "default"
+    return category if category in ai.prompts or category in ai.ocr_prompts else "default"
+
+
+def _description_prompt(img: Image, config: AppConfig) -> str:
+    """Category prompt for the description model, plus any text extracted from a vector image."""
+    ai = config.ai
+    prompt = ai.prompts.get(img.category, ai.prompts.get("default", _FALLBACK_PROMPT))
+    if img.extracted_text and ai.provide_extracted_text_to_describer:
+        prompt += (
+            f"\n\nThis image was originally vector-based and contained the following "
+            f"extracted text:\n{img.extracted_text}"
+        )
+    return prompt
+
+
+def describe_images(images: list[Image], base_dir: str, config: AppConfig, latex_auto: bool = False) -> None:
+    """Classify, describe and transcribe images in three phases, one model per phase.
+
+    Every image is classified first; then the description model describes the
+    images outside ``ai.ocr_prompts``; finally the OCR model (or, without one,
+    the description model) transcribes the rest. Grouping the calls by model
+    means each model is loaded at most once per run. Sets ``category`` and
+    ``description`` on each Image in place; a missing file gets category
+    ``"error"`` and a failed call leaves ``description`` unset.
 
     Args:
-        node: Any AST node.
-        base_dir: Base directory for resolving image paths.
-        config: Loaded application configuration.
-        state: Mutable dict with 'total' and 'current' counters.
-        latex_auto: Whether to skip non-formula images in LaTeX mode.
+        images: Image nodes to process.
+        base_dir: Directory that relative image paths resolve against.
+        config: The application configuration.
+        latex_auto: Only transcribe ``LATEX_AUTO_CATEGORIES``; describe nothing.
     """
-    for lst in child_lists(node):
-        lst[:] = _process_list(lst, base_dir, config, state, latex_auto)
-
-
-def _process_list(node_list: list[Node], base_dir: str, config: AppConfig, state: dict, latex_auto: bool = False) -> list[Node]:
-    """Process a list of AST nodes, replacing Image nodes with descriptions.
-
-    Args:
-        node_list: List of AST nodes.
-        base_dir: Base directory for resolving image paths.
-        config: Loaded application configuration.
-        state: Mutable dict with 'total' and 'current' counters.
-        latex_auto: Whether to skip non-formula images in LaTeX mode.
-
-    Returns:
-        The modified node list.
-    """
-    new_list = []
-    for child in node_list:
-        if isinstance(child, Image):
-            state["current"] += 1
-            log_action(f"[{state['current']}/{state['total']}] Requesting description for: {child.src}")
-            desc, category = _call_ai(
-                child.src, base_dir, config, latex_auto,
-                extracted_text=getattr(child, "extracted_text", None),
-            )
-            child.category = category
-            if desc:
-                child.description = desc
-            if latex_auto and category == "short_text_table_or_formula" and desc:
-                child.render_metadata = False
-                
-                # Try to promote to Equation if it's pure math
-                code = desc.strip()
-                if code.startswith('```latex') and code.endswith('```'):
-                    code = code[code.find('\n')+1:-3].strip()
-                elif code.startswith('```') and code.endswith('```'):
-                    code = code[code.find('\n')+1:-3].strip()
-                
-                is_math = False
-                if code.startswith('$$') and code.endswith('$$'):
-                    code = code[2:-2].strip()
-                    is_math = True
-                elif code.startswith(r'\[') and code.endswith(r'\]'):
-                    code = code[2:-2].strip()
-                    is_math = True
-                elif code.startswith(r'\begin{equation}') and code.endswith(r'\end{equation}'):
-                    code = code[16:-14].strip()
-                    is_math = True
-                elif code.startswith(r'\begin{align}') and code.endswith(r'\end{align}'):
-                    code = code[13:-11].strip()
-                    is_math = True
-                elif code.startswith(r'\begin{displaymath}') and code.endswith(r'\end{displaymath}'):
-                    code = code[19:-17].strip()
-                    is_math = True
-                    
-                if is_math:
-                    from .ast import Equation
-                    new_list.append(Equation(code=code, inline=False))
-                    continue
-            
-            new_list.append(child)
+    ai = config.ai
+    jobs: list[tuple[Image, str]] = []
+    for img in images:
+        img_path = img.src if os.path.isabs(img.src) else os.path.join(base_dir, img.src)
+        if os.path.exists(img_path):
+            jobs.append((img, img_path))
         else:
-            _traverse(child, base_dir, config, state, latex_auto)
-            new_list.append(child)
+            img.category = "error"
+            log_warning(f"Image file not found, skipping description: {img_path}")
+    if not jobs:
+        return
 
-    return new_list
+    init_ai(config)
+    total = len(jobs)
+    loaded: set[str] = set()
+
+    def load(model: str) -> None:
+        if model not in loaded:
+            _preload(model, config)
+            loaded.add(model)
+
+    load(ai.classification_model)
+    for i, (img, img_path) in enumerate(jobs, 1):
+        log_action(f"[{i}/{total}] Classifying: {img.src}")
+        img.category = _classify(img_path, config)
+        log_action(f"Classified as: {img.category}")
+
+    to_describe = [job for job in jobs if not latex_auto and job[0].category not in ai.ocr_prompts]
+    to_transcribe = [
+        job for job in jobs
+        if job[0].category in ai.ocr_prompts
+        and (not latex_auto or job[0].category in LATEX_AUTO_CATEGORIES)
+    ]
+    if latex_auto and total > len(to_transcribe):
+        log_action("(LaTeX Auto mode: skipping description for non-text/table/formula images)")
+
+    if to_describe:
+        load(ai.description_model)
+    for i, (img, img_path) in enumerate(to_describe, 1):
+        log_action(f"[{i}/{len(to_describe)}] Describing: {img.src}")
+        img.description = _ask(
+            ai.description_model, _description_prompt(img, config), img_path, config,
+            visual_token_budget=ai.description_visual_token_budget,
+        )
+
+    ocr_model = ai.ocr_model or ai.description_model
+    if to_transcribe:
+        load(ocr_model)
+    for i, (img, img_path) in enumerate(to_transcribe, 1):
+        log_action(f"[{i}/{len(to_transcribe)}] Transcribing: {img.src}")
+        if ai.ocr_model:
+            text = _ask(ocr_model, ai.ocr_prompts[img.category], img_path, config,
+                        temperature=ai.ocr_temperature)
+        else:
+            text = _ask(ocr_model, _description_prompt(img, config), img_path, config,
+                        visual_token_budget=ai.description_visual_token_budget)
+        img.description = normalize_transcription(text) if text else None
 
 
-def process_images(doc: Node, base_dir: str, latex_auto: bool = False) -> None:
-    """Classify and describe all Image nodes in a document AST using Ollama.
+def _apply_latex_auto(node: Node) -> None:
+    """Inline the transcribed images: hide their reference, promote formulas to Equation."""
+    for lst in child_lists(node):
+        for i, child in enumerate(lst):
+            if not isinstance(child, Image):
+                _apply_latex_auto(child)
+                continue
+            if child.category not in LATEX_AUTO_CATEGORIES or not child.description:
+                continue
+            child.render_metadata = False
+            code = equation_code(child.description, bare_is_formula=child.category == "formula")
+            if code:
+                lst[i] = Equation(code=code, inline=False)
 
-    Loads configuration from the project-root config.json, traverses the full
-    document AST, and populates each Image node's .description and .category
-    fields in-place.
+
+def process_images(doc: Node, base_dir: str, latex_auto: bool = False, config: AppConfig | None = None) -> None:
+    """Classify and describe all Image nodes of a document AST in place.
+
+    Without ``unified_ai_client``, ``latex_auto`` (an implicit mode chosen by
+    ``image_handling="auto"``) keeps the images as plain references with a
+    warning, while an explicit ``describe`` raises ImportError.
 
     Args:
         doc: Root AST document node.
         base_dir: Base directory for resolving relative image paths.
-        latex_auto: If True, skip description for non-table/formula images.
+        latex_auto: Transcribe only text/table/formula images and inline them.
+        config: Application configuration; loaded from config.json when omitted.
     """
-    config = load_config()
-    total_images = sum(isinstance(n, Image) for n in walk(doc))
-    state = {"total": total_images, "current": 0}
+    images = [node for node in walk(doc) if isinstance(node, Image)]
+    if not images:
+        return
+    if not ai_client_available():
+        if not latex_auto:
+            raise ImportError(_MISSING_CLIENT)
+        log_warning("unified_ai_client is not installed: images are kept as plain references.")
+        return
 
-    if total_images > 0:
-        ai_cfg = get_ai_config(config)
-        provider = ai_cfg.provider
-        c_model = ai_cfg.classification_model
-        d_model = ai_cfg.description_model
-        log_info(f"Starting description of {total_images} images via {provider} (Class: {c_model}, Desc: {d_model})...")
-        init_ai(config)
+    config = config or load_config()
+    ai = config.ai
+    log_info(
+        f"Starting description of {len(images)} images via {ai.provider} "
+        f"(Class: {ai.classification_model}, Desc: {ai.description_model}, "
+        f"OCR: {ai.ocr_model or ai.description_model})..."
+    )
+    describe_images(images, base_dir, config, latex_auto)
+    if latex_auto:
+        _apply_latex_auto(doc)
+    log_success("Image description completed.")
 
-    _traverse(doc, base_dir, config, state, latex_auto)
 
-    if total_images > 0:
-        log_success("Image description completed.")
+def transcribe_images(paths: list[str], config: AppConfig | None = None) -> Document:
+    """Turn image files into a Document, one block of content per image, in order.
+
+    Each image is classified, then described or transcribed (see
+    ``describe_images``), and the answer is parsed into AST nodes. An image
+    whose processing fails stays as a plain image reference.
+
+    Args:
+        paths: Image file paths.
+        config: Application configuration; loaded from config.json when omitted.
+
+    Raises:
+        ImportError: If ``unified_ai_client`` is not installed.
+    """
+    if not ai_client_available():
+        raise ImportError(_MISSING_CLIENT)
+    config = config or load_config()
+    images = [Image(src=path, alt=os.path.basename(path)) for path in paths]
+    describe_images(images, "", config)
+
+    doc = Document()
+    for img in images:
+        if not img.description:
+            log_warning(f"No description generated for image {img.src}; keeping image reference.")
+            doc.children.append(Paragraph(children=[img]))
+            continue
+        code = equation_code(img.description, bare_is_formula=img.category == "formula")
+        if code:
+            doc.children.append(Equation(code=code, inline=False))
+        else:
+            doc.children.extend(parse_transcription(img.description).children)
+    return doc

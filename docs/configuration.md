@@ -16,7 +16,16 @@ TextConverter reads `config.json` from the **current working directory**, fallin
     "description_visual_token_budget": 1120,
     "provide_extracted_text_to_describer": true,
     "classification_prompt": "...",
-    "prompts": { "...": "..." }
+    "prompts": { "...": "..." },
+    "ocr_model": "glm-ocr",
+    "ocr_prompts": {
+      "text": "Text Recognition:",
+      "table": "Table Recognition:",
+      "formula": "Formula Recognition:",
+      "document_scan": "Text Recognition:"
+    },
+    "classification_temperature": 0,
+    "ocr_temperature": 0
   },
   "html": {
     "site_cleanup": true,
@@ -54,6 +63,14 @@ The file is split into three kinds of section:
 | `provide_extracted_text_to_describer` | `false` | Append the text extracted from a vector image to the description prompt |
 | `classification_prompt` | built-in | Prompt asking for a JSON object `{"category": ...}` |
 | `prompts` | built-in | Description prompt per category, plus `default` |
+| `ocr_model` | `""` | Model that transcribes the categories listed in `ocr_prompts` (e.g. `"glm-ocr"`); empty means the description model transcribes them with their `prompts` entry |
+| `ocr_prompts` | `text`, `table`, `formula`, `document_scan` | OCR task prompt per category; its keys decide which categories are transcribed instead of described |
+| `classification_temperature` | `0` | Sampling temperature of the classification call; `null` leaves the model default |
+| `ocr_temperature` | `0` | Sampling temperature of the OCR call; `null` leaves the model default |
+
+Images are processed in three phases, one model each: every image is classified, then the non-OCR categories are described, then the OCR categories are transcribed. Each model is therefore loaded once per conversion, and an OCR model can sit next to the vision model without swapping on every image.
+
+The categories are `photo_drawing_or_comic`, `diagram`, `text`, `table`, `formula`, `chart`, `infographic_or_depliant`, `document_scan`, `logo_or_icon` and `map`. An answer outside `prompts` and `ocr_prompts` falls back to `default`.
 
 ## `html`
 

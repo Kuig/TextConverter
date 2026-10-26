@@ -47,7 +47,7 @@ The `--image-handling` option (or the `image_handling` parameter in the API) det
 
 ### Supported Strategies
 
-* **`describe`**: AI-powered analysis and description. Traverses the document, classifies each image, and runs category-specific prompts (via the configured AI provider) to generate detailed textual descriptions or transcription tables. The description is embedded in the output.
+* **`describe`**: AI-powered analysis and description. Classifies every image, then describes photos, diagrams, charts and the like with the description model, and transcribes text, tables, formulas and page scans with the OCR model (GLM-OCR by default; without one, the description model transcribes them). The calls are grouped by model, so each model is loaded once per conversion. The description is embedded in the output.
 * **`embed`**: Base64 inline embedding. Reads local or downloaded images from disk, guesses their MIME types, and encodes their binary data into inline Data URLs (`data:image/...;base64,...`). Perfect for creating self-contained documents (like HTML).
 * **`link`**: File-based referencing. Preserves or downloads images, sanitizing their filenames, and references them using standard relative paths (`![alt](path)` in Markdown, `<img>` in HTML, `\includegraphics{...}` in LaTeX). No AI processing is executed.
 * **`discard`**: Total removal. Strips all `Image` nodes from the AST, omitting them entirely from the final rendered output.
@@ -63,7 +63,7 @@ When set to `auto` (the default), the tool dynamically maps the strategy based o
 
 * **LaTeX output (`to_format="latex"`)**: Resolves to **`auto_latex`**.
   - The system utilizes the vision AI model to classify the image.
-  - If the image is classified as `short_text_table_or_formula` (e.g., a math equation, transcription, or raw inline data), the AI transcribes it. The transcript is rendered as text inline, and `render_metadata` is set to `False` to prevent the raw LaTeX image reference from compiling.
+  - If the image is classified as `text`, `table` or `formula`, the AI transcribes it. The transcript is rendered as text inline (a formula becomes an equation), and `render_metadata` is set to `False` to prevent the raw LaTeX image reference from compiling.
   - If the image is classified as any other type (e.g., diagrams or photos), the AI description is skipped to conserve resources, and standard `\includegraphics{...}` markup is rendered.
 
 * **Markdown output (`to_format="markdown"`)**: Resolves to **`link`**.
@@ -71,7 +71,7 @@ When set to `auto` (the default), the tool dynamically maps the strategy based o
   - The images are rendered as standard Markdown image syntax: `![alt_text](path/to/image "optional_title")`. No description generation is performed.
 
 * **JSON output (`to_format="json"`)**: Resolves to **`auto_latex`**.
-  - Like the LaTeX mode, it runs image classification and transcribes only text, tables, and formulas using the vision model, populating the `description` and `category` fields in the resulting JSON AST structure.
+  - Like the LaTeX mode, it runs image classification and transcribes only text, tables, and formulas, populating the `description` and `category` fields in the resulting JSON AST structure.
 
 ---
 
@@ -159,6 +159,7 @@ def convert(
     extract_html: bool = False,
     discard_links: bool = False,
     site_cleanup: bool | None = None,
+    config: AppConfig | None = None,
 ) -> str:
     """Convert text or a file to a specific format and return the result as a string."""
 ```
@@ -173,6 +174,7 @@ def convert(
 - `extract_html`: Strip boilerplate and isolate main content when parsing HTML.
 - `discard_links`: Replace every hyperlink with its visible text (any source format).
 - `site_cleanup`: Override for site-specific HTML cleanup during `extract_html`. `None` uses the `html.site_cleanup` config default; `False` disables it for this call.
+- `config`: A `textconverter.config.AppConfig` to use instead of `config.json` (e.g. `load_config()` with the AI provider or models changed).
 
 ```python
 def save_to_file(
@@ -184,6 +186,7 @@ def save_to_file(
     extract_html: bool = False,
     discard_links: bool = False,
     site_cleanup: bool | None = None,
+    config: AppConfig | None = None,
 ) -> None:
     """Convert and write the result directly to output_path (format inferred from its extension)."""
 ```

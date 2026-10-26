@@ -68,7 +68,7 @@ All four interfaces are thin wrappers around the same `convert()`/`save_to_file(
 
 ## Cross-cutting concerns
 
-**AI image description** (`image_describer.py`): when `image_handling` requires it, each `Image` node is classified (one of 8 categories: photo, diagram, chart, text/table/formula, infographic, document scan, logo, map) and then described with a category-specific prompt, via `unified_ai_client`'s `call_ai()`/`preload_model()`/`configure_provider()`.
+**AI image description** (`image_describer.py`): when `image_handling` requires it, the images are processed in three phases, one model per phase so that each is loaded once: every image is classified (photo, diagram, text, table, formula, chart, infographic, document scan, logo, map), then the non-text ones are described with a category-specific prompt, then text, tables, formulas and scans are transcribed by a dedicated OCR model (GLM-OCR). OCR answers, which may hold HTML tables, are parsed by `parsers/transcription_parser.py`, the same path image inputs take. All calls go through `unified_ai_client`'s `call_ai()`/`preload_model()`/`configure_provider()`.
 
 **Configuration** (`config.py`): `config.json` is loaded into typed dataclasses (`AppConfig`/`AiConfig`/`HtmlConfig`/`WikipediaCleanupConfig`), resolved in priority order CWD, then package root, then built-in defaults, so the app always starts even without a `config.json` present. Provider connection settings (e.g. the `"ollama"` block) intentionally stay a plain `dict`: their shape is provider-specific and owned by `unified_ai_client`, not by TextConverter.
 

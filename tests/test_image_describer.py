@@ -33,3 +33,127 @@ class TestImageDescriber(BaseConverterTest):
         # Verify both calls were made (classification + description)
         self.assertEqual(mock_call.call_count, 2, "Expected 2 AI calls (classify + describe)")
         mock_preload.assert_called()
+
+
+FOTO = str(INPUT_DIR / "Foto.jpg")
+HTML_TABLE = "<table><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr></table>"
+
+
+def _config(ocr_model: str = "ocr"):
+    """Configuration with distinct model names, so calls can be told apart."""
+    from textconverter.config import AppConfig
+    cfg = AppConfig()
+    cfg.ai.classification_model = "cls"
+    cfg.ai.description_model = "desc"
+    cfg.ai.ocr_model = ocr_model
+    return cfg
+
+
+def _doc_with_images(n: int):
+    from textconverter.ast import Document, Image, Paragraph
+    return Document(children=[Paragraph(children=[Image(src=FOTO, alt=f"img{i}")]) for i in range(n)])
+
+
+class _FakeAi:
+    """Stands in for call_ai: classifies images in order, then answers per model.
+
+    Records every (model, prompt) pair so tests can check routing and ordering.
+    """
+
+    def __init__(self, categories: list[str], answers: dict[str, str]):
+        self.categories = iter(categories)
+        self.answers = answers
+        self.calls: list[tuple[str, str]] = []
+
+    def __call__(self, **kwargs):
+        self.calls.append((kwargs["model"], kwargs["prompt"]))
+        if kwargs.get("format_json"):
+            text = f'{{"category": "{next(self.categories)}"}}'
+        else:
+            text = self.answers.get(kwargs["prompt"], self.answers.get(kwargs["model"], ""))
+        return MagicMock(text=text)
+
+
+class TestPhasedProcessing(BaseConverterTest):
+
+    def _run(self, fake, doc, latex_auto=False, config=None):
+        from textconverter.image_describer import process_images
+        with patch("unified_ai_client.call_ai", side_effect=fake), \
+             patch("unified_ai_client.preload_model") as preload:
+            process_images(doc, "", latex_auto=latex_auto, config=config or _config())
+        return [c.args[1] for c in preload.call_args_list]
+
+    def test_calls_are_grouped_by_model(self):
+        """All classifications first, then descriptions, then OCR: each model preloaded once."""
+        fake = _FakeAi(["photo_drawing_or_comic", "table", "map", "formula"],
+                       {"desc": "A description.", "ocr": "x"})
+        preloaded = self._run(fake, _doc_with_images(4))
+        self.assertEqual([m for m, _ in fake.calls], ["cls"] * 4 + ["desc"] * 2 + ["ocr"] * 2)
+        self.assertEqual(preloaded, ["cls", "desc", "ocr"])
+
+    def test_ocr_categories_use_ocr_prompts(self):
+        """Text, table, formula and document scans get the OCR model's task prompt."""
+        fake = _FakeAi(["text", "table", "formula", "document_scan"], {})
+        self._run(fake, _doc_with_images(4))
+        self.assertEqual([p for m, p in fake.calls if m == "ocr"],
+                         ["Text Recognition:", "Table Recognition:",
+                          "Formula Recognition:", "Text Recognition:"])
+
+    def test_html_table_is_normalized_to_markdown(self):
+        """An OCR answer with an HTML table is stored as a Markdown table."""
+        from textconverter.ast import Image, walk
+        fake = _FakeAi(["table"], {"Table Recognition:": HTML_TABLE})
+        doc = _doc_with_images(1)
+        self._run(fake, doc)
+        (img,) = [n for n in walk(doc) if isinstance(n, Image)]
+        self.assertIn("| a | b |", img.description)
+        self.assertNotIn("<table", img.description)
+
+    def test_without_ocr_model_description_model_transcribes(self):
+        """With no ocr_model, OCR categories go to the description model with the category prompt."""
+        from textconverter.config import AppConfig
+        fake = _FakeAi(["formula"], {})
+        preloaded = self._run(fake, _doc_with_images(1), config=_config(ocr_model=""))
+        self.assertEqual(fake.calls[1], ("desc", AppConfig().ai.prompts["formula"]))
+        self.assertEqual(preloaded, ["cls", "desc"])
+
+    def test_latex_auto_inlines_transcriptions_only(self):
+        """auto_latex: a bare formula becomes an Equation, text is inlined, a photo is not described."""
+        from textconverter.ast import Equation, Image, walk
+        fake = _FakeAi(["formula", "text", "photo_drawing_or_comic"],
+                       {"Formula Recognition:": "E = mc^2", "Text Recognition:": "Some words."})
+        doc = _doc_with_images(3)
+        self._run(fake, doc, latex_auto=True)
+        nodes = [n for n in walk(doc) if isinstance(n, (Equation, Image))]
+        self.assertEqual(nodes[0], Equation(code="E = mc^2", inline=False))
+        self.assertEqual((nodes[1].description, nodes[1].render_metadata), ("Some words.", False))
+        self.assertIsNone(nodes[2].description)
+        self.assertNotIn("desc", [m for m, _ in fake.calls])
+
+    def test_latex_auto_without_client_keeps_images(self):
+        """Without unified_ai_client, auto_latex degrades to plain references; describe raises."""
+        from textconverter.image_describer import process_images
+        with patch("textconverter.image_describer.ai_client_available", return_value=False):
+            process_images(_doc_with_images(1), "", latex_auto=True, config=_config())
+            with self.assertRaises(ImportError):
+                process_images(_doc_with_images(1), "", config=_config())
+
+
+class TestTranscribeImages(BaseConverterTest):
+
+    def _transcribe(self, fake):
+        from textconverter.image_describer import transcribe_images
+        with patch("unified_ai_client.call_ai", side_effect=fake), \
+             patch("unified_ai_client.preload_model"):
+            return transcribe_images([FOTO, FOTO, FOTO], _config())
+
+    def test_answers_become_ast_nodes_in_order(self):
+        """HTML table → Table, formula → Equation, failed call → image reference."""
+        from textconverter.ast import Equation, Paragraph, Table
+        fake = _FakeAi(["table", "formula", "map"],
+                       {"Table Recognition:": HTML_TABLE, "Formula Recognition:": "$$a+b$$"})
+        doc = self._transcribe(fake)
+        self.assertIsInstance(doc.children[0], Table)
+        self.assertEqual(doc.children[1], Equation(code="a+b", inline=False))
+        self.assertIsInstance(doc.children[2], Paragraph)
+        self.assertEqual(doc.children[2].children[0].src, FOTO)

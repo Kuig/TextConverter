@@ -18,12 +18,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for any source format.
 - The GUI exposes the site cleanup and discard links options.
 - `docs/configuration.md` documents every `config.json` field.
+- **OCR model for text, tables and formulas.** Images are classified first; text, tables,
+  formulas and page scans are then transcribed by `ai.ocr_model` (default `glm-ocr`) with its
+  task prompts (`ai.ocr_prompts`), while the other categories are still described by the
+  description model. HTML tables in OCR answers become regular tables.
+- `convert()` and `save_to_file()` take an optional `config` that overrides `config.json`.
+- Opt-in live tests against the configured AI provider (`TEXTCONVERTER_LIVE_AI=1`).
 
 ### Changed
 
 - Requires `unified-ai-client>=0.8.0` for AI features. Since 0.8.0 the library no longer sends
   default sampling values (temperature, top_k, top_p), so the model's own defaults apply.
 - The default classification and description model is `gemma4:e2b` (was `gemma4:12b`).
+- **Image processing runs in phases, one model at a time** (classify all, describe, then
+  transcribe), so each model is loaded once per conversion instead of alternating per image.
+- The image category `short_text_table_or_formula` is split into `text`, `table` and `formula`;
+  a `config.json` that still uses the old key falls back to the `default` prompt for it.
+- Classification and OCR calls use temperature 0 (`ai.classification_temperature`,
+  `ai.ocr_temperature`).
+- Without `unified_ai_client`, LaTeX and JSON output (`image_handling="auto"`) keep images as
+  plain references with a warning instead of failing.
 - `pymupdf4llm` is pinned to `>=0.3.4,<1` and `pymupdf` is declared explicitly. Newer
   `pymupdf4llm` releases need `onnxruntime`; where it is unavailable (e.g. on new Python
   versions) pip installed `pymupdf4llm` 2.0, an empty package, and PDF input failed.
