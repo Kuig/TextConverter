@@ -133,7 +133,7 @@ Available MCP tools:
 textconverter gui
 ```
 
-The sidebar holds the conversion options and the AI selection: a provider menu (local servers that answer and cloud providers with a key) and menus for the classification, description and OCR models, listing the models that accept images. **Save as default** writes the selection to `config.json` in the working directory.
+The sidebar holds the conversion options and the AI selection: a provider menu (local servers that answer and cloud providers with a key) and menus for the classification, description and OCR models, listing the models that accept images, plus a context size slider (4k to 256k tokens). **Save as default** writes the selection to `config.json` in the working directory.
 
 ### Library
 

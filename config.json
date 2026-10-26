@@ -47,6 +47,6 @@
     "url": "http://localhost:11434",
     "timeout": 300,
     "keep_alive": "15m",
-    "context_size": 4096
+    "context_size": 8192
   }
 }

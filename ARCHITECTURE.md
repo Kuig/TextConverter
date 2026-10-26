@@ -61,7 +61,7 @@ All four interfaces are thin wrappers around the same `convert()`/`save_to_file(
 - **CLI** (`__main__.py`): `argparse` subcommands (`convert`, `mcp`, `gui`).
 - **MCP server** (`mcp_tools.py`): FastMCP tools over stdio, for use from AI agents/IDEs.
 - **Python library**: direct import of `textconverter.api`.
-- **Streamlit GUI** (`gui/app.py`): sidebar for options and for the AI provider and models (listed live by `unified_ai_client`, saved to `config.json` on request), main area for source/output and results. The chosen models reach `save_to_file()` as a `config` override, so the GUI holds no conversion logic.
+- **Streamlit GUI** (`gui/app.py`): sidebar for options and for the AI provider, models and context size (models listed live by `unified_ai_client`, saved to `config.json` on request), main area for source/output and results. The chosen models reach `save_to_file()` as a `config` override, so the GUI holds no conversion logic.
 
 ## Invariants
 

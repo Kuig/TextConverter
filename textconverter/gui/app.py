@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import textconverter.logger as logger
 from textconverter.api import save_to_file
-from textconverter.config import AppConfig, load_config
+from textconverter.config import DEFAULT_CONTEXT_SIZE, AppConfig, load_config
 from textconverter.gui.file_dialog import ask_path
 
 logger.set_backend("streamlit")
@@ -44,6 +44,7 @@ OUTPUT_FILETYPES = [
 # Session keys of the AI selection, each mirroring the AiConfig field of the same name.
 MODEL_KEYS = ("classification_model", "description_model", "ocr_model")
 NO_OCR_LABEL = "(none: description model transcribes)"
+CONTEXT_SIZES = (4096, 8192, 16384, 32768, 65536, 131072, 262144)
 
 
 @st.cache_data(show_spinner=False)
@@ -69,13 +70,25 @@ def _available_models(provider: str) -> tuple[list[str], str]:
             if not m.embeddings and (m.file_types is None or "image" in m.file_types)], ""
 
 
+def _configured_context_size(provider: str) -> int:
+    """The provider's ``context_size`` in config.json, or the default when it sets none."""
+    return load_config().providers.get(provider, {}).get("context_size", DEFAULT_CONTEXT_SIZE)
+
+
 def _init_state() -> None:
     """Fill the session state with the paths and the AI selection from config.json."""
     ai = load_config().ai
-    defaults = {"source": "", "output": "", "provider": ai.provider}
+    defaults = {"source": "", "output": "", "provider": ai.provider,
+                "context_size": _configured_context_size(ai.provider)}
     defaults.update({key: getattr(ai, key) for key in MODEL_KEYS})
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
+
+
+def _on_provider_change() -> None:
+    """Clear the model choices and load the new provider's context size."""
+    st.session_state.update({key: "" for key in MODEL_KEYS})
+    st.session_state.context_size = _configured_context_size(st.session_state.provider)
 
 
 def _path_field(label: str, key: str, placeholder: str, filetypes: list, save: bool) -> str:
@@ -99,10 +112,7 @@ def _provider_picker() -> str:
     if current not in options:
         options = [current, *options]
         st.caption(f"⚠️ '{current}' is not available now: server not running or no API key.")
-    return st.selectbox(
-        "Provider", options, key="provider",
-        on_change=st.session_state.update, kwargs={key: "" for key in MODEL_KEYS},
-    )
+    return st.selectbox("Provider", options, key="provider", on_change=_on_provider_change)
 
 
 def _model_picker(label: str, key: str, provider: str, optional: bool = False) -> None:
@@ -137,12 +147,29 @@ def _model_picker(label: str, key: str, provider: str, optional: bool = False) -
                  format_func=lambda m: NO_OCR_LABEL if m == "" else m)
 
 
+def _context_size_picker() -> None:
+    """Context size slider over CONTEXT_SIZES; a saved size off that scale is added, with a warning."""
+    current = st.session_state.context_size
+    options = CONTEXT_SIZES
+    if current not in options:
+        options = tuple(sorted({*options, current}))
+        st.caption(f"⚠️ Context size {current} from config.json is not one of the standard sizes.")
+    st.select_slider(
+        "Context size", options, key="context_size",
+        format_func=lambda size: f"{size // 1024}k" if size % 1024 == 0 else str(size),
+        help="Tokens per call, shared by the image and the answer; raise it if long pages come out "
+             "truncated. More context uses more memory. Ignored by providers without this setting.",
+    )
+
+
 def _selected_config() -> AppConfig:
-    """config.json with the provider and models chosen in the sidebar."""
+    """config.json with the provider, models and context size chosen in the sidebar."""
     config = load_config()
     if AI_AVAILABLE:
         chosen = {key: st.session_state[key] for key in ("provider", *MODEL_KEYS)}
         config.ai = dataclasses.replace(config.ai, **chosen)
+        block = config.providers.setdefault(config.ai.provider, {})
+        block["context_size"] = st.session_state.context_size
     return config
 
 
@@ -179,6 +206,7 @@ with st.sidebar:
         _model_picker("Classification model", "classification_model", provider)
         _model_picker("Description model", "description_model", provider)
         _model_picker("OCR model", "ocr_model", provider, optional=True)
+        _context_size_picker()
         col_refresh, col_save = st.columns(2)
         with col_refresh:
             if st.button("🔄 Refresh", use_container_width=True, help="Reload providers and models"):

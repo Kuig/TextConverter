@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The GUI exposes the provider's context size as a slider (4k to 256k tokens), saved to
+  `config.json` with **Save as default**.
+
+### Changed
+
+- The committed `config.json` sets the Ollama `context_size` to 8192: at 4096, a page
+  transcribed in PDF raster mode could fill the window by itself and come out truncated.
+
 ## [0.2.0] - 2026-10-26
 
 ### Added

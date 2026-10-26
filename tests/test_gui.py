@@ -9,6 +9,8 @@ from unittest.mock import patch
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from textconverter.config import AppConfig
+
 from _support import BaseConverterTest, setUpModule, tearDownModule
 
 APP = str(Path(__file__).resolve().parent.parent / "textconverter" / "gui" / "app.py")
@@ -60,6 +62,39 @@ class TestGui(BaseConverterTest):
         app = self._run(providers=[])
         self.assertEqual(self._selectbox(app, "Provider").value, "ollama")
         self.assertTrue([c for c in app.sidebar.caption if "not available now" in c.value])
+
+    def test_context_size_slider_offers_standard_sizes(self):
+        """The slider starts at the provider's context_size and steps through 4k..256k."""
+        config = AppConfig(providers={"ollama": {"context_size": 8192}})
+        with patch("textconverter.config.load_config", return_value=config):
+            slider = self._run().sidebar.select_slider[0]
+        self.assertEqual(slider.value, 8192)
+        self.assertEqual(slider.options, ["4k", "8k", "16k", "32k", "64k", "128k", "256k"])
+
+    def test_off_scale_context_size_stays_selected_with_warning(self):
+        """A configured size that is not a standard step is kept and flagged in a caption."""
+        config = AppConfig(providers={"ollama": {"context_size": 10000}})
+        with patch("textconverter.config.load_config", return_value=config):
+            app = self._run()
+        self.assertEqual(app.sidebar.select_slider[0].value, 10000)
+        self.assertTrue([c for c in app.sidebar.caption if "not one of the standard sizes" in c.value])
+
+    def test_chosen_context_size_reaches_conversion(self):
+        """Convert passes the slider value in the provider block of the config override."""
+        st.cache_data.clear()
+        with patch("unified_ai_client.list_providers", return_value=PROVIDERS), \
+             patch("unified_ai_client.list_models", return_value=MODELS), \
+             patch("textconverter.config.load_config", side_effect=lambda: AppConfig()), \
+             patch("textconverter.api.save_to_file") as save:
+            app = AppTest.from_file(APP, default_timeout=30)
+            app.run()
+            app.sidebar.select_slider[0].set_value(32768)
+            app.text_input(key="source").input("in.md")
+            app.text_input(key="output").input("out.md")
+            next(b for b in app.button if b.label == "Convert").click()
+            app.run()
+        self.assertFalse(app.exception, app.exception)
+        self.assertEqual(save.call_args.kwargs["config"].providers["ollama"]["context_size"], 32768)
 
 
 class TestFileDialog(BaseConverterTest):

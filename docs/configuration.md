@@ -40,7 +40,7 @@ TextConverter reads `config.json` from the **current working directory**, fallin
     "url": "http://localhost:11434",
     "timeout": 300,
     "keep_alive": "15m",
-    "context_size": 4096
+    "context_size": 8192
   }
 }
 ```
@@ -84,7 +84,7 @@ The categories are `photo_drawing_or_comic`, `diagram`, `text`, `table`, `formul
 
 ## Saving from the GUI
 
-The GUI starts from `config.json` and offers the provider and the three models as menus. **Save as default** writes the whole configuration, with the chosen provider and models, to `config.json` in the **working directory** (never into the installed package), in the same layout as the committed file, so the change shows up as a small diff.
+The GUI starts from `config.json` and offers the provider and the three models as menus, and the provider's `context_size` as a slider (4k, 8k, ... 256k tokens). The context window holds both the image and the answer: a full page sent to the OCR model takes several thousand tokens, so a window that is too small truncates the transcription. **Save as default** writes the whole configuration, with the chosen provider, models and context size, to `config.json` in the **working directory** (never into the installed package), in the same layout as the committed file, so the change shows up as a small diff.
 
 ## API keys (cloud providers)
 

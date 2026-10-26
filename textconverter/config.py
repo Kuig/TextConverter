@@ -56,12 +56,15 @@ _DEFAULT_OCR_PROMPTS: dict[str, str] = {
     "document_scan": "Text Recognition:",
 }
 
+# Images and answer share the window: an A3 page at 200 DPI alone takes about 4k tokens.
+DEFAULT_CONTEXT_SIZE = 8192
+
 _DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
     "ollama": {
         "url": "http://localhost:11434",
         "timeout": 300,
         "keep_alive": "15m",
-        "context_size": 8192,
+        "context_size": DEFAULT_CONTEXT_SIZE,
     },
 }
 
