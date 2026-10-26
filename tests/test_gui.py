@@ -97,6 +97,18 @@ class TestGui(BaseConverterTest):
         self.assertEqual(save.call_args.kwargs["config"].providers["ollama"]["context_size"], 32768)
 
 
+    def test_site_cleanup_default_follows_config(self):
+        """html.site_cleanup = false in config.json unticks the checkbox (it was always ticked)."""
+        st.cache_data.clear()
+        cfg = AppConfig()
+        cfg.html.site_cleanup = False
+        with patch("unified_ai_client.list_providers", return_value=PROVIDERS),              patch("unified_ai_client.list_models", return_value=MODELS),              patch("textconverter.config.load_config", side_effect=lambda: cfg):
+            app = AppTest.from_file(APP, default_timeout=30)
+            app.run()
+        box = next(c for c in app.sidebar.checkbox if c.label.startswith("Site-specific cleanup"))
+        self.assertFalse(box.value)
+
+
 class TestFileDialog(BaseConverterTest):
     """ask_path() runs the dialog in a child process, faked here."""
 

@@ -8,6 +8,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import textconverter.logger as logger
 from textconverter.api import save_to_file
+from textconverter.formats import (
+    IMAGE_HANDLING_CHOICES, INPUT_FORMATS, OUTPUT_FORMATS, PDF_MODES, TEMPLATE_CHOICES,
+)
 from textconverter.options import ConvertOptions
 from textconverter.config import DEFAULT_CONTEXT_SIZE, AppConfig, load_config
 from textconverter.gui.file_dialog import ask_path
@@ -23,25 +26,21 @@ try:
 except ImportError:
     AI_AVAILABLE = False
 
-INPUT_FILETYPES = [
-    ("All Supported Files", "*.pdf;*.html;*.htm;*.md;*.tex;*.json;*.txt;*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp"),
-    ("PDF Files", "*.pdf"),
-    ("HTML Files", "*.html;*.htm"),
-    ("Markdown Files", "*.md"),
-    ("LaTeX Files", "*.tex"),
-    ("JSON Files", "*.json"),
-    ("Images", "*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp"),
-    ("Text Files", "*.txt"),
-    ("All Files", "*.*"),
-]
-OUTPUT_FILETYPES = [
-    ("Markdown Files", "*.md"),
-    ("HTML Files", "*.html"),
-    ("PDF Files", "*.pdf"),
-    ("LaTeX Files", "*.tex"),
-    ("JSON Files", "*.json"),
-    ("All Files", "*.*"),
-]
+FORMAT_LABELS = {"markdown": "Markdown Files", "html": "HTML Files", "latex": "LaTeX Files",
+                 "json": "JSON Files", "pdf": "PDF Files", "image": "Images"}
+
+
+def _filetypes(formats: dict, all_label: str | None) -> list[tuple[str, str]]:
+    """File dialog filters for the given formats, from the format registry."""
+    patterns = {name: ";".join(f"*{ext}" for ext in f.extensions) for name, f in formats.items()}
+    filters = [(FORMAT_LABELS[name], pattern) for name, pattern in patterns.items()]
+    if all_label:
+        filters.insert(0, (all_label, ";".join(patterns.values())))
+    return [*filters, ("All Files", "*.*")]
+
+
+INPUT_FILETYPES = _filetypes(INPUT_FORMATS, "All Supported Files")
+OUTPUT_FILETYPES = _filetypes(OUTPUT_FORMATS, None)
 # Session keys of the AI selection, each mirroring the AiConfig field of the same name.
 MODEL_KEYS = ("classification_model", "description_model", "ocr_model")
 NO_OCR_LABEL = "(none: description model transcribes)"
@@ -181,20 +180,18 @@ _init_state()
 
 with st.sidebar:
     st.header("⚙️ Options")
-    template = st.selectbox("Template", ["plain", "light-theme", "dark-theme"],
+    template = st.selectbox("Template", TEMPLATE_CHOICES,
                             help="HTML output only; PDF output always uses the light theme.")
-    image_handling = st.selectbox(
-        "Image handling",
-        ["auto", "describe", "embed", "link", "discard"],
-    )
+    image_handling = st.selectbox("Image handling", IMAGE_HANDLING_CHOICES)
     pdf_mode = st.selectbox(
-        "PDF input", ["text", "raster"],
+        "PDF input", PDF_MODES,
         format_func={"text": "Text layer", "raster": "Raster pages + AI transcription"}.get,
         help="Raster renders every page and transcribes it with the AI models below (for scans).",
     )
-    code_parsing = st.checkbox("Enable code detection")
+    code_parsing = st.checkbox("Enable code detection", help="Markdown sources, and PDF sources in text mode.")
     extract_html = st.checkbox("Clean HTML & extract main content")
-    site_cleanup = st.checkbox("Site-specific cleanup (e.g. Wikipedia)", value=True, disabled=not extract_html)
+    site_cleanup = st.checkbox("Site-specific cleanup (e.g. Wikipedia)", value=load_config().html.site_cleanup,
+                               disabled=not extract_html)
     discard_links = st.checkbox("Discard links (keep text)")
     st.divider()
 

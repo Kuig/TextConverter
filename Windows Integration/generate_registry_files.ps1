@@ -1,20 +1,26 @@
 # Determine paths dynamically
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectDir = (Get-Item $ScriptDir).Parent.FullName
-$PythonPath = Join-Path $ProjectDir ".venv\Scripts\python.exe"
+$ExePath = Join-Path $ProjectDir ".venv\Scripts\textconverter.exe"
+$CmdPath = Join-Path $ScriptDir "convert.cmd"
 
-# Format paths for Windows Registry and Python
-$EscapedPythonPath = $PythonPath.Replace("\", "\\")
-$PythonProjectDir = $ProjectDir.Replace("\", "/")
+if (-not (Test-Path $ExePath)) {
+    Write-Warning "$ExePath not found: create the .venv and install the project before using the menu."
+}
 
-# Define subcommands for supported image types
+# Every entry runs convert.cmd, which calls "textconverter convert" with the
+# CLI's own defaults and writes the result next to the source file.
+$EscapedCmdPath = $CmdPath.Replace("\", "\\")
+
+# Subcommands for image sources (and for JSON, which has the same targets):
+# the image is transcribed or described by the AI models of config.json.
 $ImageSubcommands = @(
-    [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false; ImageHandling="describe" }
-    [ordered]@{ Key="02tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain"; Extract=$false; ImageHandling="describe" }
-    [ordered]@{ Key="03html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain"; Extract=$false; ImageHandling="describe" }
-    [ordered]@{ Key="04html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false; ImageHandling="describe" }
-    [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false; ImageHandling="describe" }
-    [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false; ImageHandling="describe" }
+    [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="02tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="03html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="04html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false }
+    [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
+    [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
 )
 
 # Define subcommands for PDF sources: text-layer conversions, then the same
@@ -95,6 +101,7 @@ $Associations = [ordered]@{
         [ordered]@{ Key="11pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
         [ordered]@{ Key="12pdf_main"; Verb="to PDF - main content (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$true }
     )
+    ".json" = $ImageSubcommands
     ".png"  = $ImageSubcommands
     ".jpg"  = $ImageSubcommands
     ".jpeg" = $ImageSubcommands
@@ -123,20 +130,19 @@ foreach ($Ext in $Associations.Keys) {
         $Key = $Sub.Key
         $Verb = $Sub.Verb
         $TargetExt = $Sub.Ext
-        $Template = $Sub.Template
-        $Extract = if ($Sub.Extract) { "True" } else { "False" }
-        $ImgHandling = if ($Sub.ImageHandling) { $Sub.ImageHandling } else { "link" }
-        $PdfMode = if ($Sub.PdfMode) { $Sub.PdfMode } else { "text" }
-        $CodeParsing = if ($Ext -eq ".md" -or $Ext -eq ".markdown" -or $Ext -eq ".tex" -or $Ext -eq ".latex") { "False" } else { "True" }
-        
-        # Construct the python one-liner command
-        $pyCode = "import sys, pathlib; sys.path.append('$PythonProjectDir'); from textconverter import save_to_file, ConvertOptions; src=pathlib.Path(sys.argv[1]); out=src.with_suffix('$TargetExt'); save_to_file(str(src), str(out), ConvertOptions(template='$Template', code_parsing=$CodeParsing, image_handling='$ImgHandling', extract_html=$Extract, pdf_mode='$PdfMode'))"
+        # textconverter convert options for this entry. Code detection works
+        # on a PDF's text layer; Markdown and LaTeX are already structured.
+        $Options = @("--template", $Sub.Template)
+        if ($Sub.Extract) { $Options += "--extract-html" }
+        if ($Sub.PdfMode) { $Options += @("--pdf-mode", $Sub.PdfMode) }
+        elseif ($Ext -eq ".pdf") { $Options += "--code-parsing" }
+        $OptionString = $Options -join " "
         
         $RegisterContent += "`r`n[HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter\shell\$Key]`r`n"
         $RegisterContent += "`"MUIVerb`"=generic:`"$Verb`"`r`n".Replace("generic:", "")
         
         $RegisterContent += "`r`n[HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter\shell\$Key\command]`r`n"
-        $RegisterContent += '@="\"' + $EscapedPythonPath + '\" -c \"' + $pyCode + '\" \"%1\""' + "`r`n"
+        $RegisterContent += '@="\"' + $EscapedCmdPath + '\" \"%1\" ' + $TargetExt + ' ' + $OptionString + '"' + "`r`n"
     }
 }
 

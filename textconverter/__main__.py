@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 from textconverter.api import save_to_file
+from textconverter.formats import IMAGE_HANDLING_CHOICES, INPUT_FORMATS, PDF_MODES, TEMPLATES
 from textconverter.options import ConvertOptions
 from textconverter import logger
 from textconverter.logger import log_success, log_error
@@ -29,6 +30,7 @@ def cmd_convert(args: argparse.Namespace) -> None:
                 site_cleanup=False if args.no_site_cleanup else None,
                 pdf_mode=args.pdf_mode,
             ),
+            from_format=args.from_format,
         )
         log_success(f"Saved to {args.output}")
     except Exception as exc:
@@ -37,22 +39,22 @@ def cmd_convert(args: argparse.Namespace) -> None:
 
 
 def cmd_mcp(args: argparse.Namespace) -> None:
-    """Handle the mcp subcommand: start the FastMCP server on stdio.
+    """Handle the mcp subcommand: start the MCP server on stdio.
 
     Args:
         args: Parsed argument namespace (unused).
     """
     try:
-        from mcp.server.fastmcp import FastMCP
+        from mcp.server.mcpserver import MCPServer
     except ImportError:
-        log_error("'mcp' library not installed. Run: pip install mcp")
+        log_error("'mcp' 2.x is not installed. Run: pip install \"mcp>=2.3,<3\"")
         sys.exit(1)
     # In stdio transport, stdout carries the JSON-RPC framing. Route all log
     # output to stderr before the server starts serving so business-logic
     # messages during a tool call cannot corrupt the protocol stream.
     logger.set_backend("mcp")
     from textconverter.mcp_tools import register_tools
-    mcp = FastMCP("TextConverter")
+    mcp = MCPServer("TextConverter")
     register_tools(mcp)
     mcp.run()
 
@@ -81,20 +83,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_convert = subparsers.add_parser("convert", help="Convert and save a document.")
     p_convert.add_argument("source", help="Source file path or remote URL (e.g., http:// or https://).")
     p_convert.add_argument("output", help="Output file path (format inferred from extension).")
-    p_convert.add_argument("--template", default="plain", help="Rendering template (default: plain).")
+    p_convert.add_argument(
+        "--from",
+        dest="from_format",
+        choices=list(INPUT_FORMATS),
+        help="Source format, when the extension (or, for a URL, the Content-Type) does not tell it.",
+    )
+    p_convert.add_argument("--template", default="plain", choices=TEMPLATES, help="HTML template (default: plain).")
     p_convert.add_argument(
         "--image-handling",
         default="auto",
-        choices=["auto", "describe", "embed", "link", "discard"],
+        choices=IMAGE_HANDLING_CHOICES,
         help="Image handling strategy.",
     )
     p_convert.add_argument(
         "--pdf-mode",
         default="text",
-        choices=["text", "raster"],
+        choices=PDF_MODES,
         help="How to read PDF input: its text layer, or every page rendered and transcribed by AI.",
     )
-    p_convert.add_argument("--code-parsing", action="store_true", help="Enable heuristic code block detection.")
+    p_convert.add_argument(
+        "--code-parsing",
+        action="store_true",
+        help="Fence code blocks found by heuristic detection (Markdown sources, PDF sources in text mode).",
+    )
     p_convert.add_argument("--extract-html", action="store_true", help="Filter noise and extract main content from HTML.")
     p_convert.add_argument("--no-site-cleanup", action="store_true", help="Skip site-specific HTML cleanup (e.g. Wikipedia) even with --extract-html.")
     p_convert.add_argument("--discard-links", action="store_true", help="Replace every hyperlink with its visible text.")

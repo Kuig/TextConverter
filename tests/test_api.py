@@ -91,3 +91,27 @@ class TestTextAndFiles(BaseConverterTest):
             with self.assertRaisesRegex(ValueError, "source file itself"):
                 textconverter.save_to_file(src, src)
             self.assertEqual(Path(src).read_text(encoding="utf-8"), "# a")
+
+
+class TestWindowsIntegration(BaseConverterTest):
+
+    def test_context_menu_covers_every_input_format(self):
+        """Every input extension except .txt (left out on purpose) has a context menu entry."""
+        import re
+        from textconverter.formats import INPUT_FORMATS
+        script = (INPUT_DIR.parent.parent / "Windows Integration" / "generate_registry_files.ps1").read_text(encoding="utf-8")
+        menu = set(re.findall(r'^\s+"(\.\w+)"\s*=', script, flags=re.MULTILINE))
+        supported = {ext for f in INPUT_FORMATS.values() for ext in f.extensions} - {".txt"}
+        self.assertEqual(menu, supported)
+
+
+class TestCli(BaseConverterTest):
+
+    def test_from_and_choices_come_from_the_registry(self):
+        import contextlib
+        import io
+        from textconverter.__main__ import build_parser
+        args = build_parser().parse_args(["convert", "page", "out.md", "--from", "html", "--template", "dark"])
+        self.assertEqual((args.from_format, args.template), ("html", "dark"))
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            build_parser().parse_args(["convert", "a.md", "b.html", "--template", "drak"])

@@ -52,9 +52,12 @@ OUTPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
 # Output formats convert() returns as a string.
 TEXT_OUTPUT_FORMATS = tuple(name for name, f in OUTPUT_FORMATS.items() if not f.binary)
 
-# "auto_latex" is what "auto" resolves to for LaTeX and JSON output: only
-# text, table and formula images are transcribed, and inlined.
-IMAGE_HANDLING_MODES = ("auto", "describe", "embed", "link", "discard", "auto_latex")
+# The image handling modes offered by the CLI, the GUI and the MCP tools.
+IMAGE_HANDLING_CHOICES = ("auto", "describe", "embed", "link", "discard")
+# Every accepted mode. "auto_latex" is what "auto" resolves to for LaTeX and
+# JSON output (only text, table and formula images are transcribed, and
+# inlined); the API accepts it but the interfaces do not offer it.
+IMAGE_HANDLING_MODES = (*IMAGE_HANDLING_CHOICES, "auto_latex")
 
 PDF_MODES = ("text", "raster")
 
@@ -65,6 +68,8 @@ TEMPLATE_ALIASES: dict[str, str] = {
     "dark": "dark", "dark-theme": "dark",
 }
 TEMPLATES = tuple(TEMPLATE_ALIASES)
+# One name per template, for menus.
+TEMPLATE_CHOICES = ("plain", "light", "dark")
 
 
 def _infer(path: str, formats: dict[str, Format]) -> str | None:

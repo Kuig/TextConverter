@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `save_to_file()` accepts `from_format`, for URLs or files whose extension does not tell the
   format.
 - `.txt` files are read as Markdown.
+- `--from` (CLI) and `from_format` (MCP `textconverter_save_file`) set the source format.
+- MCP: `textconverter_convert_file` converts a file or URL; `textconverter_convert_text` now
+  takes only text (`text`, `from_format`, `to_format`).
+- The Windows context menu also covers `.json` sources.
 - `Equation` nodes carry an optional `env` (e.g. `align`, `gather*`), so a display environment
   can be reproduced instead of being forced into `equation`.
 
@@ -37,6 +41,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   work starts, instead of falling back silently (template, image handling) or failing after
   the AI calls (output format).
 - `save_to_file()` refuses an output path that is the source file itself.
+- **Breaking:** requires `mcp>=2.3,<3`; the MCP server runs on `MCPServer` (FastMCP's new name),
+  so `textconverter mcp` works again with the mcp 2.x that pip installs.
+- MCP tools raise their errors as tool errors (`isError` with the message) instead of returning
+  `"Error: ..."` as if it were a converted document.
+- The CLI, the GUI and the MCP docstrings take their template, image handling and PDF mode
+  choices from the format registry; `--template` rejects unknown names. The GUI file dialogs
+  list every supported extension (`.markdown`, `.latex`, `.txt` included).
+- The Windows context menu runs the CLI (through `convert.cmd`) with its default options: images
+  follow `--image-handling auto` like on the command line, code detection applies to PDF
+  sources in text mode, and a failed conversion keeps its window open to show the error.
 - JSON input is checked against an explicit registry of node types: an unknown or missing
   `type`, a missing required field or a child list that is not a list raises `ValueError`
   instead of silently dropping the node from the output.
@@ -66,6 +80,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changes the built-in defaults for every later configuration in the same process.
 - A `config.json` section that is not a JSON object (e.g. `"wikipedia": [...]`) is reported
   with a warning before it is replaced by defaults, instead of being ignored silently.
+- The GUI's site cleanup checkbox starts from `html.site_cleanup` in `config.json` (it was always
+  ticked, so `false` was ignored in the GUI).
 - GUI log messages are shown as text: a URL or an error message containing `<` no longer
   injects markup into the page.
 

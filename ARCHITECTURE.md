@@ -62,7 +62,7 @@ Passes over the tree never probe node types for their children themselves: `walk
 All four interfaces are thin wrappers around the same `convert()`/`convert_text()`/`save_to_file()` API in `api.py`, and take their choices (formats, modes, templates) from `formats.py`:
 
 - **CLI** (`__main__.py`): `argparse` subcommands (`convert`, `mcp`, `gui`).
-- **MCP server** (`mcp_tools.py`): FastMCP tools over stdio, for use from AI agents/IDEs.
+- **MCP server** (`mcp_tools.py`): `MCPServer` tools (mcp 2.x) over stdio, for use from AI agents/IDEs; a failed conversion is raised as `ToolError`, which the client receives as `isError` with the message.
 - **Python library**: direct import of `textconverter.api`.
 - **Streamlit GUI** (`gui/app.py`): sidebar for options and for the AI provider, models and context size (models listed live by `unified_ai_client`, saved to `config.json` on request), main area for source/output and results. The chosen models reach `save_to_file()` as a `config` override, so the GUI holds no conversion logic.
 

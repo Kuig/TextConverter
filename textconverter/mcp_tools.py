@@ -1,78 +1,124 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 
 def register_tools(mcp: object) -> None:
-    """Register all TextConverter MCP tools with the given FastMCP instance.
+    """Register all TextConverter MCP tools with the given MCPServer instance.
+
+    A failed conversion is raised as ``ToolError``: the client gets a tool
+    error (``isError``) carrying the message, so a failure cannot be mistaken
+    for a converted document. (Any other exception would reach the client as a
+    bare "Error executing tool".)
 
     Args:
-        mcp: A FastMCP server instance.
+        mcp: An ``mcp.server.mcpserver.MCPServer`` instance.
     """
+    from mcp.server.mcpserver.exceptions import ToolError
+    from textconverter.api import convert, convert_text, save_to_file
+    from textconverter.options import ConvertOptions
+
+    def _run(call: Callable[[], str]) -> str:
+        try:
+            return call()
+        except Exception as exc:
+            raise ToolError(f"{type(exc).__name__}: {exc}") from exc
 
     @mcp.tool()
     def textconverter_convert_text(
+        text: str,
+        from_format: str,
+        to_format: str,
+        template: str = "plain",
+        image_handling: str = "auto",
+        code_parsing: bool = False,
+        extract_html: bool = False,
+        discard_links: bool = False,
+        site_cleanup: bool | None = None,
+        output_dir: str | None = None,
+        image_dir_name: str | None = None,
+    ) -> str:
+        """Convert a document given as text to another format and return it.
+
+        Args:
+            text: The source document itself (never read as a file path).
+            from_format: Source format: 'markdown', 'html', 'latex' or 'json'.
+            to_format: Target format: 'markdown', 'html', 'latex' or 'json'.
+            template: HTML template: 'plain', 'light' or 'dark'.
+            image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
+            code_parsing: Fence code blocks found by heuristic detection (Markdown sources).
+            extract_html: Filter noise and keep the main content of HTML input.
+            discard_links: Replace every hyperlink with its visible text.
+            site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during
+                extract_html. None uses the config default; False disables it.
+            output_dir: Directory for downloaded remote images (the server's current
+                directory when None).
+            image_dir_name: Subdirectory of output_dir for those images.
+
+        Returns:
+            The converted document.
+        """
+        def call() -> str:
+            options = ConvertOptions(template=template, image_handling=image_handling,
+                                     code_parsing=code_parsing, extract_html=extract_html,
+                                     discard_links=discard_links, site_cleanup=site_cleanup)
+            return convert_text(text, from_format, to_format, options,
+                                output_dir=output_dir, image_dir_name=image_dir_name)
+        return _run(call)
+
+    @mcp.tool()
+    def textconverter_convert_file(
         source: str,
         to_format: str,
         from_format: str | None = None,
         template: str = "plain",
-        is_file: bool = False,
-        output_dir: str | None = None,
-        image_dir_name: str | None = None,
         image_handling: str = "auto",
         code_parsing: bool = False,
         extract_html: bool = False,
         discard_links: bool = False,
         site_cleanup: bool | None = None,
         pdf_mode: str = "text",
+        output_dir: str | None = None,
+        image_dir_name: str | None = None,
     ) -> str:
-        """Convert text or a file to a target document format.
+        """Convert a file or a remote URL to another format and return it.
 
         Args:
-            source: Source text content, file path, or remote URL (e.g., http:// or https://).
-            to_format: Target format ('html', 'markdown', 'latex', 'json').
-            from_format: Optional source format hint. Inferred from extension if None.
-            template: Rendering template name (default: 'plain').
-            is_file: If True, source is treated as a file path.
-            output_dir: Optional directory for extracted assets (images, etc.).
-            image_dir_name: Optional name for the image assets subdirectory.
-            image_handling: Image handling strategy ('auto', 'describe', 'embed', 'link', 'discard').
-            code_parsing: If True, enables heuristic code block detection for Markdown output.
-            extract_html: If True, filters noise and extracts main content from HTML.
-            discard_links: If True, replaces every hyperlink with its visible text.
+            source: File path, or remote URL (http:// or https://).
+            to_format: Target format: 'markdown', 'html', 'latex' or 'json'.
+            from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'image').
+                Inferred from the extension (for a URL, from its Content-Type) if None.
+            template: HTML template: 'plain', 'light' or 'dark'.
+            image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
+            code_parsing: Fence code blocks found by heuristic detection (Markdown
+                sources, PDF sources in text mode).
+            extract_html: Filter noise and keep the main content of HTML input.
+            discard_links: Replace every hyperlink with its visible text.
             site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during
                 extract_html. None uses the config default; False disables it.
             pdf_mode: How to read PDF input: 'text' (its text layer) or 'raster'
                 (every page rendered and transcribed by the AI describer).
+            output_dir: Directory for downloaded and extracted images (the server's
+                current directory when None).
+            image_dir_name: Subdirectory of output_dir for those images.
 
         Returns:
-            Converted document as a string.
+            The converted document.
         """
-        try:
-            import os
-            from textconverter.api import convert, convert_text
-            from textconverter.options import ConvertOptions
-            options = ConvertOptions(
-                template=template,
-                image_handling=image_handling,
-                code_parsing=code_parsing,
-                extract_html=extract_html,
-                discard_links=discard_links,
-                site_cleanup=site_cleanup,
-                pdf_mode=pdf_mode,
-            )
-            if is_file or source.startswith(("http://", "https://")) or os.path.isfile(source):
-                return convert(source, to_format, options, from_format=from_format,
-                               output_dir=output_dir, image_dir_name=image_dir_name)
-            if from_format is None:
-                raise ValueError("from_format must be specified when converting raw text.")
-            return convert_text(source, from_format, to_format, options,
-                                output_dir=output_dir, image_dir_name=image_dir_name)
-        except Exception as exc:
-            return f"Error: {exc}"
+        def call() -> str:
+            options = ConvertOptions(template=template, image_handling=image_handling,
+                                     code_parsing=code_parsing, extract_html=extract_html,
+                                     discard_links=discard_links, site_cleanup=site_cleanup,
+                                     pdf_mode=pdf_mode)
+            return convert(source, to_format, options, from_format=from_format,
+                           output_dir=output_dir, image_dir_name=image_dir_name)
+        return _run(call)
 
     @mcp.tool()
     def textconverter_save_file(
         source: str,
         output_path: str,
+        from_format: str | None = None,
         template: str = "plain",
         image_handling: str = "auto",
         code_parsing: bool = False,
@@ -81,16 +127,21 @@ def register_tools(mcp: object) -> None:
         site_cleanup: bool | None = None,
         pdf_mode: str = "text",
     ) -> str:
-        """Convert a document and save it to a file.
+        """Convert a file or a remote URL and save the result to a file.
 
         Args:
-            source: Source text content, file path, or remote URL (e.g., http:// or https://).
-            output_path: Full output file path (format inferred from extension).
-            template: Rendering template name (default: 'plain').
-            image_handling: Image handling strategy ('auto', 'describe', 'embed', 'link', 'discard').
-            code_parsing: If True, enables heuristic code block detection.
-            extract_html: If True, filters noise and extracts main content from HTML.
-            discard_links: If True, replaces every hyperlink with its visible text.
+            source: File path, or remote URL (http:// or https://). Text is not
+                accepted: use textconverter_convert_text for it.
+            output_path: Output file path; its extension (.md, .html, .tex, .json,
+                .pdf) sets the format. Images go to '<output name>_images' next to it.
+            from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'image').
+                Inferred from the extension (for a URL, from its Content-Type) if None.
+            template: HTML template: 'plain', 'light' or 'dark' (ignored for .pdf).
+            image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
+            code_parsing: Fence code blocks found by heuristic detection (Markdown
+                sources, PDF sources in text mode).
+            extract_html: Filter noise and keep the main content of HTML input.
+            discard_links: Replace every hyperlink with its visible text.
             site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during
                 extract_html. None uses the config default; False disables it.
             pdf_mode: How to read PDF input: 'text' (its text layer) or 'raster'
@@ -99,18 +150,11 @@ def register_tools(mcp: object) -> None:
         Returns:
             Confirmation message with the output path.
         """
-        try:
-            from textconverter.api import save_to_file
-            from textconverter.options import ConvertOptions
-            save_to_file(source, output_path, ConvertOptions(
-                template=template,
-                image_handling=image_handling,
-                code_parsing=code_parsing,
-                extract_html=extract_html,
-                discard_links=discard_links,
-                site_cleanup=site_cleanup,
-                pdf_mode=pdf_mode,
-            ))
+        def call() -> str:
+            options = ConvertOptions(template=template, image_handling=image_handling,
+                                     code_parsing=code_parsing, extract_html=extract_html,
+                                     discard_links=discard_links, site_cleanup=site_cleanup,
+                                     pdf_mode=pdf_mode)
+            save_to_file(source, output_path, options, from_format=from_format)
             return f"Successfully saved to {output_path}"
-        except Exception as exc:
-            return f"Error: {exc}"
+        return _run(call)

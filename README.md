@@ -115,6 +115,9 @@ textconverter convert DocsInput/document.pdf DocsOutput/document.md --image-hand
 
 # Convert with heuristic code detection
 textconverter convert DocsInput/document.md DocsOutput/document.html --code-parsing
+
+# Tell the source format when neither the extension nor the server's Content-Type does
+textconverter convert https://example.com/export DocsOutput/export.md --from markdown
 ```
 
 ### MCP Server
@@ -124,8 +127,11 @@ textconverter mcp
 ```
 
 Available MCP tools:
-- `textconverter_convert_text`: convert text or a file to a target format
-- `textconverter_save_file`: convert and save a document to a file
+- `textconverter_convert_text`: convert a document given as text to a target format
+- `textconverter_convert_file`: convert a file or a URL to a target format
+- `textconverter_save_file`: convert a file or a URL and save the result to a file
+
+A failed conversion is returned as a tool error (`isError`) with its message.
 
 ### Streamlit GUI
 
@@ -161,10 +167,11 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
 * **Extension Filtering**: Only shows relevant options:
   * **PDFs**: Shows all output options (.md, .tex, light/dark HTML), each also in a "(raster)" variant that renders the pages and transcribes them with AI (`--pdf-mode raster`), for scanned PDFs.
   * **PDF output**: Every other source type also offers "to PDF (.pdf)" (and, for HTML, its main-content variant).
-  * **Markdown / LaTeX**: Excludes self-conversion (e.g., no "convert to .md" option for `.md` files). Code detection is disabled for these source types (they are already structured text).
+  * **Markdown / LaTeX**: Excludes self-conversion (e.g., no "convert to .md" option for `.md` files).
   * **HTML / HTM**: Includes duplicate options for "main content" extraction (`--extract-html` to filter out boilerplate).
-  * **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`): Automatically runs with AI image description (`image_handling="describe"`).
-* **Smart Defaults**: Executes with `--code-parsing` enabled for all source types except Markdown and LaTeX.
+  * **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`): The image is transcribed or described by the AI models of `config.json`.
+  * **JSON** (the AST form written by TextConverter): Converts to every other format.
+* **Same behavior as the CLI**: Every entry runs `Windows Integration/convert.cmd`, which calls `textconverter convert` with its default options (so `--image-handling auto`) and writes the result next to the source file. PDF sources in text mode also get `--code-parsing`. If a conversion fails, the window stays open to show the error.
 
 #### Setup
 1. Open a PowerShell terminal in the project root.
@@ -173,8 +180,8 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
    cd "Windows Integration"
    .\generate_registry_files.ps1
    ```
-   This dynamically detects your Python virtual environment path and generates two registry files: `register.reg` and `unregister.reg`.
-3. Double-click `register.reg` and approve the prompt to register the context menu.
+   This dynamically detects the project folder and generates two registry files: `register.reg` and `unregister.reg`. Run it again (and re-import `register.reg`) after moving the project or updating TextConverter.
+3. Double-click `register.reg` and approve the prompt to register the context menu. On Windows 11 the entries are under **Show more options**.
 4. To remove the integration, double-click `unregister.reg`.
 
 #### GUI Launcher
