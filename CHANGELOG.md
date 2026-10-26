@@ -7,11 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-26
+
+### Breaking changes
+
+- `convert(source, to_format, options=None, *, from_format, output_dir, image_dir_name,
+  config)` and `save_to_file(source, output_path, options=None, *, from_format, config)` take
+  a `ConvertOptions` instead of one keyword per option; `is_file` is gone, and text given
+  directly goes through the new `convert_text()`. The parsers take keyword-only options with
+  uniform names (`parse_html(text, extract_html=...)`, `parse_pdf(path, config=...,
+  pdf_mode=...)`, `parse_image(path, config=...)`, `parse_json(text)`), `render_latex(doc)` no
+  longer takes `image_handling`, and `config` is a required keyword below the API.
+- Requires `mcp>=2.3,<3`; the MCP server runs on `MCPServer` (FastMCP's new name), so
+  `textconverter mcp` works again with the mcp 2.x that pip installs.
+- MCP: `textconverter_convert_text` takes only text (`text`, `from_format`, `to_format`); files
+  and URLs go through the new `textconverter_convert_file`. Errors come back as tool errors
+  (`isError`) instead of an `"Error: ..."` result.
+- Site profiles are built with their settings (`SiteProfile.from_config()`), and their hooks
+  are `skip_subtree(tag, attrs)` and `clean_ast(doc)`.
+
 ### Added
 
 - The GUI exposes the provider's context size as a slider (4k to 256k tokens), saved to
   `config.json` with **Save as default**.
-
 - `convert_text()` converts a document given as text; `convert()` now takes only file paths and
   URLs, so text that happens to name an existing file is no longer read from disk.
 - `ConvertOptions` groups the conversion options in one validated dataclass, and `formats.py`
@@ -20,8 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   format.
 - `.txt` files are read as Markdown.
 - `--from` (CLI) and `from_format` (MCP `textconverter_save_file`) set the source format.
-- MCP: `textconverter_convert_file` converts a file or URL; `textconverter_convert_text` now
-  takes only text (`text`, `from_format`, `to_format`).
 - The Windows context menu also covers `.json` sources.
 - `Equation` nodes carry an optional `env` (e.g. `align`, `gather*`), so a display environment
   can be reproduced instead of being forced into `equation`.
@@ -30,21 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The committed `config.json` sets the Ollama `context_size` to 8192: at 4096, a page
   transcribed in PDF raster mode could fill the window by itself and come out truncated.
-- **Breaking:** `convert(source, to_format, options=None, *, from_format, output_dir,
-  image_dir_name, config)` and `save_to_file(source, output_path, options=None, *, from_format,
-  config)` take a `ConvertOptions` instead of one keyword per option; `is_file` is gone. The
-  parsers take keyword-only options with uniform names (`parse_html(text, extract_html=...)`,
-  `parse_pdf(path, config=..., pdf_mode=...)`, `parse_image(path, config=...)`,
-  `parse_json(text)`), `render_latex(doc)` no longer takes `image_handling`, and `config` is a
-  required keyword below the API.
 - An unknown template, image handling mode, PDF mode or format raises `ValueError` before any
   work starts, instead of falling back silently (template, image handling) or failing after
   the AI calls (output format).
 - `save_to_file()` refuses an output path that is the source file itself.
-- **Breaking:** requires `mcp>=2.3,<3`; the MCP server runs on `MCPServer` (FastMCP's new name),
-  so `textconverter mcp` works again with the mcp 2.x that pip installs.
-- MCP tools raise their errors as tool errors (`isError` with the message) instead of returning
-  `"Error: ..."` as if it were a converted document.
 - The CLI, the GUI and the MCP docstrings take their template, image handling and PDF mode
   choices from the format registry; `--template` rejects unknown names. The GUI file dialogs
   list every supported extension (`.markdown`, `.latex`, `.txt` included).
@@ -285,7 +290,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   classification and description, heuristic code detection, equations, and CLI, MCP, GUI and
   library interfaces.
 
-[Unreleased]: https://github.com/Kuig/TextConverter/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Kuig/TextConverter/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Kuig/TextConverter/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Kuig/TextConverter/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/Kuig/TextConverter/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Kuig/TextConverter/compare/v0.1.2...v0.1.3
