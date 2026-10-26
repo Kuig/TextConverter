@@ -34,7 +34,7 @@ def cmd_convert(args: argparse.Namespace) -> None:
 
 
 def cmd_mcp(args: argparse.Namespace) -> None:
-    """Handle the mcp subcommand — start the FastMCP server on stdio.
+    """Handle the mcp subcommand: start the FastMCP server on stdio.
 
     Args:
         args: Parsed argument namespace (unused).
@@ -55,7 +55,7 @@ def cmd_mcp(args: argparse.Namespace) -> None:
 
 
 def cmd_gui(args: argparse.Namespace) -> None:
-    """Handle the gui subcommand — launch the Streamlit web interface.
+    """Handle the gui subcommand: launch the Streamlit web interface.
 
     Args:
         args: Parsed argument namespace (unused).
@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="textconverter",
-        description="TextConverter — Multi-format document conversion tool.",
+        description="TextConverter: multi-format document conversion tool.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

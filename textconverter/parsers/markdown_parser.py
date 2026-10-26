@@ -163,7 +163,7 @@ def _parse_markdown_list(block_text: str, ref_map: dict | None = None) -> ListBl
                 payload = _json.loads(base64.b64decode(m_mb.group(1)).decode('utf-8'))
                 stack[-1]['list_item'].children.append(Equation(code=payload['code'], inline=False))
             elif stack:
-                # Continuation line — append to last paragraph of active item
+                # Continuation line: append to last paragraph of active item
                 active_item = stack[-1]['list_item']
                 last_p = None
                 if active_item.children and isinstance(active_item.children[-1], Paragraph):
@@ -449,14 +449,14 @@ def parse_inline(text: str, ref_map: dict | None = None) -> list[InlineElement]:
     pattern = re.compile(
         # LaTeX safeguarded macros
         r'(?P<latexmacro>\\(?:footnote|cite|citet|citep|ref|label)\b)|'
-        # Reference-style image: ![alt][id]  — must come before reflink and inline-image
+        # Reference-style image: ![alt][id] (must come before reflink and inline-image)
         r'(?P<refimg>!\[(?P<ri_alt>[^\]]*)\]\[(?P<ri_id>[^\]]*)\])|'
-        # Reference-style link: [content][id] — content may include inline images
+        # Reference-style link: [content][id]; content may include inline images
         # Uses .*? (non-greedy) so it stops at the first ][id] after the opening [
         r'(?P<reflink>(?<!!)(?<!\])\[(?P<rl_text>.*?)\]\[(?P<rl_id>[^\]]*)\])|'
         # Inline image: ![alt](url "title") with optional OCR block
         r'(?P<inlineimg>!\[(?P<img_alt>[^\]]*)\]\((?P<img_url>[^\)\s]*)(?:\s+"(?P<img_title>[^"]*)")?\)(?:<!--OCR:(?P<ocr_b64>[A-Za-z0-9+/=]+)-->)?)|'
-        # Linked image: [![alt](imgurl "imgtitle")](linkurl "linktitle") — an inline image
+        # Linked image: [![alt](imgurl "imgtitle")](linkurl "linktitle"), an inline image
         # used as the entire content of an inline link. Must come before inlinelink, whose
         # link_text ([^\]]+) cannot span the nested image's own closing bracket/paren and
         # would otherwise misparse the image's URL as the link's URL.
@@ -514,7 +514,7 @@ def parse_inline(text: str, ref_map: dict | None = None) -> list[InlineElement]:
             url, title = (ref_map or {}).get(label, ('', None))
             elements.append(Image(src=url, alt=g['ri_alt'], title=title))
         elif g.get('reflink') is not None:
-            # Reference-style link: [content][id] — content may include an inline image
+            # Reference-style link: [content][id]; content may include an inline image
             label = (g['rl_id'] or g['rl_text']).lower().strip()
             url, title = (ref_map or {}).get(label, ('#', None))
             link = Link(url=url, title=title,

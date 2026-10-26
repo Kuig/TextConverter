@@ -38,16 +38,16 @@ def is_code(text: str, threshold: float = 0.25) -> tuple[bool, float, dict]:
     tot_words = max(len(words), 1)
     tot_lines = max(len(lines), 1)
 
-    # s1 — special characters
+    # s1: special characters
     special = re.sub(r'[a-zA-Z0-9\s]', '', text)
     s1 = min(len(special) / tot_words, 1.0)
 
-    # s2 — keyword density
+    # s2: keyword density
     lower_words = [w.lower().strip('(){};:,."\'') for w in words]
     kw_count = sum(1 for w in lower_words if w in KEYWORDS)
     s2 = kw_count / tot_words
 
-    # s3 — anomalous case (camelCase, snake_case, kebab-case)
+    # s3: anomalous case (camelCase, snake_case, kebab-case)
     weird = sum(
         1 for w in words
         if re.search(r'[a-z][A-Z]', w)        # camelCase
@@ -56,7 +56,7 @@ def is_code(text: str, threshold: float = 0.25) -> tuple[bool, float, dict]:
     )
     s3 = weird / tot_words
 
-    # s4 — indentation
+    # s4: indentation
     indented = sum(
         1 for line in lines
         if re.match(r'^(\t+| {2,})', line) and line.strip()

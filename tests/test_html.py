@@ -52,7 +52,7 @@ class TestHtmlParser(BaseConverterTest):
         self.assertIn("Left Right", md, "adjacent <div> cell text glued together")
         self.assertNotIn("LeftRight", md)
 
-        # extract_html path strips unknown attrs — colspan/rowspan must survive it too.
+        # extract_html path strips unknown attrs; colspan/rowspan must survive it too.
         md_x = textconverter.convert(html, to_format="markdown", from_format="html", extract_html=True)
         self.assertEqual(len({l.count("|") for l in _data_rows(md_x)}), 1, "ragged table after extract_html")
 

@@ -7,7 +7,7 @@ from typing import Any
 from textconverter.logger import log_warning
 
 # ---------------------------------------------------------------------------
-# Hardcoded defaults — used only when no config.json is found.
+# Hardcoded defaults, used only when no config.json is found.
 # ---------------------------------------------------------------------------
 
 _DEFAULT_CLASSIFICATION_PROMPT = (
