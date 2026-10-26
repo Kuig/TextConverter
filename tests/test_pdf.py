@@ -8,6 +8,7 @@ import shutil
 from unittest.mock import patch
 
 import textconverter
+from textconverter.config import AppConfig
 from textconverter.ast import Document, Image, Paragraph, Text
 from _support import BaseConverterTest, setUpModule, tearDownModule, INPUT_DIR, OUTPUT_DIR, read
 
@@ -25,22 +26,12 @@ class TestPdfParser(BaseConverterTest):
 
     def test_journal_pdf(self):
         """Journal PDF.pdf → MD: output is non-empty, contains some text."""
-        in_path = INPUT_DIR / "Journal PDF.pdf"
-        out_path = self._out("Journal_PDF.md")
-
-        textconverter.save_to_file(str(in_path), str(out_path))
-        self.assertTrue(out_path.exists())
-        content = read(out_path)
+        content = self.convert_fixture("Journal PDF.pdf", "Journal_PDF.md")
         self.assertGreater(len(content.strip()), 200, "PDF output too short")
 
     def test_weird_journal_pdf(self):
         """Weird Journal PDF.pdf → MD: output is non-empty, contains some text."""
-        in_path = INPUT_DIR / "Weird Journal PDF.pdf"
-        out_path = self._out("Weird_Journal_PDF.md")
-
-        textconverter.save_to_file(str(in_path), str(out_path))
-        self.assertTrue(out_path.exists())
-        content = read(out_path)
+        content = self.convert_fixture("Weird Journal PDF.pdf", "Weird_Journal_PDF.md")
         self.assertGreater(len(content.strip()), 200, "PDF output too short")
 
     def test_vector_image_pdf(self):
@@ -63,7 +54,8 @@ class TestRasterMode(BaseConverterTest):
             shutil.rmtree(img_dir)
         with patch("textconverter.image_describer.transcribe_images", side_effect=fake), \
              patch("textconverter.image_describer.ai_client_available", return_value=True):
-            doc = parse_pdf(str(INPUT_DIR / "Journal PDF.pdf"), str(OUTPUT_DIR), "raster_images", mode="raster")
+            doc = parse_pdf(str(INPUT_DIR / "Journal PDF.pdf"), config=AppConfig(), pdf_mode="raster",
+                            output_dir=str(OUTPUT_DIR), image_dir_name="raster_images")
         return doc, img_dir
 
     def test_pages_are_transcribed_in_order(self):
@@ -93,4 +85,4 @@ class TestRasterMode(BaseConverterTest):
     def test_unknown_mode_is_rejected(self):
         from textconverter.parsers.pdf_parser import parse_pdf
         with self.assertRaises(ValueError):
-            parse_pdf(str(INPUT_DIR / "Simple Pdf.pdf"), mode="ocr")
+            parse_pdf(str(INPUT_DIR / "Simple Pdf.pdf"), config=AppConfig(), pdf_mode="ocr")

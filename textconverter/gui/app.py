@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import textconverter.logger as logger
 from textconverter.api import save_to_file
+from textconverter.options import ConvertOptions
 from textconverter.config import DEFAULT_CONTEXT_SIZE, AppConfig, load_config
 from textconverter.gui.file_dialog import ask_path
 
@@ -235,17 +236,16 @@ if st.button("Convert", type="primary", use_container_width=True):
     else:
         with st.spinner("Converting..."):
             try:
-                save_to_file(
-                    source, output,
+                options = ConvertOptions(
                     template=template,
                     image_handling=image_handling,
                     code_parsing=code_parsing,
                     extract_html=extract_html,
                     discard_links=discard_links,
                     site_cleanup=site_cleanup,
-                    config=_selected_config(),
                     pdf_mode=pdf_mode,
                 )
+                save_to_file(source, output, options, config=_selected_config())
                 st.success(f"Saved to: `{output}`")
             except Exception as exc:
                 st.error(f"Error: {exc}")

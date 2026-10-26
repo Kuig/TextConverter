@@ -35,10 +35,8 @@ class TestWalk(BaseConverterTest):
 
     def test_discard_removes_images_everywhere(self):
         """image_handling='discard' also drops images in table headers and inside links."""
-        md = textconverter.convert(
-            "| ![h](head.png) |\n|---|\n| [![b](body.png)](http://x.test) |\n",
-            to_format="markdown", from_format="markdown", image_handling="discard",
-        )
+        md = textconverter.convert_text(
+            "| ![h](head.png) |\n|---|\n| [![b](body.png)](http://x.test) |\n", "markdown", "markdown", textconverter.ConvertOptions(image_handling="discard",))
         self.assertNotIn(".png", md)
 
 

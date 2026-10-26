@@ -26,14 +26,16 @@ TextConverter/
 └── textconverter/                   ← Core package
     ├── __init__.py                  ← Package initializer, UTF-8 console setup
     ├── __main__.py                  ← CLI entry point (convert / mcp / gui subcommands)
-    ├── api.py                       ← Public API: convert(), save_to_file()
+    ├── api.py                       ← Public API: convert(), convert_text(), save_to_file()
     ├── ast.py                       ← Document AST node definitions
     ├── code_detector.py             ← Heuristic code block detection
     ├── config.py                    ← Configuration loading and provider setup helpers
+    ├── formats.py                   ← Registry of formats, image handling modes, PDF modes, templates
     ├── _net.py                      ← Outbound HTTP(S) helper; single point of TLS trust-store config
     ├── image_describer.py           ← AI-assisted image classification and description
     ├── logger.py                    ← Dual-backend logger (console / Streamlit)
     ├── mcp_tools.py                 ← MCP tool definitions
+    ├── options.py                   ← ConvertOptions dataclass (validated conversion options)
     ├── parsers/                     ← Format-specific parsers
     ├── renderers/                   ← Format-specific renderers
     ├── site_profiles/               ← Source-specific HTML cleanup (base.py, wikipedia.py)
@@ -56,7 +58,7 @@ Passes over the tree never probe node types for their children themselves: `walk
 
 ## Interfaces
 
-All four interfaces are thin wrappers around the same `convert()`/`save_to_file()` API in `api.py`:
+All four interfaces are thin wrappers around the same `convert()`/`convert_text()`/`save_to_file()` API in `api.py`, and take their choices (formats, modes, templates) from `formats.py`:
 
 - **CLI** (`__main__.py`): `argparse` subcommands (`convert`, `mcp`, `gui`).
 - **MCP server** (`mcp_tools.py`): FastMCP tools over stdio, for use from AI agents/IDEs.

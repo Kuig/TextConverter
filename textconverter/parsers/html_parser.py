@@ -578,6 +578,13 @@ class _ContentExtractor(HTMLParser):
 
 
 def extract_content(html: str, profiles: Sequence[tuple["SiteProfile", object]] = ()) -> str:
+    """Return the main content of an HTML page, without navigation and other chrome.
+
+    Args:
+        html: The page source.
+        profiles: Active site profiles with their settings; their
+            ``skip_subtree`` hooks drop site-specific chrome.
+    """
     ex = _ContentExtractor(profiles)
     ex.feed(html)
     return ex.get_html()
@@ -585,10 +592,19 @@ def extract_content(html: str, profiles: Sequence[tuple["SiteProfile", object]] 
 
 def parse_html(
     text: str,
-    extract: bool = False,
+    *,
+    extract_html: bool = False,
     profiles: Sequence[tuple["SiteProfile", object]] = (),
 ) -> Document:
-    if extract:
+    """Parse HTML text into an AST Document.
+
+    Args:
+        text: HTML source.
+        extract_html: Keep only the main content (see ``extract_content``).
+        profiles: Active site profiles with their settings; used with
+            ``extract_html``, then their ``clean_ast`` hooks edit the tree.
+    """
+    if extract_html:
         text = extract_content(text, profiles)
     parser = ASTHTMLParser()
     parser.feed(text)

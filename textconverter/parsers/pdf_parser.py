@@ -4,10 +4,10 @@ import shutil
 import tempfile
 from ..ast import Document, Image, walk
 from ..config import AppConfig
+from ..formats import PDF_MODES, check_choice
 from ..logger import log_action, log_warning
 from .markdown_parser import parse_markdown
 
-PDF_MODES = ("text", "raster")
 # GLM-OCR's reference pipeline renders pages at 200 DPI; more mostly costs time.
 RASTER_DPI = 200
 
@@ -30,34 +30,34 @@ def _import_pymupdf4llm():
 
 def parse_pdf(
     file_path: str,
+    *,
+    config: AppConfig,
+    pdf_mode: str = "text",
+    code_parsing: bool = False,
     output_dir: str | None = None,
     image_dir_name: str | None = None,
     write_images: bool = True,
-    code_parsing: bool = False,
-    mode: str = "text",
-    config: AppConfig | None = None,
 ) -> Document:
     """Parse a PDF into an AST Document.
 
     Args:
         file_path: PDF file path.
+        config: Application configuration (used by ``raster`` mode).
+        pdf_mode: ``"text"`` reads the text layer with pymupdf4llm; ``"raster"``
+            renders every page to an image and transcribes it with the AI
+            describer, for scans or PDFs whose text layer is unusable.
+        code_parsing: Enable heuristic code-block detection (``text`` mode only).
         output_dir: Base directory for extracted images (current directory if None).
         image_dir_name: Image subdirectory name inside ``output_dir``.
         write_images: Extract embedded images (``text`` mode only).
-        code_parsing: Enable heuristic code-block detection (``text`` mode only).
-        mode: ``"text"`` reads the text layer with pymupdf4llm; ``"raster"``
-            renders every page to an image and transcribes it with the AI
-            describer, for scans or PDFs whose text layer is unusable.
-        config: Application configuration for ``raster`` mode.
 
     Raises:
-        ValueError: If ``mode`` is not one of ``PDF_MODES``.
+        ValueError: If ``pdf_mode`` is not one of ``formats.PDF_MODES``.
         ImportError: If ``raster`` mode is requested without ``unified_ai_client``.
     """
-    if mode == "raster":
+    check_choice("pdf_mode", pdf_mode, PDF_MODES)
+    if pdf_mode == "raster":
         return _parse_raster(file_path, output_dir, image_dir_name, config)
-    if mode != "text":
-        raise ValueError(f"Unknown PDF mode '{mode}'; expected one of {', '.join(PDF_MODES)}.")
 
     pymupdf4llm = _import_pymupdf4llm()
 
@@ -100,7 +100,7 @@ def _parse_raster(
     file_path: str,
     output_dir: str | None,
     image_dir_name: str | None,
-    config: AppConfig | None,
+    config: AppConfig,
 ) -> Document:
     """Render each page to an image and let the AI describer transcribe the pages.
 
@@ -127,7 +127,7 @@ def _parse_raster(
                 page.get_pixmap(dpi=RASTER_DPI).save(path)
                 page_paths.append(path)
 
-        doc = transcribe_images(page_paths, config)
+        doc = transcribe_images(page_paths, config=config)
 
         keep_dir = os.path.join(output_dir or os.getcwd(), image_dir_name or "")
         for node in walk(doc):

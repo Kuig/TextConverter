@@ -47,16 +47,25 @@ def register_tools(mcp: object) -> None:
             Converted document as a string.
         """
         try:
-            from textconverter.api import convert
-            return convert(
-                source, to_format, from_format, template,
-                is_file, output_dir, image_dir_name, image_handling,
+            import os
+            from textconverter.api import convert, convert_text
+            from textconverter.options import ConvertOptions
+            options = ConvertOptions(
+                template=template,
+                image_handling=image_handling,
                 code_parsing=code_parsing,
                 extract_html=extract_html,
                 discard_links=discard_links,
                 site_cleanup=site_cleanup,
                 pdf_mode=pdf_mode,
             )
+            if is_file or source.startswith(("http://", "https://")) or os.path.isfile(source):
+                return convert(source, to_format, options, from_format=from_format,
+                               output_dir=output_dir, image_dir_name=image_dir_name)
+            if from_format is None:
+                raise ValueError("from_format must be specified when converting raw text.")
+            return convert_text(source, from_format, to_format, options,
+                                output_dir=output_dir, image_dir_name=image_dir_name)
         except Exception as exc:
             return f"Error: {exc}"
 
@@ -92,7 +101,16 @@ def register_tools(mcp: object) -> None:
         """
         try:
             from textconverter.api import save_to_file
-            save_to_file(source, output_path, template, image_handling, code_parsing=code_parsing, extract_html=extract_html, discard_links=discard_links, site_cleanup=site_cleanup, pdf_mode=pdf_mode)
+            from textconverter.options import ConvertOptions
+            save_to_file(source, output_path, ConvertOptions(
+                template=template,
+                image_handling=image_handling,
+                code_parsing=code_parsing,
+                extract_html=extract_html,
+                discard_links=discard_links,
+                site_cleanup=site_cleanup,
+                pdf_mode=pdf_mode,
+            ))
             return f"Successfully saved to {output_path}"
         except Exception as exc:
             return f"Error: {exc}"

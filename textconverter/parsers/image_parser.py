@@ -5,7 +5,7 @@ from ..config import AppConfig
 from ..logger import log_action
 
 
-def parse_image(source: str, config: AppConfig | None = None) -> Document:
+def parse_image(file_path: str, *, config: AppConfig) -> Document:
     """Parse an image file into a Document through the AI describer.
 
     The image is classified, then described or transcribed, and the answer is
@@ -13,15 +13,15 @@ def parse_image(source: str, config: AppConfig | None = None) -> Document:
     to the image.
 
     Args:
-        source: Image file path.
-        config: Application configuration; loaded from config.json when omitted.
+        file_path: Image file path.
+        config: Application configuration.
 
     Raises:
-        ValueError: If the file does not exist.
+        FileNotFoundError: If the file does not exist.
         ImportError: If ``unified_ai_client`` is not installed.
     """
     from ..image_describer import transcribe_images
-    if not os.path.exists(source):
-        raise ValueError(f"Image file not found: {source}")
-    log_action(f"Generating description for image {source}...")
-    return transcribe_images([source], config)
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Image file not found: {file_path}")
+    log_action(f"Generating description for image {file_path}...")
+    return transcribe_images([file_path], config=config)

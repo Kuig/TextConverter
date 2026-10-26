@@ -1,11 +1,18 @@
-"""Source-independent AST passes applied by api.convert().
+"""The public API shape (convert, convert_text, save_to_file, ConvertOptions) and
+the source-independent AST passes applied by api.convert().
 
 Usage: python -m unittest discover -s tests -p "test_api.py"
 """
 from __future__ import annotations
 
+import os
+import tempfile
+from pathlib import Path
+
 import textconverter
-from _support import BaseConverterTest, setUpModule, tearDownModule
+from textconverter import ConvertOptions
+from textconverter.formats import infer_input_format, infer_output_format
+from _support import BaseConverterTest, setUpModule, tearDownModule, INPUT_DIR
 
 
 class TestDiscardLinks(BaseConverterTest):
@@ -14,8 +21,73 @@ class TestDiscardLinks(BaseConverterTest):
         """--discard-links unwraps every link to its text, keeping a link-wrapped image."""
         src = ("[Modena](https://en.wikipedia.org/wiki/Modena) is a [city](http://x.test). "
                "[![alt](pic.jpg)](http://y.test)")
-        md = textconverter.convert(src, to_format="markdown", from_format="markdown",
-                                   discard_links=True)
+        md = textconverter.convert_text(src, "markdown", "markdown", ConvertOptions(discard_links=True))
         self.assertIn("Modena is a city.", md)
         self.assertNotIn("http", md)
         self.assertIn("![alt](pic.jpg)", md)
+
+
+class TestOptionsValidation(BaseConverterTest):
+
+    def test_unknown_option_values_fail_on_creation(self):
+        """A misspelled value is rejected before any work, not silently ignored."""
+        for kwargs in ({"template": "drak"}, {"image_handling": "embedd"}, {"pdf_mode": "ocr"}):
+            with self.subTest(**kwargs), self.assertRaises(ValueError):
+                ConvertOptions(**kwargs)
+
+    def test_template_aliases_are_accepted(self):
+        for name in ("plain", "light", "light-theme", "pretty", "dark", "dark-theme"):
+            ConvertOptions(template=name)
+
+    def test_unknown_formats_fail_before_parsing(self):
+        with self.assertRaises(ValueError):
+            textconverter.convert_text("# x", "markdown", "md")
+        with self.assertRaises(ValueError):
+            textconverter.convert_text("# x", "rst", "html")
+
+    def test_get_template_rejects_unknown_names(self):
+        from textconverter.renderers.templates import get_template
+        self.assertIn("<html", get_template("Dark-Theme"))
+        with self.assertRaises(ValueError):
+            get_template("drak")
+
+
+class TestTextAndFiles(BaseConverterTest):
+
+    def test_convert_text_never_reads_a_file(self):
+        """Text that happens to be an existing file name stays text."""
+        name = str(INPUT_DIR / "SampleMD.md")
+        md = textconverter.convert_text(name, "markdown", "markdown")
+        self.assertIn("SampleMD", md)
+        self.assertEqual(len(md.strip().splitlines()), 1, "the file content was read")
+
+    def test_binary_formats_need_a_file(self):
+        with self.assertRaisesRegex(ValueError, "needs a file"):
+            textconverter.convert_text("%PDF-1.7", "pdf", "markdown")
+
+    def test_convert_missing_file_raises(self):
+        with self.assertRaises(FileNotFoundError):
+            textconverter.convert("no/such/file.md", "html")
+
+    def test_txt_is_read_as_markdown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "notes.txt"
+            src.write_text("# Title\n\nSome *text*.", encoding="utf-8")
+            html = textconverter.convert(str(src), "html")
+        self.assertIn("<h1>Title</h1>", html)
+        self.assertIn("<i>text</i>", html)
+
+    def test_format_inference(self):
+        self.assertEqual(infer_input_format("a/B.TEX"), "latex")
+        self.assertEqual(infer_input_format("x.webp"), "image")
+        self.assertIsNone(infer_input_format("x.docx"))
+        self.assertEqual(infer_output_format("out.htm"), "html")
+        self.assertIsNone(infer_output_format("out.txt"))
+
+    def test_save_to_file_refuses_to_overwrite_the_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "a.md")
+            Path(src).write_text("# a", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "source file itself"):
+                textconverter.save_to_file(src, src)
+            self.assertEqual(Path(src).read_text(encoding="utf-8"), "# a")

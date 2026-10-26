@@ -29,9 +29,11 @@ class TestRemoteIntegration(BaseConverterTest):
         textconverter.save_to_file(
             "https://daginoilbonaparte.it/blog-di-cucina/ricetta-pane-impasta/",
             str(out_path),
-            image_handling="link",
-            code_parsing=True,
-            extract_html=False
+            textconverter.ConvertOptions(
+                image_handling="link",
+                code_parsing=True,
+                extract_html=False,
+            ),
         )
         self.assertTrue(out_path.exists(), "Output markdown file not created")
         self.assertTrue(img_dir.exists(), "Image directory was not created")
@@ -47,9 +49,11 @@ class TestRemoteIntegration(BaseConverterTest):
         textconverter.save_to_file(
             "https://daginoilbonaparte.it/blog-di-cucina/ricetta-pane-impasta/",
             str(out_path),
-            image_handling="discard",
-            code_parsing=True,
-            extract_html=True
+            textconverter.ConvertOptions(
+                image_handling="discard",
+                code_parsing=True,
+                extract_html=True,
+            ),
         )
         self.assertTrue(out_path.exists(), "Output markdown file not created")
         self.assertFalse(img_dir.exists(), "Image directory should NOT be created with discard")
@@ -61,10 +65,12 @@ class TestRemoteIntegration(BaseConverterTest):
         textconverter.save_to_file(
             "https://en.wikipedia.org/wiki/Swish_function",
             str(out_path),
-            image_handling="discard",
-            code_parsing=True,
-            extract_html=True,
-            template="light"
+            textconverter.ConvertOptions(
+                image_handling="discard",
+                code_parsing=True,
+                extract_html=True,
+                template="light",
+            ),
         )
         self.assertTrue(out_path.exists(), "Output HTML file not created")
         content = read(out_path)

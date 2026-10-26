@@ -1,6 +1,5 @@
 from __future__ import annotations
 import json
-import os
 from dataclasses import MISSING, fields
 
 from ..ast import NODE_TYPES, Document
@@ -52,16 +51,16 @@ def from_dict(d: object) -> object:
     return cls(**kwargs)
 
 
-def parse_json(source: str) -> Document:
-    """Parses a JSON string or file into an AST Document."""
-    if os.path.exists(source):
-        with open(source, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    else:
-        try:
-            data = json.loads(source)
-        except json.JSONDecodeError:
-            raise ValueError("Provided source is neither a valid JSON file path nor a valid JSON string.")
+def parse_json(text: str) -> Document:
+    """Parse the JSON form of an AST (as written by ``render_json``) into a Document.
+
+    Raises:
+        ValueError: If the text is not valid JSON or does not describe a Document.
+    """
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON: {exc}") from exc
 
     node = from_dict(data)
     if not isinstance(node, Document):

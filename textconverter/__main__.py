@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 from textconverter.api import save_to_file
+from textconverter.options import ConvertOptions
 from textconverter import logger
 from textconverter.logger import log_success, log_error
 
@@ -19,13 +20,15 @@ def cmd_convert(args: argparse.Namespace) -> None:
         save_to_file(
             args.source,
             args.output,
-            template=args.template,
-            image_handling=args.image_handling,
-            code_parsing=args.code_parsing,
-            extract_html=args.extract_html,
-            discard_links=args.discard_links,
-            site_cleanup=False if args.no_site_cleanup else None,
-            pdf_mode=args.pdf_mode,
+            ConvertOptions(
+                template=args.template,
+                image_handling=args.image_handling,
+                code_parsing=args.code_parsing,
+                extract_html=args.extract_html,
+                discard_links=args.discard_links,
+                site_cleanup=False if args.no_site_cleanup else None,
+                pdf_mode=args.pdf_mode,
+            ),
         )
         log_success(f"Saved to {args.output}")
     except Exception as exc:

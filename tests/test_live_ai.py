@@ -111,7 +111,7 @@ class TestLiveRasterPdf(LiveAiTest):
         from textconverter.parsers.pdf_parser import parse_pdf
         from textconverter.renderers.markdown_renderer import render_markdown
         from _support import OUTPUT_DIR
-        doc = parse_pdf(str(INPUT_DIR / "Simple Pdf.pdf"), str(OUTPUT_DIR), "live_raster_images",
-                        mode="raster", config=self.config)
+        doc = parse_pdf(str(INPUT_DIR / "Simple Pdf.pdf"), config=self.config, pdf_mode="raster",
+                        output_dir=str(OUTPUT_DIR), image_dir_name="live_raster_images")
         md = render_markdown(doc)
         self.assertIn("Lorem ipsum", md, md[:500])

@@ -86,11 +86,11 @@ class BaseConverterTest(unittest.TestCase):
     def convert_fixture(self, name: str, out_name: str, **opts) -> str:
         """Convert ``Input/<name>`` to ``Output/<out_name>`` and return the output text.
 
-        ``opts`` are passed to ``save_to_file``; the test fails if no file is written.
+        ``opts`` are ``ConvertOptions`` fields; the test fails if no file is written.
         """
-        from textconverter import save_to_file
+        from textconverter import ConvertOptions, save_to_file
         out_path = self._out(out_name)
-        save_to_file(str(INPUT_DIR / name), str(out_path), **opts)
+        save_to_file(str(INPUT_DIR / name), str(out_path), ConvertOptions(**opts))
         self.assertTrue(out_path.exists(), f"{out_name} was not written")
         return read(out_path)
 

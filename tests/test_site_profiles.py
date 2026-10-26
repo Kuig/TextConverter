@@ -26,7 +26,7 @@ class TestWikipediaCleanup(BaseConverterTest):
 
         if profiles is None:
             profiles = resolve_profiles(url, self.html, load_config().html)
-        return render_markdown(parse_html(self.html, extract=True, profiles=profiles))
+        return render_markdown(parse_html(self.html, extract_html=True, profiles=profiles))
 
     def test_profile_strips_chrome_keeps_content(self):
         """Wikipedia URL → edit links, navbox, banners, categories, [n] markers gone; prose/infobox/reflist kept."""
@@ -55,16 +55,14 @@ class TestWikipediaCleanup(BaseConverterTest):
 
     def test_fingerprint_activation_via_convert(self):
         """No URL: the <body class="mediawiki"> fingerprint still activates the profile."""
-        md = textconverter.convert(self.html, to_format="markdown",
-                                   from_format="html", extract_html=True)
+        md = textconverter.convert_text(self.html, "html", "markdown", textconverter.ConvertOptions(extract_html=True))
         self.assertNotIn("Navlink A", md)
         self.assertNotIn("[edit]", md)
         self.assertIn("## History", md)
 
     def test_site_cleanup_opt_out(self):
         """site_cleanup=False downgrades to generic extraction even on a Wikipedia page."""
-        md = textconverter.convert(self.html, to_format="markdown", from_format="html",
-                                   extract_html=True, site_cleanup=False)
+        md = textconverter.convert_text(self.html, "html", "markdown", textconverter.ConvertOptions(extract_html=True, site_cleanup=False))
         self.assertIn("Navlink A", md)
         self.assertIn("See also", md)
 

@@ -12,13 +12,7 @@ class TestMarkdownParser(BaseConverterTest):
 
     def test_md_to_html_structure(self):
         """SampleMD.md → HTML: headings, paragraphs, table, code, blockquote, list."""
-        in_path = INPUT_DIR / "SampleMD.md"
-        out_path = self._out("SampleMD.html")
-
-        textconverter.save_to_file(str(in_path), str(out_path))
-        self.assertTrue(out_path.exists())
-
-        content = read(out_path)
+        content = self.convert_fixture("SampleMD.md", "SampleMD.html")
         self.assertIn("<h1>", content, "Missing h1 heading")
         self.assertIn("<h2>", content, "Missing h2 heading")
         self.assertIn("<h3>", content, "Missing h3 heading")
@@ -41,13 +35,7 @@ class TestMarkdownParser(BaseConverterTest):
 
     def test_md_roundtrip(self):
         """SampleMD.md → MD: key structural elements survive the roundtrip."""
-        in_path = INPUT_DIR / "SampleMD.md"
-        out_path = self._out("SampleMD_out.md")
-
-        textconverter.save_to_file(str(in_path), str(out_path))
-        self.assertTrue(out_path.exists())
-
-        content = read(out_path)
+        content = self.convert_fixture("SampleMD.md", "SampleMD_out.md")
         self.assertIn("# Sample MD File", content, "Missing h1 title in roundtrip")
         self.assertIn("## 1. Title", content, "Missing h2 in roundtrip")
         # Table preserved
@@ -59,13 +47,7 @@ class TestMarkdownParser(BaseConverterTest):
 
     def test_code_block_fenced_and_unfenced(self):
         """CodeTest.md → HTML: fenced Python code detected, inline code preserved."""
-        in_path = INPUT_DIR / "CodeTest.md"
-        out_path = self._out("CodeTest.html")
-
-        textconverter.save_to_file(str(in_path), str(out_path), code_parsing=True)
-        self.assertTrue(out_path.exists())
-
-        content = read(out_path)
+        content = self.convert_fixture("CodeTest.md", "CodeTest.html", code_parsing=True)
         # Fenced block preserved
         self.assertIn("def fibonacci(n):", content, "Missing fibonacci function")
         self.assertIn("<pre>", content, "Missing pre tag for code block")
@@ -79,7 +61,7 @@ class TestMarkdownParser(BaseConverterTest):
             Una serie di <a href="http://example.com/codon">codoni</a> su una molecola di <a href="http://example.com/rna">RNA messaggero</a>.
         </div>
         """
-        result = textconverter.convert(html_content, to_format="markdown", from_format="html")
+        result = textconverter.convert_text(html_content, "html", "markdown")
         self.assertIn("[codoni](http://example.com/codon)", result)
         self.assertIn("[RNA messaggero](http://example.com/rna)", result)
 
@@ -91,19 +73,19 @@ class TestMarkdownParser(BaseConverterTest):
             "|---|---|---|\n"
             "| `file_paths` | `str \\| list[str] \\| None` | holds a `a|b` value |\n"
         )
-        ast = _json.loads(textconverter.convert(md, to_format="json", from_format="markdown"))
+        ast = _json.loads(textconverter.convert_text(md, "markdown", "json"))
         row = ast["children"][0]["rows"][0]
         self.assertEqual(len(row["cells"]), 3, "escaped/code-span pipes split the row into extra cells")
         type_cell = row["cells"][1]["children"]
         self.assertEqual([n["type"] for n in type_cell], ["CodeInline"])
         self.assertEqual(type_cell[0]["code"], "str | list[str] | None")
 
-        html = textconverter.convert(md, to_format="html", from_format="markdown")
+        html = textconverter.convert_text(md, "markdown", "html")
         self.assertIn("<td><code>str | list[str] | None</code></td>", html)
         self.assertNotIn("\\|", html)
 
         # MD round-trip: literal pipe re-emitted escaped and still parses to 3 cells.
-        md2 = textconverter.convert(md, to_format="markdown", from_format="markdown")
+        md2 = textconverter.convert_text(md, "markdown", "markdown")
         self.assertIn(r"`str \| list[str] \| None`", md2)
-        ast2 = _json.loads(textconverter.convert(md2, to_format="json", from_format="markdown"))
+        ast2 = _json.loads(textconverter.convert_text(md2, "markdown", "json"))
         self.assertEqual(len(ast2["children"][0]["rows"][0]["cells"]), 3)

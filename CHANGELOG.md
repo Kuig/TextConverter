@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The GUI exposes the provider's context size as a slider (4k to 256k tokens), saved to
   `config.json` with **Save as default**.
 
+- `convert_text()` converts a document given as text; `convert()` now takes only file paths and
+  URLs, so text that happens to name an existing file is no longer read from disk.
+- `ConvertOptions` groups the conversion options in one validated dataclass, and `formats.py`
+  declares the formats, image handling modes, PDF modes and template names in one place.
+- `save_to_file()` accepts `from_format`, for URLs or files whose extension does not tell the
+  format.
+- `.txt` files are read as Markdown.
 - `Equation` nodes carry an optional `env` (e.g. `align`, `gather*`), so a display environment
   can be reproduced instead of being forced into `equation`.
 
@@ -19,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The committed `config.json` sets the Ollama `context_size` to 8192: at 4096, a page
   transcribed in PDF raster mode could fill the window by itself and come out truncated.
+- **Breaking:** `convert(source, to_format, options=None, *, from_format, output_dir,
+  image_dir_name, config)` and `save_to_file(source, output_path, options=None, *, from_format,
+  config)` take a `ConvertOptions` instead of one keyword per option; `is_file` is gone. The
+  parsers take keyword-only options with uniform names (`parse_html(text, extract_html=...)`,
+  `parse_pdf(path, config=..., pdf_mode=...)`, `parse_image(path, config=...)`,
+  `parse_json(text)`), `render_latex(doc)` no longer takes `image_handling`, and `config` is a
+  required keyword below the API.
+- An unknown template, image handling mode, PDF mode or format raises `ValueError` before any
+  work starts, instead of falling back silently (template, image handling) or failing after
+  the AI calls (output format).
+- `save_to_file()` refuses an output path that is the source file itself.
 - JSON input is checked against an explicit registry of node types: an unknown or missing
   `type`, a missing required field or a child list that is not a list raises `ValueError`
   instead of silently dropping the node from the output.

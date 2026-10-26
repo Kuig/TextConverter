@@ -3,7 +3,7 @@ import json
 import os
 from textconverter.logger import log_action, log_info, log_success, log_warning
 from .ast import Document, Equation, Image, Node, Paragraph, child_lists, walk
-from .config import AppConfig, load_config
+from .config import AppConfig
 from .parsers.transcription_parser import equation_code, normalize_transcription, parse_transcription
 
 # Categories that ``auto_latex`` transcribes; every other image keeps a plain reference.
@@ -125,7 +125,7 @@ def _description_prompt(img: Image, config: AppConfig) -> str:
     return prompt
 
 
-def describe_images(images: list[Image], base_dir: str, config: AppConfig, latex_auto: bool = False) -> None:
+def describe_images(images: list[Image], base_dir: str, *, config: AppConfig, latex_auto: bool = False) -> None:
     """Classify, describe and transcribe images in three phases, one model per phase.
 
     Every image is classified first; then the description model describes the
@@ -215,7 +215,7 @@ def _apply_latex_auto(node: Node) -> None:
                 lst[i] = Equation(code=code, inline=False)
 
 
-def process_images(doc: Node, base_dir: str, latex_auto: bool = False, config: AppConfig | None = None) -> None:
+def process_images(doc: Node, base_dir: str, *, config: AppConfig, latex_auto: bool = False) -> None:
     """Classify and describe all Image nodes of a document AST in place.
 
     Without ``unified_ai_client``, ``latex_auto`` (an implicit mode chosen by
@@ -225,8 +225,8 @@ def process_images(doc: Node, base_dir: str, latex_auto: bool = False, config: A
     Args:
         doc: Root AST document node.
         base_dir: Base directory for resolving relative image paths.
+        config: Application configuration.
         latex_auto: Transcribe only text/table/formula images and inline them.
-        config: Application configuration; loaded from config.json when omitted.
     """
     images = [node for node in walk(doc) if isinstance(node, Image)]
     if not images:
@@ -237,20 +237,19 @@ def process_images(doc: Node, base_dir: str, latex_auto: bool = False, config: A
         log_warning("unified_ai_client is not installed: images are kept as plain references.")
         return
 
-    config = config or load_config()
     ai = config.ai
     log_info(
         f"Starting description of {len(images)} images via {ai.provider} "
         f"(Class: {ai.classification_model}, Desc: {ai.description_model}, "
         f"OCR: {ai.ocr_model or ai.description_model})..."
     )
-    describe_images(images, base_dir, config, latex_auto)
+    describe_images(images, base_dir, config=config, latex_auto=latex_auto)
     if latex_auto:
         _apply_latex_auto(doc)
     log_success("Image description completed.")
 
 
-def transcribe_images(paths: list[str], config: AppConfig | None = None) -> Document:
+def transcribe_images(paths: list[str], *, config: AppConfig) -> Document:
     """Turn image files into a Document, one block of content per image, in order.
 
     Each image is classified, then described or transcribed (see
@@ -259,16 +258,15 @@ def transcribe_images(paths: list[str], config: AppConfig | None = None) -> Docu
 
     Args:
         paths: Image file paths.
-        config: Application configuration; loaded from config.json when omitted.
+        config: Application configuration.
 
     Raises:
         ImportError: If ``unified_ai_client`` is not installed.
     """
     if not ai_client_available():
         raise ImportError(_MISSING_CLIENT)
-    config = config or load_config()
     images = [Image(src=path, alt=os.path.basename(path)) for path in paths]
-    describe_images(images, "", config)
+    describe_images(images, "", config=config)
 
     doc = Document()
     for img in images:

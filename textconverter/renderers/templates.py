@@ -136,10 +136,16 @@ PRETTY_DARK_TEMPLATE = PRETTY_LIGHT_TEMPLATE.replace(
     '<body>', '<body style="background-color: #0d1117;">'
 )
 
+_TEMPLATES = {"plain": PLAIN_TEMPLATE, "light": PRETTY_LIGHT_TEMPLATE, "dark": PRETTY_DARK_TEMPLATE}
+
+
 def get_template(name: str) -> str:
-    name_lower = name.lower() if name else ""
-    if name_lower in ('light-theme', 'pretty', 'light'):
-        return PRETTY_LIGHT_TEMPLATE
-    elif name_lower in ('dark-theme', 'dark'):
-        return PRETTY_DARK_TEMPLATE
-    return PLAIN_TEMPLATE
+    """Return the HTML page template for a name in ``formats.TEMPLATES`` (case-insensitive).
+
+    Raises:
+        ValueError: If the name is unknown.
+    """
+    from ..formats import TEMPLATE_ALIASES, TEMPLATES, check_choice
+    key = (name or "").lower()
+    check_choice("template", key, TEMPLATES)
+    return _TEMPLATES[TEMPLATE_ALIASES[key]]

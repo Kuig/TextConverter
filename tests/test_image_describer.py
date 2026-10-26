@@ -118,7 +118,7 @@ class TestTranscribeImages(BaseConverterTest):
         from textconverter.image_describer import transcribe_images
         with patch("unified_ai_client.call_ai", side_effect=fake), \
              patch("unified_ai_client.preload_model"):
-            return transcribe_images([FOTO, FOTO, FOTO], _config())
+            return transcribe_images([FOTO, FOTO, FOTO], config=_config())
 
     def test_answers_become_ast_nodes_in_order(self):
         """HTML table → Table, formula → Equation, failed call → image reference."""

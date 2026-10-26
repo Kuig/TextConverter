@@ -138,20 +138,19 @@ The sidebar holds the conversion options and the AI selection: a provider menu (
 ### Library
 
 ```python
-from textconverter.api import convert, save_to_file
+from textconverter import ConvertOptions, convert, convert_text, save_to_file
 
 # Convert a file locally
-result = convert("DocsInput/document.pdf", to_format="markdown", is_file=True)
+result = convert("DocsInput/document.pdf", "markdown")
+
+# Convert text you already have
+html = convert_text("# Title\n\nSome *text*.", "markdown", "html")
 
 # Convert directly from a URL and save locally, with HTML main content extraction
-save_to_file(
-    "https://example.com", 
-    "DocsOutput/example.md", 
-    extract_html=True
-)
+save_to_file("https://example.com", "DocsOutput/example.md", ConvertOptions(extract_html=True))
 ```
 
-Every parameter of `convert()` and `save_to_file()` is documented in **[docs/api.md](docs/api.md)**.
+Every parameter of `convert()`, `convert_text()`, `save_to_file()` and `ConvertOptions` is documented in **[docs/api.md](docs/api.md)**.
 
 ### Windows Context Menu Integration
 

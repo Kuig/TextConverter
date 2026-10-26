@@ -2,7 +2,7 @@ from __future__ import annotations
 import re
 from ..ast import Node, Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation, walk
 
-def render_latex(doc: Document, image_handling: str = "auto") -> str:
+def render_latex(doc: Document) -> str:
     """Renders an AST Document to a compiling LaTeX document."""
     has_image = _has_type_in_doc(doc, Image)
     has_link = _has_type_in_doc(doc, Link)
@@ -14,7 +14,7 @@ def render_latex(doc: Document, image_handling: str = "auto") -> str:
     
     body = []
     for child in doc.children:
-        rendered = _render_node(child, image_handling)
+        rendered = _render_node(child)
         if rendered:
             body.append(rendered)
             
@@ -34,14 +34,14 @@ def _escape_latex(text: str) -> str:
     }
     return "".join(chars.get(c, c) for c in text)
 
-def _render_node(node: Node, image_handling: str = "auto") -> str:
+def _render_node(node: Node) -> str:
     if isinstance(node, Heading):
         cmd = ["section", "subsection", "subsubsection", "paragraph", "subparagraph"][min(node.level-1, 4)]
-        content = ''.join(_render_node(c, image_handling) for c in node.children)
+        content = ''.join(_render_node(c) for c in node.children)
         return f"\\{cmd}{{{content}}}"
         
     elif isinstance(node, Paragraph):
-        return ''.join(_render_node(c, image_handling) for c in node.children).strip()
+        return ''.join(_render_node(c) for c in node.children).strip()
         
     elif isinstance(node, CodeBlock):
         # Fallback to verbatim for 0-dep plain latex
@@ -51,7 +51,7 @@ def _render_node(node: Node, image_handling: str = "auto") -> str:
         env = "enumerate" if node.ordered else "itemize"
         items = []
         for item in node.items:
-            content = ' \n    '.join(_render_node(c, image_handling) for c in item.children).strip()
+            content = ' \n    '.join(_render_node(c) for c in item.children).strip()
             items.append(f"    \\item {content}")
         items_str = '\n'.join(items)
         return f"\\begin{{{env}}}\n{items_str}\n\\end{{{env}}}"
@@ -64,12 +64,12 @@ def _render_node(node: Node, image_handling: str = "auto") -> str:
         lines = [f"\\begin{{tabular}}{{{col_spec}}}", "\\hline"]
         
         if node.headers:
-            headers = [_render_node(h, image_handling) for h in node.headers]
+            headers = [_render_node(h) for h in node.headers]
             lines.append(" & ".join(headers) + " \\\\")
             lines.append("\\hline")
             
         for row in node.rows:
-            cells = [_render_node(c, image_handling) for c in row.cells]
+            cells = [_render_node(c) for c in row.cells]
             while len(cells) < num_cols: cells.append("")
             if num_cols and len(cells) > num_cols: cells = cells[:num_cols]
             lines.append(" & ".join(cells) + " \\\\")
@@ -79,7 +79,7 @@ def _render_node(node: Node, image_handling: str = "auto") -> str:
         return '\n'.join(lines)
 
     elif isinstance(node, TableCell):
-        rendered = ''.join(_render_node(c, image_handling) for c in node.children)
+        rendered = ''.join(_render_node(c) for c in node.children)
         # A cell must stay on a single tabular row: neutralise hard breaks
         # (rendered LineBreak = "\\") and stray newlines.
         rendered = rendered.replace('\\\\', ' ').replace('\r', ' ').replace('\n', ' ')
@@ -93,14 +93,14 @@ def _render_node(node: Node, image_handling: str = "auto") -> str:
         
     elif isinstance(node, Link):
         # using hyperref
-        content_str = ''.join(_render_node(c, image_handling) for c in node.content)
+        content_str = ''.join(_render_node(c) for c in node.content)
         url = _escape_latex(node.url)
         return f"\\href{{{url}}}{{{content_str}}}"
         
     elif isinstance(node, Image):
         if hasattr(node, 'description') and node.description:
             desc = _escape_latex(node.description)
-            if not getattr(node, 'render_metadata', True) or image_handling == "auto_latex":
+            if not getattr(node, 'render_metadata', True):
                 return desc
             src = _escape_latex(node.src)
             cat_str = f" - Class: {_escape_latex(node.category)}" if getattr(node, 'category', None) else ""
@@ -114,7 +114,7 @@ def _render_node(node: Node, image_handling: str = "auto") -> str:
         return "\\\\"
         
     elif isinstance(node, BlockQuote):
-        content = '\n'.join(_render_node(c, image_handling) for c in node.children)
+        content = '\n'.join(_render_node(c) for c in node.children)
         if node.alert_type:
             return f"\\begin{{quote}}\n\\textbf{{{_escape_latex(node.alert_type)}}}\\\\\n{content}\n\\end{{quote}}"
         else:
@@ -132,10 +132,10 @@ def _render_node(node: Node, image_handling: str = "auto") -> str:
     else:
         from ..ast import Abstract, Footnote, Citation, Reference, Label
         if isinstance(node, Abstract):
-            content = '\n'.join(_render_node(c, image_handling) for c in node.children)
+            content = '\n'.join(_render_node(c) for c in node.children)
             return f"\\begin{{abstract}}\n{content}\n\\end{{abstract}}"
         elif isinstance(node, Footnote):
-            return f"\\footnote{{{''.join(_render_node(c, image_handling) for c in node.content)}}}"
+            return f"\\footnote{{{''.join(_render_node(c) for c in node.content)}}}"
         elif isinstance(node, Citation):
             return f"\\{node.style}{{{','.join(node.keys)}}}"
         elif isinstance(node, Reference):

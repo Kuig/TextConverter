@@ -52,8 +52,8 @@ class TestPdfOutput(BaseConverterTest):
     def test_browser_engine(self):
         """With a browser, the PDF holds the text and the embedded image."""
         out = self._out("browser.pdf")
-        html = textconverter.convert(self._source(), to_format="html", template="light",
-                                     is_file=True, image_handling="embed")
+        html = textconverter.convert(self._source(), "html", textconverter.ConvertOptions(
+            template="light", image_handling="embed"))
         render_pdf(html, str(out), engine="browser")
         with pymupdf.open(out) as pdf:
             text = "".join(page.get_text() for page in pdf)
