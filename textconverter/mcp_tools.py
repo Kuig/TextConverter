@@ -22,6 +22,7 @@ def register_tools(mcp: object) -> None:
         extract_html: bool = False,
         discard_links: bool = False,
         site_cleanup: bool | None = None,
+        pdf_mode: str = "text",
     ) -> str:
         """Convert text or a file to a target document format.
 
@@ -39,6 +40,8 @@ def register_tools(mcp: object) -> None:
             discard_links: If True, replaces every hyperlink with its visible text.
             site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during
                 extract_html. None uses the config default; False disables it.
+            pdf_mode: How to read PDF input: 'text' (its text layer) or 'raster'
+                (every page rendered and transcribed by the AI describer).
 
         Returns:
             Converted document as a string.
@@ -52,6 +55,7 @@ def register_tools(mcp: object) -> None:
                 extract_html=extract_html,
                 discard_links=discard_links,
                 site_cleanup=site_cleanup,
+                pdf_mode=pdf_mode,
             )
         except Exception as exc:
             return f"Error: {exc}"
@@ -66,6 +70,7 @@ def register_tools(mcp: object) -> None:
         extract_html: bool = False,
         discard_links: bool = False,
         site_cleanup: bool | None = None,
+        pdf_mode: str = "text",
     ) -> str:
         """Convert a document and save it to a file.
 
@@ -79,13 +84,15 @@ def register_tools(mcp: object) -> None:
             discard_links: If True, replaces every hyperlink with its visible text.
             site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during
                 extract_html. None uses the config default; False disables it.
+            pdf_mode: How to read PDF input: 'text' (its text layer) or 'raster'
+                (every page rendered and transcribed by the AI describer).
 
         Returns:
             Confirmation message with the output path.
         """
         try:
             from textconverter.api import save_to_file
-            save_to_file(source, output_path, template, image_handling, code_parsing=code_parsing, extract_html=extract_html, discard_links=discard_links, site_cleanup=site_cleanup)
+            save_to_file(source, output_path, template, image_handling, code_parsing=code_parsing, extract_html=extract_html, discard_links=discard_links, site_cleanup=site_cleanup, pdf_mode=pdf_mode)
             return f"Successfully saved to {output_path}"
         except Exception as exc:
             return f"Error: {exc}"

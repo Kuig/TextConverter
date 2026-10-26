@@ -206,7 +206,7 @@ def _download_remote_images(doc: Document, output_dir: str | None, image_dir_nam
 
 
 
-def convert(source: str, to_format: str, from_format: str | None = None, template: str = "plain", is_file: bool = False, output_dir: str | None = None, image_dir_name: str | None = None, image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False, discard_links: bool = False, site_cleanup: bool | None = None, config: AppConfig | None = None) -> str:
+def convert(source: str, to_format: str, from_format: str | None = None, template: str = "plain", is_file: bool = False, output_dir: str | None = None, image_dir_name: str | None = None, image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False, discard_links: bool = False, site_cleanup: bool | None = None, config: AppConfig | None = None, pdf_mode: str = "text") -> str:
     """
     Convert text or file to a specific format.
     If is_file is True, source is presumed to be a file path.
@@ -219,6 +219,8 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
     ``discard_links`` replaces every hyperlink with its visible text.
     ``config`` overrides the configuration loaded from config.json (e.g. the
     AI provider and models chosen in the GUI).
+    ``pdf_mode`` selects how PDF input is read: ``"text"`` (the text layer) or
+    ``"raster"`` (every page rendered and transcribed by the AI describer).
     """
     config = config or load_config()
     is_url = source.startswith(("http://", "https://"))
@@ -293,7 +295,7 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
         if from_format == 'pdf':
             if not is_file and not pathlib.Path(source).exists():
                 raise ValueError("PDF parsing requires a file path.")
-            doc = parse_pdf(source, output_dir, image_dir_name, write_images=(image_handling != 'discard'), code_parsing=code_parsing)
+            doc = parse_pdf(source, output_dir, image_dir_name, write_images=(image_handling != 'discard'), code_parsing=code_parsing, mode=pdf_mode, config=config)
         elif from_format == 'image':
             if not is_file and not pathlib.Path(source).exists():
                 raise ValueError("Image parsing requires a file path.")
@@ -397,7 +399,7 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
                 from .logger import log_warning
                 log_warning(f"Could not remove temporary file {temp_file_path}: {exc}")
 
-def save_to_file(source: str, output_path: str, template: str = "plain", image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False, discard_links: bool = False, site_cleanup: bool | None = None, config: AppConfig | None = None) -> None:
+def save_to_file(source: str, output_path: str, template: str = "plain", image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False, discard_links: bool = False, site_cleanup: bool | None = None, config: AppConfig | None = None, pdf_mode: str = "text") -> None:
     """
     Convert and save directly to file, inferring to_format and from_format.
     """
@@ -410,6 +412,6 @@ def save_to_file(source: str, output_path: str, template: str = "plain", image_h
     else:
         raise ValueError("Could not infer output format from extension.")
 
-    result = convert(source, to_format=to_format, template=template, is_file=True, output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images", image_handling=image_handling, code_parsing=code_parsing, extract_html=extract_html, discard_links=discard_links, site_cleanup=site_cleanup, config=config)
+    result = convert(source, to_format=to_format, template=template, is_file=True, output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images", image_handling=image_handling, code_parsing=code_parsing, extract_html=extract_html, discard_links=discard_links, site_cleanup=site_cleanup, config=config, pdf_mode=pdf_mode)
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(result)

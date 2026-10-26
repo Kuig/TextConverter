@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   task prompts (`ai.ocr_prompts`), while the other categories are still described by the
   description model. HTML tables in OCR answers become regular tables.
 - `convert()` and `save_to_file()` take an optional `config` that overrides `config.json`.
+- **PDF raster mode.** `--pdf-mode raster` (API and MCP: `pdf_mode="raster"`) renders every
+  page and sends it through the AI image pipeline (classification, then OCR or description),
+  for scanned PDFs or PDFs with an unusable text layer. A page that cannot be transcribed is
+  kept as an image.
 - Opt-in live tests against the configured AI provider (`TEXTCONVERTER_LIVE_AI=1`).
 
 ### Changed
@@ -53,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The `--code-parsing` help text described the detection as AI-assisted; it is heuristic.
+- PDF input no longer prints the `pymupdf_layout` recommendation on stdout, which could also
+  corrupt the MCP protocol stream.
 - LaTeX output omitted `\usepackage{graphicx}` (or `hyperref`) when the only image or link sat
   inside a link or a table header.
 - PDF input left the extraction folder prefix on image paths found in table headers.

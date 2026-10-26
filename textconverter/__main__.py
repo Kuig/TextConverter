@@ -25,6 +25,7 @@ def cmd_convert(args: argparse.Namespace) -> None:
             extract_html=args.extract_html,
             discard_links=args.discard_links,
             site_cleanup=False if args.no_site_cleanup else None,
+            pdf_mode=args.pdf_mode,
         )
         log_success(f"Saved to {args.output}")
     except Exception as exc:
@@ -83,6 +84,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="auto",
         choices=["auto", "describe", "embed", "link", "discard"],
         help="Image handling strategy.",
+    )
+    p_convert.add_argument(
+        "--pdf-mode",
+        default="text",
+        choices=["text", "raster"],
+        help="How to read PDF input: its text layer, or every page rendered and transcribed by AI.",
     )
     p_convert.add_argument("--code-parsing", action="store_true", help="Enable heuristic code block detection.")
     p_convert.add_argument("--extract-html", action="store_true", help="Filter noise and extract main content from HTML.")

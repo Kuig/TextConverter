@@ -102,3 +102,16 @@ class TestLivePhases(LiveAiTest):
         self.assertEqual(len(preloaded), len(set(preloaded)), preloaded)
         summary = {img.src: (img.category, img.description) for img in images}
         self.assertTrue(all(img.description for img in images), summary)
+
+
+class TestLiveRasterPdf(LiveAiTest):
+
+    def test_single_page_pdf_is_transcribed(self):
+        """Simple Pdf.pdf (one page) in raster mode: the page text comes back."""
+        from textconverter.parsers.pdf_parser import parse_pdf
+        from textconverter.renderers.markdown_renderer import render_markdown
+        from _support import OUTPUT_DIR
+        doc = parse_pdf(str(INPUT_DIR / "Simple Pdf.pdf"), str(OUTPUT_DIR), "live_raster_images",
+                        mode="raster", config=self.config)
+        md = render_markdown(doc)
+        self.assertIn("Lorem ipsum", md, md[:500])

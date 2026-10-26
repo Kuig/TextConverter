@@ -104,6 +104,9 @@ textconverter convert https://example.com DocsOutput/example.md --extract-html
 textconverter convert https://en.wikipedia.org/wiki/Modena DocsOutput/modena.md --extract-html
 #   ...add --no-site-cleanup to fall back to generic extraction, or --discard-links to drop hyperlinks
 
+# Scanned PDF: render every page and transcribe it with AI (classification, then OCR or description)
+textconverter convert DocsInput/scan.pdf DocsOutput/scan.md --pdf-mode raster
+
 # Convert with AI image description
 textconverter convert DocsInput/document.pdf DocsOutput/document.md --image-handling describe
 
@@ -160,6 +163,7 @@ def convert(
     discard_links: bool = False,
     site_cleanup: bool | None = None,
     config: AppConfig | None = None,
+    pdf_mode: str = "text",
 ) -> str:
     """Convert text or a file to a specific format and return the result as a string."""
 ```
@@ -175,6 +179,7 @@ def convert(
 - `discard_links`: Replace every hyperlink with its visible text (any source format).
 - `site_cleanup`: Override for site-specific HTML cleanup during `extract_html`. `None` uses the `html.site_cleanup` config default; `False` disables it for this call.
 - `config`: A `textconverter.config.AppConfig` to use instead of `config.json` (e.g. `load_config()` with the AI provider or models changed).
+- `pdf_mode`: How PDF input is read. `"text"` (default) uses the text layer; `"raster"` renders every page at 200 DPI and sends it through the AI image pipeline (each page is classified, then transcribed by the OCR model or described), for scans or PDFs whose text layer is unusable. In raster mode `image_handling` only applies to pages that could not be transcribed, which are kept as images.
 
 ```python
 def save_to_file(
@@ -187,6 +192,7 @@ def save_to_file(
     discard_links: bool = False,
     site_cleanup: bool | None = None,
     config: AppConfig | None = None,
+    pdf_mode: str = "text",
 ) -> None:
     """Convert and write the result directly to output_path (format inferred from its extension)."""
 ```
