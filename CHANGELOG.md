@@ -83,6 +83,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Image descriptions (`describe`) are parsed like transcriptions in every output: in HTML and
   LaTeX a described table or formula used to be printed as escaped Markdown.
 - An AI answer with no text is reported and skipped instead of raising `AttributeError`.
+- Tables are padded to their widest row in every output and never cut: LaTeX sized a table on
+  its first row and dropped cells beyond it, and Markdown dropped cells beyond the header.
+- LaTeX output compiles in more cases: the preamble loads `amsmath`/`amssymb` for equations and
+  `natbib` for `\citet`/`\citep`; a multi-line or aligned formula goes into `aligned` (or its
+  original `align`, `gather`, ... environment) instead of a bare `equation`; a line break at the
+  start or end of a paragraph is dropped; `~` in a link URL is no longer turned into
+  `\textasciitilde{}`.
+- HTML output renders `javascript:`, `vbscript:` and `data:` links as `#`.
+- Strikethrough text is rendered in every format (`~~x~~`, `<s>`, `\sout`).
 - Without a `config.json`, changing a setting in the GUI (e.g. the context size) no longer
   changes the built-in defaults for every later configuration in the same process.
 - A `config.json` section that is not a JSON object (e.g. `"wikipedia": [...]`) is reported

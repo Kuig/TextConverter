@@ -1,27 +1,42 @@
 from __future__ import annotations
 import re
-from ..ast import Node, Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation, walk
+from ..ast import (
+    Abstract, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote, Heading,
+    HorizontalRule, Image, Label, LineBreak, Link, ListBlock, Node, Paragraph, Reference, Table,
+    TableCell, Text, walk,
+)
+from ._common import latex_reference_macro, table_grid
+
+# A line break at the start or end of a paragraph is a LaTeX error ("There's no line here to end").
+_EDGE_BREAKS = re.compile(r'^(?:\s*\\\\)+\s*|\s*(?:\\\\\s*)+$')
+
 
 def render_latex(doc: Document) -> str:
-    """Renders an AST Document to a compiling LaTeX document."""
-    has_image = _has_type_in_doc(doc, Image)
-    has_link = _has_type_in_doc(doc, Link)
-    
-    preamble = "\\documentclass{article}\n\\usepackage[utf8]{inputenc}\n"
-    if has_image: preamble += "\\usepackage{graphicx}\n"
-    if has_link: preamble += "\\usepackage{hyperref}\n"
-    preamble += "\\begin{document}\n\n"
-    
-    body = []
-    for child in doc.children:
-        rendered = _render_node(child)
-        if rendered:
-            body.append(rendered)
-            
+    """Renders an AST Document to a compiling LaTeX document.
+
+    The preamble loads only the packages the document needs: ``graphicx``
+    (images), ``hyperref`` (links), ``amsmath``/``amssymb`` (equations),
+    ``natbib`` (``\\citet``/``\\citep``) and ``ulem`` (strikethrough).
+    """
+    nodes = list(walk(doc))
+    packages = ["\\usepackage[utf8]{inputenc}"]
+    if any(isinstance(n, Image) for n in nodes):
+        packages.append("\\usepackage{graphicx}")
+    if any(isinstance(n, Link) for n in nodes):
+        packages.append("\\usepackage{hyperref}")
+    if any(isinstance(n, Equation) for n in nodes):
+        packages += ["\\usepackage{amsmath}", "\\usepackage{amssymb}"]
+    if any(isinstance(n, Citation) and n.style in ("citet", "citep") for n in nodes):
+        packages.append("\\usepackage{natbib}")
+    if any(isinstance(n, Text) and n.strikethrough for n in nodes):
+        # normalem keeps \emph as italics instead of underlining
+        packages.append("\\usepackage[normalem]{ulem}")
+
+    preamble = "\\documentclass{article}\n" + "".join(f"{p}\n" for p in packages) + "\\begin{document}\n\n"
+
+    body = [r for r in (_render_node(child) for child in doc.children) if r]
     return preamble + '\n\n'.join(body) + "\n\n\\end{document}\n"
 
-def _has_type_in_doc(doc: Document, cls: type) -> bool:
-    return any(isinstance(node, cls) for node in walk(doc))
 
 def _escape_latex(text: str) -> str:
     # Convert Unicode typographic quotes back to LaTeX notation
@@ -34,106 +49,121 @@ def _escape_latex(text: str) -> str:
     }
     return "".join(chars.get(c, c) for c in text)
 
+
+def _escape_url(url: str) -> str:
+    """Escape a URL for ``\\href``.
+
+    ``~`` stays literal (hyperref reads it as is; ``\\textasciitilde{}`` broke
+    the link), characters that only have a text-mode command (backslash,
+    braces, caret) are percent-encoded, and the rest is escaped as in text so
+    the link also survives inside a table cell or a section title.
+    """
+    for char, code in (('\\', '%5C'), ('{', '%7B'), ('}', '%7D'), ('^', '%5E')):
+        url = url.replace(char, code)
+    return _escape_latex(url.replace('~', '\x00')).replace('\x00', '~')
+
+
 def _render_node(node: Node) -> str:
-    if isinstance(node, Heading):
-        cmd = ["section", "subsection", "subsubsection", "paragraph", "subparagraph"][min(node.level-1, 4)]
-        content = ''.join(_render_node(c) for c in node.children)
-        return f"\\{cmd}{{{content}}}"
-        
-    elif isinstance(node, Paragraph):
-        return ''.join(_render_node(c) for c in node.children).strip()
-        
-    elif isinstance(node, CodeBlock):
-        # Fallback to verbatim for 0-dep plain latex
-        return f"\\begin{{verbatim}}\n{node.code}\n\\end{{verbatim}}"
-        
-    elif isinstance(node, ListBlock):
-        env = "enumerate" if node.ordered else "itemize"
-        items = []
-        for item in node.items:
-            content = ' \n    '.join(_render_node(c) for c in item.children).strip()
-            items.append(f"    \\item {content}")
-        items_str = '\n'.join(items)
-        return f"\\begin{{{env}}}\n{items_str}\n\\end{{{env}}}"
-        
-    elif isinstance(node, Table):
-        if not node.headers and not node.rows: return ""
-        num_cols = len(node.headers) if node.headers else (len(node.rows[0].cells) if node.rows else 0)
-        col_spec = "|" + "|".join(["c"] * num_cols) + "|" if num_cols else "c"
-        
-        lines = [f"\\begin{{tabular}}{{{col_spec}}}", "\\hline"]
-        
-        if node.headers:
-            headers = [_render_node(h) for h in node.headers]
-            lines.append(" & ".join(headers) + " \\\\")
-            lines.append("\\hline")
-            
-        for row in node.rows:
-            cells = [_render_node(c) for c in row.cells]
-            while len(cells) < num_cols: cells.append("")
-            if num_cols and len(cells) > num_cols: cells = cells[:num_cols]
-            lines.append(" & ".join(cells) + " \\\\")
-            lines.append("\\hline")
+    render = _RENDERERS.get(type(node))
+    return render(node) if render else ""
 
-        lines.append("\\end{tabular}")
-        return '\n'.join(lines)
 
-    elif isinstance(node, TableCell):
-        rendered = ''.join(_render_node(c) for c in node.children)
-        # A cell must stay on a single tabular row: neutralise hard breaks
-        # (rendered LineBreak = "\\") and stray newlines.
-        rendered = rendered.replace('\\\\', ' ').replace('\r', ' ').replace('\n', ' ')
-        return re.sub(r'\s{2,}', ' ', rendered).strip()
-        
-    elif isinstance(node, Text):
-        content = _escape_latex(node.content)
-        if node.italic: content = f"\\textit{{{content}}}"
-        if node.bold: content = f"\\textbf{{{content}}}"
-        return content
-        
-    elif isinstance(node, Link):
-        # using hyperref
-        content_str = ''.join(_render_node(c) for c in node.content)
-        url = _escape_latex(node.url)
-        return f"\\href{{{url}}}{{{content_str}}}"
-        
-    elif isinstance(node, Image):
-        return f"\\includegraphics{{{node.src}}}"
-        
-    elif isinstance(node, CodeInline):
-        return f"\\texttt{{{_escape_latex(node.code)}}}"
-        
-    elif isinstance(node, LineBreak):
-        return "\\\\"
-        
-    elif isinstance(node, BlockQuote):
-        content = '\n'.join(_render_node(c) for c in node.children)
-        if node.alert_type:
-            return f"\\begin{{quote}}\n\\textbf{{{_escape_latex(node.alert_type)}}}\\\\\n{content}\n\\end{{quote}}"
-        else:
-            return f"\\begin{{quote}}\n{content}\n\\end{{quote}}"
-            
-    elif isinstance(node, HorizontalRule):
-        return "\\noindent\\rule{\\textwidth}{0.4pt}"
-        
-    elif isinstance(node, Equation):
-        if node.inline:
-            return f"${node.code}$"
-        else:
-            return f"\\begin{{equation}}\n{node.code}\n\\end{{equation}}"
-            
-    else:
-        from ..ast import Abstract, Footnote, Citation, Reference, Label
-        if isinstance(node, Abstract):
-            content = '\n'.join(_render_node(c) for c in node.children)
-            return f"\\begin{{abstract}}\n{content}\n\\end{{abstract}}"
-        elif isinstance(node, Footnote):
-            return f"\\footnote{{{''.join(_render_node(c) for c in node.content)}}}"
-        elif isinstance(node, Citation):
-            return f"\\{node.style}{{{','.join(node.keys)}}}"
-        elif isinstance(node, Reference):
-            return f"\\ref{{{node.label}}}"
-        elif isinstance(node, Label):
-            return f"\\label{{{node.name}}}"
-            
-    return ""
+def _inline(nodes: list[Node]) -> str:
+    return ''.join(_render_node(c) for c in nodes)
+
+
+def _one_line(rendered: str) -> str:
+    """Keep inline content on one line, for arguments that cannot hold a break (cells, titles)."""
+    rendered = rendered.replace('\\\\', ' ').replace('\r', ' ').replace('\n', ' ')
+    return re.sub(r'\s{2,}', ' ', rendered).strip()
+
+
+def _heading(node: Heading) -> str:
+    cmd = ["section", "subsection", "subsubsection", "paragraph", "subparagraph"][min(node.level-1, 4)]
+    return f"\\{cmd}{{{_one_line(_inline(node.children))}}}"
+
+
+def _paragraph(node: Paragraph) -> str:
+    return _EDGE_BREAKS.sub('', _inline(node.children).strip())
+
+
+def _code_block(node: CodeBlock) -> str:
+    # verbatim needs no package
+    return f"\\begin{{verbatim}}\n{node.code}\n\\end{{verbatim}}"
+
+
+def _list(node: ListBlock) -> str:
+    env = "enumerate" if node.ordered else "itemize"
+    items = []
+    for item in node.items:
+        content = ' \n    '.join(_render_node(c) for c in item.children).strip()
+        items.append(f"    \\item {content}")
+    items_str = '\n'.join(items)
+    return f"\\begin{{{env}}}\n{items_str}\n\\end{{{env}}}"
+
+
+def _table(node: Table) -> str:
+    headers, rows, ncols = table_grid(node)
+    if not ncols:
+        return ""
+    lines = [f"\\begin{{tabular}}{{|{'|'.join(['c'] * ncols)}|}}", "\\hline"]
+    for row in ([headers] if headers else []) + rows:
+        lines.append(" & ".join(_render_node(c) for c in row) + " \\\\")
+        lines.append("\\hline")
+    lines.append("\\end{tabular}")
+    return '\n'.join(lines)
+
+
+def _text(node: Text) -> str:
+    content = _escape_latex(node.content)
+    if node.italic: content = f"\\textit{{{content}}}"
+    if node.bold: content = f"\\textbf{{{content}}}"
+    if node.strikethrough: content = f"\\sout{{{content}}}"
+    return content
+
+
+def _link(node: Link) -> str:
+    return f"\\href{{{_escape_url(node.url)}}}{{{_inline(node.content)}}}"
+
+
+def _block_quote(node: BlockQuote) -> str:
+    content = '\n'.join(_render_node(c) for c in node.children)
+    if node.alert_type:
+        return f"\\begin{{quote}}\n\\textbf{{{_escape_latex(node.alert_type)}}}\\\\\n{content}\n\\end{{quote}}"
+    return f"\\begin{{quote}}\n{content}\n\\end{{quote}}"
+
+
+def _equation(node: Equation) -> str:
+    if node.inline:
+        return f"${node.code}$"
+    if node.env:
+        return f"\\begin{{{node.env}}}\n{node.code}\n\\end{{{node.env}}}"
+    if '&' in node.code or '\\\\' in node.code:
+        # Alignment points or several lines: only valid inside an alignment environment.
+        return f"\\begin{{equation}}\n\\begin{{aligned}}\n{node.code}\n\\end{{aligned}}\n\\end{{equation}}"
+    return f"\\begin{{equation}}\n{node.code}\n\\end{{equation}}"
+
+
+def _abstract(node: Abstract) -> str:
+    content = '\n'.join(_render_node(c) for c in node.children)
+    return f"\\begin{{abstract}}\n{content}\n\\end{{abstract}}"
+
+
+_RENDERERS = {
+    Heading: _heading,
+    Paragraph: _paragraph,
+    CodeBlock: _code_block,
+    ListBlock: _list,
+    Table: _table,
+    TableCell: lambda node: _one_line(_inline(node.children)),
+    Text: _text,
+    Link: _link,
+    Image: lambda node: f"\\includegraphics{{{node.src}}}",
+    CodeInline: lambda node: f"\\texttt{{{_escape_latex(node.code)}}}",
+    LineBreak: lambda node: "\\\\",
+    BlockQuote: _block_quote,
+    HorizontalRule: lambda node: "\\noindent\\rule{\\textwidth}{0.4pt}",
+    Equation: _equation,
+    Abstract: _abstract,
+    **{cls: lambda node: latex_reference_macro(node, _inline) for cls in (Footnote, Citation, Reference, Label)},
+}

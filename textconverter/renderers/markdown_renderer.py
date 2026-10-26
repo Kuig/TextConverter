@@ -1,6 +1,12 @@
 from __future__ import annotations
 import re
-from ..ast import Node, Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
+from ..ast import (
+    Abstract, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote, Heading,
+    HorizontalRule, Image, Label, LineBreak, Link, ListBlock, Node, Paragraph, Reference, Table,
+    TableCell, Text,
+)
+from ._common import latex_reference_macro, table_grid
+
 
 def _sanitize_table_cell(text: str) -> str:
     """Flatten a rendered cell so it can never break its one-line table row.
@@ -14,133 +20,124 @@ def _sanitize_table_cell(text: str) -> str:
     text = re.sub(r'[ \t]{2,}', ' ', text)
     return text.replace('|', r'\|')
 
+
 def render_markdown(doc: Document) -> str:
     """Renders an AST Document to a Markdown string."""
-    lines = []
-    for child in doc.children:
-        rendered = _render_node(child)
-        if rendered is not None:
-            lines.append(rendered)
+    lines = [_render_node(child) for child in doc.children]
     return '\n\n'.join(filter(bool, lines)) + '\n'
 
+
 def _render_node(node: Node) -> str:
-    if isinstance(node, Heading):
-        return f"{'#' * node.level} {''.join(_render_node(c) for c in node.children)}"
-        
-    elif isinstance(node, Paragraph):
-        content = ''.join(_render_node(c) for c in node.children).strip()
-        return content.replace('\n', '  \n')
-        
-    elif isinstance(node, CodeBlock):
-        lang = node.language or ''
-        return f"```{lang}\n{node.code}\n```"
-        
-    elif isinstance(node, ListBlock):
-        items = []
-        for i, item in enumerate(node.items):
-            prefix = f"{i+1}." if node.ordered else "-"
-            
-            rendered_parts = []
-            for j, child in enumerate(item.children):
-                rendered_child = _render_node(child)
-                if not rendered_child.strip():
-                    continue
-                    
-                if j == 0 and isinstance(child, Paragraph):
-                    # Render the first paragraph inline with the list item bullet/number
-                    rendered_parts.append(rendered_child)
-                else:
-                    # Render other blocks (or subsequent paragraphs) on new lines, indented by 4 spaces
-                    lines = rendered_child.split('\n')
-                    indented_lines = [f"    {line}" if line.strip() else "" for line in lines]
-                    rendered_parts.append('\n'.join(indented_lines))
-            
-            item_content = '\n'.join(rendered_parts).strip()
-            items.append(f"{prefix} {item_content}")
-        return '\n'.join(items)
-        
-    elif isinstance(node, Table):
-        if not node.headers and not node.rows: return ""
-        headers = [_sanitize_table_cell(_render_node(c)) for c in node.headers] if node.headers else []
-        if not headers and node.rows:
-            headers = [""] * max((len(r.cells) for r in node.rows), default=0)
+    render = _RENDERERS.get(type(node))
+    return render(node) if render else ""
 
-        lines = []
-        lines.append("| " + " | ".join(headers) + " |")
-        lines.append("|" + "|".join(["---"] * len(headers)) + "|")
 
-        for row in node.rows:
-            cells = [_sanitize_table_cell(_render_node(c)) for c in row.cells]
-            while len(cells) < len(headers):
-                cells.append("")
-            if len(headers) and len(cells) > len(headers):
-                cells = cells[:len(headers)]
-            lines.append("| " + " | ".join(cells) + " |")
-        return '\n'.join(lines)
-        
-    elif isinstance(node, TableCell):
-        return ''.join(_render_node(c) for c in node.children).strip()
-        
-    elif isinstance(node, Text):
-        content = node.content
-        if node.italic: content = f"_{content}_"
-        if node.bold: content = f"**{content}**"
-        return content
-        
-    elif isinstance(node, Link):
-        title_str = f' "{node.title}"' if node.title else ''
-        content_str = ''.join(_render_node(c) for c in node.content)
-        return f"[{content_str}]({node.url}{title_str})"
-        
-    elif isinstance(node, Image):
-        title_str = f' "{node.title}"' if node.title else ''
-        return f'![{node.alt}]({node.src}{title_str})'
-        
-    elif isinstance(node, CodeInline):
-        return f"`{node.code}`"
-        
-    elif isinstance(node, LineBreak):
-        return "  \n"
-        
-    elif isinstance(node, BlockQuote):
-        content = '\n'.join(_render_node(c) for c in node.children)
-        lines = content.split('\n')
-        if node.alert_type:
-            lines.insert(0, f"[!{node.alert_type}]")
-        
-        bq_lines = []
-        for line in lines:
-            bq_lines.append(f"> {line}" if line.strip() else ">")
-        return '\n'.join(bq_lines)
-        
-    elif isinstance(node, HorizontalRule):
-        return "---"
-        
-    elif isinstance(node, Equation):
-        if node.inline:
-            return f"${node.code}$"
-        else:
-            return f"$$\n{node.code}\n$$"
-            
-    else:
-        from ..ast import Abstract, Footnote, Citation, Reference, Label
-        if isinstance(node, Abstract):
-            content = '\n'.join(_render_node(c) for c in node.children)
-            lines = content.split('\n')
-            lines.insert(0, "[!IMPORTANT]")
-            lines.insert(1, "**Abstract**")
-            
-            bq_lines = []
-            for line in lines:
-                bq_lines.append(f"> {line}" if line.strip() else ">")
-            return '\n'.join(bq_lines)
-        elif isinstance(node, Footnote):
-            return f"\\footnote{{{''.join(_render_node(c) for c in node.content)}}}"
-        elif isinstance(node, Citation):
-            return f"\\{node.style}{{{','.join(node.keys)}}}"
-        elif isinstance(node, Reference):
-            return f"\\ref{{{node.label}}}"
-        elif isinstance(node, Label):
-            return f"\\label{{{node.name}}}"
-        
-    return ""
+def _inline(nodes: list[Node]) -> str:
+    return ''.join(_render_node(c) for c in nodes)
+
+
+def _quote(lines: list[str]) -> str:
+    """Prefix every line with "> " (a bare ">" for an empty one)."""
+    return '\n'.join(f"> {line}" if line.strip() else ">" for line in lines)
+
+
+def _heading(node: Heading) -> str:
+    return f"{'#' * node.level} {_inline(node.children)}"
+
+
+def _paragraph(node: Paragraph) -> str:
+    return _inline(node.children).strip().replace('\n', '  \n')
+
+
+def _code_block(node: CodeBlock) -> str:
+    return f"```{node.language or ''}\n{node.code}\n```"
+
+
+def _list(node: ListBlock) -> str:
+    items = []
+    for i, item in enumerate(node.items):
+        prefix = f"{i+1}." if node.ordered else "-"
+        rendered_parts = []
+        for j, child in enumerate(item.children):
+            rendered_child = _render_node(child)
+            if not rendered_child.strip():
+                continue
+            if j == 0 and isinstance(child, Paragraph):
+                # The first paragraph goes on the bullet/number line
+                rendered_parts.append(rendered_child)
+            else:
+                # Other blocks go on their own lines, indented by 4 spaces
+                lines = rendered_child.split('\n')
+                rendered_parts.append('\n'.join(f"    {line}" if line.strip() else "" for line in lines))
+        body = '\n'.join(rendered_parts).strip()
+        items.append(f"{prefix} {body}")
+    return '\n'.join(items)
+
+
+def _table(node: Table) -> str:
+    headers, rows, ncols = table_grid(node)
+    if not ncols:
+        return ""
+    header_cells = [_sanitize_table_cell(_render_node(c)) for c in headers] or [""] * ncols
+    lines = ["| " + " | ".join(header_cells) + " |", "|" + "|".join(["---"] * ncols) + "|"]
+    for row in rows:
+        lines.append("| " + " | ".join(_sanitize_table_cell(_render_node(c)) for c in row) + " |")
+    return '\n'.join(lines)
+
+
+def _table_cell(node: TableCell) -> str:
+    return _inline(node.children).strip()
+
+
+def _text(node: Text) -> str:
+    content = node.content
+    if node.italic: content = f"_{content}_"
+    if node.bold: content = f"**{content}**"
+    if node.strikethrough: content = f"~~{content}~~"
+    return content
+
+
+def _link(node: Link) -> str:
+    title_str = f' "{node.title}"' if node.title else ''
+    return f"[{_inline(node.content)}]({node.url}{title_str})"
+
+
+def _image(node: Image) -> str:
+    title_str = f' "{node.title}"' if node.title else ''
+    return f'![{node.alt}]({node.src}{title_str})'
+
+
+def _block_quote(node: BlockQuote) -> str:
+    lines = '\n'.join(_render_node(c) for c in node.children).split('\n')
+    if node.alert_type:
+        lines.insert(0, f"[!{node.alert_type}]")
+    return _quote(lines)
+
+
+def _abstract(node: Abstract) -> str:
+    lines = '\n'.join(_render_node(c) for c in node.children).split('\n')
+    return _quote(["[!IMPORTANT]", "**Abstract**", *lines])
+
+
+def _equation(node: Equation) -> str:
+    return f"${node.code}$" if node.inline else f"$$\n{node.code}\n$$"
+
+
+_RENDERERS = {
+    Heading: _heading,
+    Paragraph: _paragraph,
+    CodeBlock: _code_block,
+    ListBlock: _list,
+    Table: _table,
+    TableCell: _table_cell,
+    Text: _text,
+    Link: _link,
+    Image: _image,
+    CodeInline: lambda node: f"`{node.code}`",
+    LineBreak: lambda node: "  \n",
+    BlockQuote: _block_quote,
+    HorizontalRule: lambda node: "---",
+    Equation: _equation,
+    Abstract: _abstract,
+    **{cls: lambda node: latex_reference_macro(node, _inline) for cls in (Footnote, Citation, Reference, Label)},
+}
