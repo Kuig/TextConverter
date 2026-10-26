@@ -20,20 +20,24 @@ class Format:
         binary: Parsed from a file rather than from text (PDF, images).
         auto_images: What ``image_handling="auto"`` resolves to when this is
             the output format (None for input-only formats).
+        media_types: ``Content-Type`` values that identify the format when
+            downloaded; one ending in "/" matches the whole family.
     """
     name: str
     extensions: tuple[str, ...]
     binary: bool = False
     auto_images: str | None = None
+    media_types: tuple[str, ...] = ()
 
 
 INPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
-    Format("markdown", (".md", ".markdown", ".txt")),
-    Format("html", (".html", ".htm")),
-    Format("latex", (".tex", ".latex")),
-    Format("json", (".json",)),
-    Format("pdf", (".pdf",), binary=True),
-    Format("image", (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"), binary=True),
+    Format("markdown", (".md", ".markdown", ".txt"), media_types=("text/markdown", "text/x-markdown")),
+    Format("html", (".html", ".htm"), media_types=("text/html", "application/xhtml+xml")),
+    Format("latex", (".tex", ".latex"), media_types=("application/x-tex", "text/x-tex")),
+    Format("json", (".json",), media_types=("application/json",)),
+    Format("pdf", (".pdf",), binary=True, media_types=("application/pdf",)),
+    Format("image", (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"), binary=True,
+           media_types=("image/",)),
 )}
 
 OUTPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
@@ -71,6 +75,15 @@ def _infer(path: str, formats: dict[str, Format]) -> str | None:
 def infer_input_format(path: str) -> str | None:
     """Return the input format matching the path's extension, or None."""
     return _infer(path, INPUT_FORMATS)
+
+
+def infer_input_format_from_media_type(media_type: str) -> str | None:
+    """Return the input format a ``Content-Type`` media type identifies, or None."""
+    for f in INPUT_FORMATS.values():
+        for mt in f.media_types:
+            if media_type == mt or (mt.endswith("/") and media_type.startswith(mt)):
+                return f.name
+    return None
 
 
 def infer_output_format(path: str) -> str | None:

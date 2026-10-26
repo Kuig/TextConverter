@@ -4,6 +4,7 @@ import os
 from textconverter.logger import log_action, log_info, log_success, log_warning
 from .ast import Document, Equation, Image, Node, Paragraph, child_lists, walk
 from .config import AppConfig
+from .images import resolve_local
 from .parsers.transcription_parser import equation_code, normalize_transcription, parse_transcription
 
 # Categories that ``auto_latex`` transcribes; every other image keeps a plain reference.
@@ -144,8 +145,11 @@ def describe_images(images: list[Image], base_dir: str, *, config: AppConfig, la
     ai = config.ai
     jobs: list[tuple[Image, str]] = []
     for img in images:
-        img_path = img.src if os.path.isabs(img.src) else os.path.join(base_dir, img.src)
-        if os.path.exists(img_path):
+        img_path = resolve_local(img.src, base_dir)
+        if img_path is None:
+            img.category = "error"
+            log_warning(f"Not a local image file, skipping description: {img.src[:80]}")
+        elif os.path.exists(img_path):
             jobs.append((img, img_path))
         else:
             img.category = "error"

@@ -40,6 +40,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - JSON input is checked against an explicit registry of node types: an unknown or missing
   `type`, a missing required field or a child list that is not a list raises `ValueError`
   instead of silently dropping the node from the output.
+- A URL source's format comes from the response's `Content-Type` first, so a PDF served from
+  a URL without `.pdf` (e.g. arXiv) is no longer read as HTML. A failed download raises
+  `DownloadError` (a `RuntimeError`).
+- Image and file sources downloaded from a URL go to the system temporary folder, not to the
+  output or current directory.
+
+### Fixed
+
+- Downloaded pages are decoded with the charset of their `Content-Type` or `<meta charset>`:
+  accented letters of a non-UTF-8 page were silently dropped.
+- Images are found wherever the output goes: embedding, description and transcription used to
+  look for downloaded images next to the source while they were saved next to the output, and
+  `convert()` resolved a file's relative images against the current directory. Image links in
+  the output are relative to the output folder, so a Markdown file written to another folder
+  still points at the source's local images.
+- An image with an empty `src` on a web page no longer downloads the page itself as an image;
+  a response typed as a non-image (an HTML error page) is not saved as one; an image served as
+  `application/octet-stream` keeps its extension instead of becoming `.bin`.
+- Protocol-relative image sources (`//host/x.png`) are downloaded instead of being opened as
+  network paths on Windows; `data:` images are no longer looked up as files.
+- With LaTeX or JSON output, image sources and PDF pages in raster mode are no longer sent to
+  the AI a second time.
 
 ## [0.2.0] - 2026-10-26
 
