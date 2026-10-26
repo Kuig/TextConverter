@@ -1,11 +1,15 @@
 from __future__ import annotations
+import html
+import re
+from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Sequence
 from ..ast import (
-    Document, Paragraph, Heading, Text, Link, Image, CodeInline, LineBreak,
-    CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, Node,
-    BlockQuote, HorizontalRule, Equation
+    Abstract, BlockQuote, CodeBlock, CodeInline, Document, Equation, Heading, HorizontalRule, Image,
+    LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Table, TableCell, TableRow, Text,
+    abstract_from, child_lists, walk,
 )
+from ._math import strip_displaystyle, unwrap_math
 
 if TYPE_CHECKING:
     from ..site_profiles.base import SiteProfile
@@ -15,88 +19,134 @@ _INLINE_TAGS = frozenset([
     'small', 'mark', 'ins', 'del', 'cite', 'dfn', 'kbd', 'samp', 'var', 'q',
     'time', 'ruby', 'rt', 'rp', 'data', 'abbr', 's', 'strike', 'u', 'font', 'big', 'tt'
 ])
+_VOID = frozenset([
+    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+    'link', 'meta', 'param', 'source', 'track', 'wbr'
+])
+# Block tags that end an open paragraph.
+_PARAGRAPH_CLOSERS = frozenset([
+    'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th',
+    'pre', 'blockquote', 'hr',
+])
+# End tag -> AST node types it closes.
+_NODE_TAGS: dict[str, tuple[type, ...]] = {
+    **{f'h{i}': (Heading,) for i in range(1, 7)},
+    'p': (Paragraph, Heading), 'ul': (ListBlock,), 'ol': (ListBlock,), 'li': (ListItem,),
+    'table': (Table,), 'tr': (TableRow,), 'td': (TableCell,), 'th': (TableCell,),
+    'a': (Link,), 'pre': (CodeBlock,), 'code': (CodeInline,), 'blockquote': (BlockQuote,),
+}
+# HTML whitespace (not U+00A0, which is meant to stay).
+_WHITESPACE = re.compile(r'[ \t\n\r\f]+')
+# Containers whose children are blocks: inline content gets an anonymous paragraph.
+_BLOCK_CONTAINERS = (Document, BlockQuote, ListItem)
+
+
+@dataclass
+class _MathCapture:
+    """A formula being read.
+
+    ``kind`` is ``"mathml"`` (``<math>``, TeX from its annotation),
+    ``"script"`` (``<script type="math/tex">``) or ``"element"`` (an element
+    with class ``math`` holding delimited TeX).
+    """
+    kind: str
+    inline: bool
+    code: str = ""
+    depth: int = 1
+    in_annotation: bool = False
+
+
+def _language(classes: list[str]) -> str | None:
+    """The code language named by a ``language-x`` / ``lang-x`` class, if any."""
+    for c in classes:
+        for prefix in ('language-', 'lang-'):
+            if c.startswith(prefix) and len(c) > len(prefix):
+                return c[len(prefix):]
+    return None
+
+
+def _image_source(attrs: dict[str, str | None]) -> str:
+    """The image URL, falling back to lazy-loading attributes when ``src`` is a placeholder."""
+    src = attrs.get('src') or ''
+    if not src or src.startswith('data:'):
+        lazy = attrs.get('data-src') or attrs.get('data-lazy-src')
+        srcset = attrs.get('srcset') or attrs.get('data-srcset')
+        if lazy:
+            return lazy
+        if srcset:
+            return srcset.split(',')[0].strip().split(' ')[0]
+    return src
+
 
 class ASTHTMLParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
-        self._active_anon_paragraph = None
+        self._active_anon_paragraph: Paragraph | None = None
         self.doc = Document()
-        self.stack = [self.doc]
-        self.current_text_attrs = {'bold': False, 'italic': False}
+        self.stack: list[Node] = [self.doc]
         self.in_pre = False
         self.in_thead = False
         self.ignore_data = False
         # Active vertical cell merges carried into following <tr>s:
         # list of {'col': <output column index>, 'rows_left': <int>}.
         self._rowspan_carry: list[dict] = []
-        
-        self.css_styles = {} # e.g. {'c10': {'bold': True}, ...}
+        # id(cell) -> (colspan, rowspan), and the ids of <th> cells, until their row closes.
+        self._spans: dict[int, tuple[int, int]] = {}
+        self._header_cells: set[int] = set()
+        # ids of block quotes titled "Abstract" by an alert-title div.
+        self._abstract_quotes: set[int] = set()
+
+        self.css_styles: dict[str, dict[str, bool]] = {}  # e.g. {'c10': {'bold': True}, ...}
         self.in_style_tag = False
         self.style_data = ""
         self.in_alert_title = False
-        
-        self.in_math_script = False
-        self.math_script_data = ""
-        self.math_script_inline = True
-        
-        self.in_math_element = False
-        self.math_element_data = ""
-        self.math_element_inline = True
-        self.math_element_depth = 0
-        
-        self.in_math = False
-        self.math_code = ""
-        self.math_inline = True
-        self.in_math_annotation = False
+
+        self._math: _MathCapture | None = None
         self.just_parsed_math = False
-        
-        self.attr_stack = [self.current_text_attrs.copy()]
+
+        self._title: str | None = None
+        self._in_title = False
+        self._generated_by_us = False
+
+        # (tag, formatting) pairs: the formatting in force inside each open tag.
+        self._formats: list[tuple[str, dict[str, bool]]] = []
+
+    @property
+    def current_text_attrs(self) -> dict[str, bool]:
+        return self._formats[-1][1] if self._formats else {'bold': False, 'italic': False, 'strikethrough': False}
+
+    # ── Start tags ────────────────────────────────────────────────────────────
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
-        classes = attr_dict.get('class', '').split()
-        
-        if getattr(self, 'in_math', False):
-            if tag == 'annotation':
-                if attr_dict.get('encoding') == 'application/x-tex':
-                    self.in_math_annotation = True
-                    self.ignore_data = False
+        classes = (attr_dict.get('class') or '').split()
+
+        if self._math is not None:
+            if self._math.kind == 'mathml':
+                if tag == 'annotation' and attr_dict.get('encoding') == 'application/x-tex':
+                    self._math.in_annotation = True
+            elif self._math.kind == 'element' and tag not in _VOID:
+                self._math.depth += 1
             return
 
         if tag not in ('math', 'annotation', 'semantics', 'mrow', 'mi', 'mo', 'mn', 'msup', 'msub', 'img', 'span', 'div'):
             self.just_parsed_math = False
 
         if tag == 'math':
-            self.in_math = True
-            self.math_inline = (attr_dict.get('display') != 'block')
-            self.math_code = ""
-            self.in_math_annotation = False
-            self.ignore_data = True
+            self._math = _MathCapture('mathml', inline=attr_dict.get('display') != 'block')
+            return
+        if tag == 'title':
+            self._in_title = True
+            self._title = ""
+            return
+        if tag == 'meta':
+            if (attr_dict.get('name') or '').lower() == 'generator' and attr_dict.get('content') == 'TextConverter':
+                self._generated_by_us = True
             return
 
         if tag not in _INLINE_TAGS:
             self._active_anon_paragraph = None
-        # Implicitly close paragraph if entering a new block element
-        if tag in ('p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'pre', 'blockquote', 'hr'):
-            while len(self.stack) > 1 and isinstance(self.stack[-1], Paragraph):
-                node = self.stack.pop()
-                self._append_to_parent(node)
-
-        # Implicitly close list item if entering a new list item
-        if tag == 'li':
-            while len(self.stack) > 1 and isinstance(self.stack[-1], ListItem):
-                node = self.stack.pop()
-                self._append_to_parent(node)
-
-        # Implicitly close table elements if entering new sibling elements
-        if tag == 'tr':
-            while len(self.stack) > 1 and isinstance(self.stack[-1], TableRow):
-                node = self.stack.pop()
-                self._append_to_parent(node)
-        elif tag in ('td', 'th'):
-            while len(self.stack) > 1 and isinstance(self.stack[-1], TableCell):
-                node = self.stack.pop()
-                self._append_to_parent(node)
+        self._close_implied(tag)
 
         # A new block chunk inside a table cell (word-processor HTML wraps each
         # cell line in its own <div>/<p> with no whitespace between): keep the
@@ -109,141 +159,135 @@ class ASTHTMLParser(HTMLParser):
             self.in_style_tag = True
             self.ignore_data = True
             return
-        elif tag == 'script':
-            script_type = attr_dict.get('type', '')
+        if tag == 'script':
+            script_type = attr_dict.get('type') or ''
             if script_type.startswith('math/tex'):
-                self.in_math_script = True
-                self.math_script_data = ""
-                self.math_script_inline = 'mode=display' not in script_type
-                self.ignore_data = False
+                self._math = _MathCapture('script', inline='mode=display' not in script_type)
             else:
                 self.ignore_data = True
             return
-        elif tag == 'div' and 'alert-title' in classes:
+        if tag == 'div' and 'alert-title' in classes:
             self.in_alert_title = True
             self.ignore_data = True
             return
-            
-        if not self.in_math_element and tag in ('span', 'div') and 'math' in classes:
-            self.in_math_element = True
-            self.math_element_data = ""
-            self.math_element_inline = 'inline' in classes or tag == 'span'
-            self.math_element_depth = 1
-            self.ignore_data = False
+        if tag in ('span', 'div') and 'math' in classes:
+            self._math = _MathCapture('element', inline='inline' in classes or tag == 'span')
             return
-            
-        if getattr(self, 'in_math_element', False):
-            self.math_element_depth += 1
-            
-        # update attrs from stack
-        new_attrs = self.attr_stack[-1].copy()
-        
-        # check CSS class for Google Docs
-        for c in classes:
-            if c in self.css_styles:
-                if self.css_styles[c].get('bold'): new_attrs['bold'] = True
-                if self.css_styles[c].get('italic'): new_attrs['italic'] = True
-                
-        if tag in ('b', 'strong'):
-            new_attrs['bold'] = True
-        elif tag in ('i', 'em'):
-            new_attrs['italic'] = True
-            
-        self.current_text_attrs = new_attrs
-        self.attr_stack.append(new_attrs)
-            
-        node = None
-        if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
-            node = Heading(level=int(tag[1]))
-        elif tag == 'title':
-            node = Heading(level=1)
-        elif tag == 'p':
-            if 'title' in classes:
-                node = Heading(level=1)
-            else:
-                node = Paragraph()
-        elif tag in ('ul', 'ol'):
-            node = ListBlock(ordered=(tag == 'ol'))
-        elif tag == 'li':
-            node = ListItem()
-        elif tag == 'table':
-            node = Table()
-            self._rowspan_carry = []  # spans do not cross table boundaries
-        elif tag == 'thead':
-            self.in_thead = True
-        elif tag == 'tr':
-            node = TableRow()
-        elif tag in ('td', 'th'):
-            node = TableCell()
-            # If th and parent is TableRow, we just treat it nicely.
-            # We'll map it to headers if in_thead is True or if headers are empty
-            def _span(name: str) -> int:
-                try:
-                    return max(1, int(attr_dict.get(name, '1')))
-                except (TypeError, ValueError):
-                    return 1
-            node._colspan = _span('colspan')
-            node._rowspan = _span('rowspan')
-        elif tag == 'pre':
-            self.in_pre = True
-            # Looking for class="language-xyz"
-            lang = attr_dict.get('class', '').replace('language-', '') or None
-            node = CodeBlock(code="", language=lang)
-        elif tag == 'code' and not self.in_pre:
-            node = CodeInline(code="")
-        elif tag == 'a':
-            node = Link(url=attr_dict.get('href', ''), title=attr_dict.get('title'))
-        elif tag == 'img':
-            # Skip Wikipedia math fallback images or convert them if math was not parsed
-            if any(c.startswith('mwe-math-fallback-image') for c in classes):
-                if getattr(self, 'just_parsed_math', False):
-                    self.just_parsed_math = False
-                    return
-                alt = attr_dict.get('alt', '')
-                if alt.startswith(r'{\displaystyle') and alt.endswith('}'):
-                    alt = alt[14:-1].strip()
-                elif alt.startswith(r'\displaystyle'):
-                    alt = alt[13:].strip()
-                inline = 'mwe-math-fallback-image-inline' in classes
-                eq = Equation(code=alt, inline=inline)
-                self._append_to_parent(eq)
-                return
-            img = Image(src=attr_dict.get('src', ''), alt=attr_dict.get('alt', ''), title=attr_dict.get('title'))
-            self._append_to_parent(img)
+
+        if tag == 'img':
+            self._image(attr_dict, classes)
             return
-        elif tag == 'br':
+        if tag == 'br':
             self._append_to_parent(LineBreak())
             return
-        elif tag == 'hr':
+        if tag == 'hr':
             self._append_to_parent(HorizontalRule())
             return
-        elif tag == 'blockquote':
-            alert_type = None
-            for c in classes:
-                if c.startswith('alert-'):
-                    alert_type = c.replace('alert-', '').upper()
-                    break
-            node = BlockQuote(alert_type=alert_type)
-            
+        if tag in _VOID:
+            return
+
+        formats = dict(self.current_text_attrs)
+        for c in classes:  # Google Docs styles by class
+            formats.update(self.css_styles.get(c, {}))
+        if tag in ('b', 'strong'):
+            formats['bold'] = True
+        elif tag in ('i', 'em'):
+            formats['italic'] = True
+        elif tag in ('s', 'del', 'strike'):
+            formats['strikethrough'] = True
+        self._formats.append((tag, formats))
+
+        node = self._node_for(tag, attr_dict, classes)
         if node is not None:
             self.stack.append(node)
 
+    def _node_for(self, tag: str, attr_dict: dict[str, str | None], classes: list[str]) -> Node | None:
+        """The AST node a start tag opens, or None for tags that only set state or formatting."""
+        if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
+            return Heading(level=int(tag[1]))
+        if tag == 'p':
+            return Heading(level=1) if 'title' in classes else Paragraph()
+        if tag in ('ul', 'ol'):
+            return ListBlock(ordered=(tag == 'ol'))
+        if tag == 'li':
+            return ListItem()
+        if tag == 'table':
+            self._rowspan_carry = []  # spans do not cross table boundaries
+            return Table()
+        if tag == 'thead':
+            self.in_thead = True
+            return None
+        if tag == 'tr':
+            return TableRow()
+        if tag in ('td', 'th'):
+            cell = TableCell()
+
+            def _span(name: str) -> int:
+                try:
+                    return max(1, int(attr_dict.get(name) or '1'))
+                except ValueError:
+                    return 1
+            self._spans[id(cell)] = (_span('colspan'), _span('rowspan'))
+            if tag == 'th':
+                self._header_cells.add(id(cell))
+            return cell
+        if tag == 'pre':
+            self.in_pre = True
+            return CodeBlock(code="", language=_language(classes))
+        if tag == 'code':
+            if self.in_pre:
+                block = self.stack[-1]
+                if isinstance(block, CodeBlock) and not block.language:
+                    block.language = _language(classes)
+                return None
+            return CodeInline(code="")
+        if tag == 'a':
+            return Link(url=attr_dict.get('href') or '', title=attr_dict.get('title'))
+        if tag == 'blockquote':
+            alert_type = next((c[len('alert-'):].upper() for c in classes if c.startswith('alert-')), None)
+            return BlockQuote(alert_type=alert_type)
+        return None
+
+    def _image(self, attr_dict: dict[str, str | None], classes: list[str]) -> None:
+        # Wikipedia's math fallback image: skip it after its MathML, else read its TeX alt text
+        if any(c.startswith('mwe-math-fallback-image') for c in classes):
+            if self.just_parsed_math:
+                self.just_parsed_math = False
+                return
+            inline = 'mwe-math-fallback-image-inline' in classes
+            self._append_to_parent(Equation(code=strip_displaystyle(attr_dict.get('alt') or ''), inline=inline))
+            return
+        self._append_to_parent(Image(src=_image_source(attr_dict), alt=attr_dict.get('alt') or '',
+                                     title=attr_dict.get('title')))
+
+    def _close_implied(self, tag: str) -> None:
+        """Close the nodes a start tag ends implicitly (``<li>`` ends the open item, ...)."""
+        if tag in _PARAGRAPH_CLOSERS:
+            self._pop_while(Paragraph)
+        if tag == 'li':
+            self._pop_while(Paragraph, ListItem, stop_after=ListItem)
+        elif tag == 'tr':
+            self._pop_while(Paragraph, TableCell, TableRow, stop_after=TableRow)
+        elif tag in ('td', 'th'):
+            self._pop_while(Paragraph, TableCell, stop_after=TableCell)
+
+    def _pop_while(self, *types: type, stop_after: type | None = None) -> None:
+        """Close nodes on top of the stack while they are of ``types``; stop after one ``stop_after``."""
+        while len(self.stack) > 1 and isinstance(self.stack[-1], types):
+            node = self._finish(self.stack.pop())
+            if stop_after is not None and isinstance(node, stop_after):
+                return
+
+    # ── End tags ──────────────────────────────────────────────────────────────
+
     def handle_endtag(self, tag: str) -> None:
-        if getattr(self, 'in_math', False):
-            if tag == 'annotation' and getattr(self, 'in_math_annotation', False):
-                self.in_math_annotation = False
-                self.ignore_data = True
-            elif tag == 'math':
-                self.in_math = False
-                self.ignore_data = False
-                self.just_parsed_math = True
-                code = self.math_code.strip()
-                if code.startswith(r'{\displaystyle') and code.endswith('}'):
-                    code = code[14:-1].strip()
-                elif code.startswith(r'\displaystyle'):
-                    code = code[13:].strip()
-                eq = Equation(code=code, inline=self.math_inline)
-                self._append_to_parent(eq)
+        if self._math is not None:
+            self._end_math(tag)
+            return
+        if tag == 'title':
+            self._in_title = False
+            return
+        if tag in _VOID:
             return
 
         if tag not in _INLINE_TAGS:
@@ -254,134 +298,149 @@ class ASTHTMLParser(HTMLParser):
             self.parse_css(self.style_data)
             self.style_data = ""
             return
-        elif tag == 'script':
-            if getattr(self, 'in_math_script', False):
-                self.in_math_script = False
-                eq = Equation(code=self.math_script_data.strip(), inline=self.math_script_inline)
-                self._append_to_parent(eq)
-                self.math_script_data = ""
+        if tag == 'script':
             self.ignore_data = False
             return
-        elif tag == 'div' and self.in_alert_title:
+        if tag == 'div' and self.in_alert_title:
             self.in_alert_title = False
             self.ignore_data = False
             return
-            
-        if getattr(self, 'in_math_element', False):
-            if tag in ('span', 'div') and self.math_element_depth == 1:
-                self.in_math_element = False
-                code = self.math_element_data.strip()
-                if code.startswith(r'\(') and code.endswith(r'\)'):
-                    code = code[2:-2].strip()
-                elif code.startswith('$$') and code.endswith('$$'):
-                    code = code[2:-2].strip()
-                elif code.startswith(r'\[') and code.endswith(r'\]'):
-                    code = code[2:-2].strip()
-                eq = Equation(code=code, inline=self.math_element_inline)
-                self._append_to_parent(eq)
-                self.math_element_data = ""
-                return
-            else:
-                self.math_element_depth -= 1
-            
-        # pop attrs for this tag
-        if len(self.attr_stack) > 1:
-            self.attr_stack.pop()
-        self.current_text_attrs = self.attr_stack[-1]
-            
+
+        # Close the formatting this tag opened, ignoring a stray end tag
+        for i in range(len(self._formats) - 1, -1, -1):
+            if self._formats[i][0] == tag:
+                del self._formats[i:]
+                break
+
         if tag == 'thead':
             self.in_thead = False
             return
-        elif tag == 'pre':
+        if tag == 'pre':
             self.in_pre = False
-            
-        if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th', 'a', 'pre', 'code', 'blockquote', 'title'):
-            # Only pop if we actually pushed something (ignoring structural mismatches)
-            if len(self.stack) > 1:
-                node = self.stack.pop()
+        if tag == 'code' and self.in_pre:
+            return
 
-                parent = self.stack[-1]
+        types = _NODE_TAGS.get(tag)
+        if types is None:
+            return
+        # Close up to the nearest node this tag opened; a stray end tag closes nothing.
+        for i in range(len(self.stack) - 1, 0, -1):
+            if isinstance(self.stack[i], types):
+                while len(self.stack) > i:
+                    self._finish(self.stack.pop())
+                return
 
-                # Flatten colspan/rowspan into a rectangular grid of plain cells
-                if tag == 'tr' and isinstance(node, TableRow):
-                    self._resolve_row_spans(node)
+    def _end_math(self, tag: str) -> None:
+        math = self._math
+        if math.kind == 'mathml':
+            if tag == 'annotation':
+                math.in_annotation = False
+                return
+            if tag != 'math':
+                return
+            code = strip_displaystyle(math.code)
+            self.just_parsed_math = True
+        elif math.kind == 'script':
+            if tag != 'script':
+                return
+            code = math.code.strip()
+        else:
+            if tag in _VOID:
+                return
+            math.depth -= 1
+            if math.depth > 0:
+                return
+            code = math.code.strip()
+            code = strip_displaystyle(unwrap_math(code) or code)
+        self._math = None
+        self._append_to_parent(Equation(code=code, inline=math.inline))
 
-                # Check if this is an Abstract blockquote
-                if tag == 'blockquote' and isinstance(node, BlockQuote):
-                    if getattr(node, '_is_abstract', False):
-                        from ..ast import Abstract
-                        node = Abstract(children=node.children)
-                    else:
-                        def _get_first_text(n: Node) -> Text | None:
-                            from ..ast import Text
-                            if isinstance(n, Text): return n
-                            if hasattr(n, 'children') and n.children: return _get_first_text(n.children[0])
-                            if hasattr(n, 'content') and isinstance(n.content, list) and n.content: return _get_first_text(n.content[0])
-                            return None
-                            
-                        first_text = _get_first_text(node)
-                        if first_text and first_text.content.strip().lower().startswith("abstract"):
-                            import re
-                            first_text.content = re.sub(r'^\s*abstract[\s:]*', '', first_text.content, flags=re.IGNORECASE)
-                            from ..ast import Abstract
-                            node = Abstract(children=node.children)
-                
-                # Special handling for table headers
-                if tag == 'th' or (tag == 'tr' and self.in_thead and isinstance(parent, Table)):
-                    if isinstance(node, TableRow) and isinstance(parent, Table):
-                        parent.headers = node.cells
-                    elif isinstance(node, TableCell) and getattr(parent, 'cells', None) is not None:
-                        parent.cells.append(node)
-                    else:
-                        self._append_to_parent(node, force_parent=parent)
-                else:
-                    self._append_to_parent(node, force_parent=parent)
+    def _finish(self, node: Node) -> Node:
+        """Attach a node just popped from the stack to its parent; return what was attached."""
+        parent = self.stack[-1]
+        if isinstance(node, TableRow):
+            self._resolve_row_spans(node)
+            header_row = self.in_thead or (
+                not parent.headers and not parent.rows and node.cells
+                and all(id(c) in self._header_cells for c in node.cells)
+            ) if isinstance(parent, Table) else False
+            if header_row:
+                parent.headers = node.cells
+                return node
+        elif isinstance(node, BlockQuote):
+            if id(node) in self._abstract_quotes:
+                node = Abstract(children=node.children)
+            else:
+                node = abstract_from(node.children) or node
+        self._append_to_parent(node, force_parent=parent)
+        return node
+
+    # ── Text ──────────────────────────────────────────────────────────────────
 
     def handle_data(self, data: str) -> None:
-        if getattr(self, 'in_alert_title', False):
-            if data.strip().lower() == "abstract":
-                if len(self.stack) > 0 and isinstance(self.stack[-1], BlockQuote):
-                    self.stack[-1]._is_abstract = True
+        if self._math is not None:
+            if self._math.kind != 'mathml' or self._math.in_annotation:
+                self._math.code += data
             return
-
+        if self._in_title:
+            self._title += data
+            return
+        if self.in_alert_title:
+            if data.strip().lower() == "abstract" and isinstance(self.stack[-1], BlockQuote):
+                self._abstract_quotes.add(id(self.stack[-1]))
+            return
         if self.in_style_tag:
             self.style_data += data
-            
-        if getattr(self, 'in_math', False):
-            if getattr(self, 'in_math_annotation', False):
-                self.math_code += data
-            return
-            
-        if getattr(self, 'in_math_script', False):
-            self.math_script_data += data
-            return
-            
-        if getattr(self, 'in_math_element', False):
-            self.math_element_data += data
-            return
-            
         if self.ignore_data:
             return
-            
-        if not data.strip() and not self.in_pre:
-            return
-            
+
         parent = self.stack[-1]
-        
         if self.in_pre and isinstance(parent, CodeBlock):
             parent.code += data
             return
-            
         if isinstance(parent, CodeInline):
             parent.code += data
             return
 
-        text = Text(
-            content=data if self.in_pre else data,
-            bold=self.current_text_attrs['bold'],
-            italic=self.current_text_attrs['italic']
-        )
-        self._append_to_parent(text, force_parent=parent)
+        if not self.in_pre:
+            data = _WHITESPACE.sub(' ', data)
+            target = self._inline_target()
+            if target is None or not target or self._ends_with_space(target):
+                data = data.lstrip()
+            if not data:
+                return
+        fmt = self.current_text_attrs
+        self._append_to_parent(Text(content=data, bold=fmt['bold'], italic=fmt['italic'],
+                                    strikethrough=fmt.get('strikethrough', False)),
+                               force_parent=parent)
+
+    def _inline_target(self) -> list[Node] | None:
+        """The list the next inline node goes into; None when it would start a new paragraph."""
+        parent = self.stack[-1]
+        if isinstance(parent, _BLOCK_CONTAINERS):
+            anon = self._active_anon_paragraph
+            if anon is not None and parent.children and parent.children[-1] is anon:
+                return anon.children
+            return None
+        if isinstance(parent, (ListBlock, Table, TableRow)):
+            return None
+        lists = child_lists(parent)
+        return lists[0] if lists else None
+
+    @staticmethod
+    def _trim_trailing_space(nodes: list[Node]) -> None:
+        """Drop the space that collapsed whitespace leaves before a block's end."""
+        while nodes and isinstance(nodes[-1], Text) and not nodes[-1].content.strip():
+            nodes.pop()
+        if nodes and isinstance(nodes[-1], Text):
+            nodes[-1].content = nodes[-1].content.rstrip()
+
+    @staticmethod
+    def _ends_with_space(nodes: list[Node]) -> bool:
+        last = nodes[-1]
+        if isinstance(last, LineBreak):
+            return True
+        return isinstance(last, Text) and (not last.content or last.content[-1].isspace())
 
     def _maybe_cell_separator(self) -> None:
         """Insert a space between adjacent block chunks inside a table cell.
@@ -393,23 +452,16 @@ class ASTHTMLParser(HTMLParser):
         if not self.stack or not isinstance(self.stack[-1], TableCell):
             return
         cell = self.stack[-1]
-        if not cell.children:
-            return
-        last = cell.children[-1]
-        if isinstance(last, LineBreak):
-            return
-        if isinstance(last, Text) and (not last.content or last.content[-1].isspace()):
-            return
-        cell.children.append(Text(content=" "))
+        if cell.children and not self._ends_with_space(cell.children):
+            cell.children.append(Text(content=" "))
 
     def _resolve_row_spans(self, row: TableRow) -> None:
         """Expand ``colspan``/``rowspan`` on a just-closed row into plain cells.
 
         ``colspan`` becomes N cells (content in the first, blanks after);
         ``rowspan`` records a carry so the following rows get a blank
-        placeholder at the same column. The private ``_colspan``/``_rowspan``
-        attributes are removed so the emitted AST is span-free and the JSON
-        schema is unchanged.
+        placeholder at the same column. The emitted AST is span-free, so the
+        JSON schema is unchanged.
         """
         src = row.cells
         out: list[TableCell] = []
@@ -430,11 +482,7 @@ class ASTHTMLParser(HTMLParser):
                 break
             cell = src[i]
             i += 1
-            colspan = getattr(cell, '_colspan', 1) or 1
-            rowspan = getattr(cell, '_rowspan', 1) or 1
-            for attr in ('_colspan', '_rowspan'):
-                if hasattr(cell, attr):
-                    delattr(cell, attr)
+            colspan, rowspan = self._spans.pop(id(cell), (1, 1))
             for k in range(colspan):
                 start_col = len(out)
                 out.append(cell if k == 0 else TableCell())
@@ -445,35 +493,32 @@ class ASTHTMLParser(HTMLParser):
 
     def _append_to_parent(self, node: Node, force_parent: Node | None = None) -> None:
         parent = force_parent or self.stack[-1]
-        
-        # Wrap consecutive orphan inline elements in a Paragraph 
-        # when appending to block containers (Document, BlockQuote, ListItem)
-        if isinstance(parent, (Document, BlockQuote, ListItem)):
-            if isinstance(node, (Text, Link, Image, CodeInline, LineBreak)):
-                if (self._active_anon_paragraph is None or 
-                    not parent.children or 
-                    parent.children[-1] is not self._active_anon_paragraph):
-                    
-                    p = Paragraph()
-                    parent.children.append(p)
-                    self._active_anon_paragraph = p
-                
-                self._active_anon_paragraph.children.append(node)
-                return
 
-        if hasattr(parent, 'children'):
-            parent.children.append(node)
-        elif hasattr(parent, 'items') and isinstance(node, ListItem):
-            parent.items.append(node)
-        elif hasattr(parent, 'rows') and isinstance(node, TableRow):
+        # Wrap consecutive orphan inline elements in a Paragraph
+        # when appending to block containers (Document, BlockQuote, ListItem)
+        if isinstance(parent, _BLOCK_CONTAINERS) and isinstance(
+                node, (Text, Link, Image, CodeInline, LineBreak, Equation)) and not (
+                isinstance(node, Equation) and not node.inline):
+            anon = self._active_anon_paragraph
+            if anon is None or not parent.children or parent.children[-1] is not anon:
+                anon = Paragraph()
+                parent.children.append(anon)
+                self._active_anon_paragraph = anon
+            anon.children.append(node)
+            return
+
+        if isinstance(parent, Table) and isinstance(node, TableRow):
             parent.rows.append(node)
-        elif hasattr(parent, 'cells') and isinstance(node, TableCell):
+        elif isinstance(parent, ListBlock) and isinstance(node, ListItem):
+            parent.items.append(node)
+        elif isinstance(parent, TableRow) and isinstance(node, TableCell):
             parent.cells.append(node)
-        elif hasattr(parent, 'content') and isinstance(node, Node): # Link content
-            parent.content.append(node)
-            
+        else:
+            lists = child_lists(parent)
+            if lists:
+                lists[0].append(node)
+
     def parse_css(self, css_str: str) -> None:
-        import re
         for match in re.finditer(r'\.([a-zA-Z0-9_-]+)\s*\{([^}]+)\}', css_str):
             cls_name = match.group(1)
             rules = match.group(2)
@@ -488,17 +533,37 @@ class ASTHTMLParser(HTMLParser):
     def close(self) -> None:
         super().close()
         while len(self.stack) > 1:
-            node = self.stack.pop()
-            self._append_to_parent(node)
+            self._finish(self.stack.pop())
+        for node in walk(self.doc):
+            if isinstance(node, (Paragraph, Heading, TableCell)):
+                self._trim_trailing_space(node.children)
+        # The page title stands in for a missing main heading; TextConverter's
+        # own output only carries the template's placeholder title.
+        title = _WHITESPACE.sub(' ', self._title or '').strip()
+        has_h1 = any(isinstance(n, Heading) and n.level == 1 for n in self.doc.children)
+        if title and not has_h1 and not self._generated_by_us:
+            self.doc.children.insert(0, Heading(level=1, children=[Text(content=title)]))
 
 
 _NOISE = frozenset(['script', 'style', 'nav', 'footer', 'header',
                     'aside', 'noscript', 'iframe', 'form', 'head'])
-_VOID = frozenset([
-    'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
-    'link', 'meta', 'param', 'source', 'track', 'wbr'
+_SAFE_ATTRS = frozenset([
+    'href', 'src', 'alt', 'title', 'class', 'id', 'role', 'encoding', 'display', 'colspan', 'rowspan',
+    'data-src', 'data-lazy-src', 'srcset', 'data-srcset',
 ])
-_SAFE_ATTRS = frozenset(['href', 'src', 'alt', 'title', 'class', 'id', 'role', 'encoding', 'display', 'colspan', 'rowspan'])
+# Opening tag -> (open tags it ends implicitly, tags that stop the search).
+_IMPLIED_END: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    'li': (frozenset({'li'}), frozenset({'ul', 'ol'})),
+    'dt': (frozenset({'dt', 'dd'}), frozenset({'dl'})),
+    'dd': (frozenset({'dt', 'dd'}), frozenset({'dl'})),
+    'tr': (frozenset({'tr', 'td', 'th'}), frozenset({'table', 'thead', 'tbody', 'tfoot'})),
+    'td': (frozenset({'td', 'th'}), frozenset({'tr', 'table'})),
+    'th': (frozenset({'td', 'th'}), frozenset({'tr', 'table'})),
+    'thead': (frozenset({'thead', 'tbody', 'tfoot', 'tr', 'td', 'th'}), frozenset({'table'})),
+    'tbody': (frozenset({'thead', 'tbody', 'tfoot', 'tr', 'td', 'th'}), frozenset({'table'})),
+    'tfoot': (frozenset({'thead', 'tbody', 'tfoot', 'tr', 'td', 'th'}), frozenset({'table'})),
+    'option': (frozenset({'option'}), frozenset({'select', 'datalist'})),
+}
 
 
 class _ContentExtractor(HTMLParser):
@@ -509,84 +574,119 @@ class _ContentExtractor(HTMLParser):
       2. If <main>, <article>, or role=main is found -> return only that block
       3. Otherwise return the entire cleaned HTML
 
-    ``profiles`` are ``(profile, config)`` pairs for the sites this page was
-    recognized as; each profile can veto extra subtrees via ``skip_subtree``.
+    Elements are tracked on a stack of open tags, so an omitted end tag
+    (``</li>``, ``</p>``, ``</td>``, valid HTML5) or a stray one cannot shift
+    where a skipped subtree or the main block ends. Text and attribute values
+    are escaped again, since the parser decodes entities.
+
+    ``profiles`` are the site profiles this page was recognized by; each can
+    veto extra subtrees via ``skip_subtree``.
     """
-    def __init__(self, profiles: Sequence[tuple["SiteProfile", object]] = ()) -> None:
+    def __init__(self, profiles: Sequence[SiteProfile] = ()) -> None:
         super().__init__()
         self._profiles = list(profiles)
-        self._depth = 0
-        # Tree depth of the subtree currently being skipped, or None.
-        self._skip_depth: int | None = None
-        self._buf = []     # Complete cleaned HTML buffer
-        self._main_buf = []     # Main content block buffer
-        self._main_depth = None
+        self._open: list[str] = []
+        # Stack index of the root of the subtree being skipped, or None.
+        self._skip_at: int | None = None
+        self._buf: list[str] = []       # Complete cleaned HTML buffer
+        self._main_buf: list[str] = []  # Main content block buffer
+        self._main_at: int | None = None
 
     def _is_dropped(self, tag: str, ad: dict[str, str | None]) -> bool:
         if tag in _NOISE:
             return True
-        return any(profile.skip_subtree(tag, ad, cfg) for profile, cfg in self._profiles)
+        return any(profile.skip_subtree(tag, ad) for profile in self._profiles)
+
+    def _emit(self, piece: str) -> None:
+        self._buf.append(piece)
+        if self._main_at is not None:
+            self._main_buf.append(piece)
+
+    def _pop_to(self, index: int) -> None:
+        """Close the open elements from the top of the stack down to ``index``."""
+        while len(self._open) > index:
+            at = len(self._open) - 1
+            tag = self._open.pop()
+            if self._skip_at is not None:
+                if at == self._skip_at:
+                    self._skip_at = None  # Closed the root of the skipped subtree
+                continue
+            self._emit(f'</{tag}>')
+            if at == self._main_at:
+                self._main_at = None  # Exited the main content block
+
+    def _close_implied(self, tag: str) -> None:
+        if tag in _PARAGRAPH_CLOSERS:
+            # An open <p> with only inline elements above it ends here
+            for i in range(len(self._open) - 1, -1, -1):
+                if self._open[i] == 'p':
+                    self._pop_to(i)
+                    break
+                if self._open[i] not in _INLINE_TAGS:
+                    break
+        rule = _IMPLIED_END.get(tag)
+        if rule is None:
+            return
+        ends, boundary = rule
+        for i in range(len(self._open) - 1, -1, -1):
+            if self._open[i] in ends:
+                self._pop_to(i)
+                return
+            if self._open[i] in boundary:
+                return
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         ad = dict(attrs)
-        if tag not in _VOID:
-            self._depth += 1
-        if self._skip_depth is not None:
+        self._close_implied(tag)
+        void = tag in _VOID
+        if self._skip_at is not None:
+            if not void:
+                self._open.append(tag)
             return
         if self._is_dropped(tag, ad):
-            self._skip_depth = self._depth
+            if not void:
+                self._skip_at = len(self._open)
+                self._open.append(tag)
             return
 
-        if tag in ('main', 'article') or ad.get('role') == 'main':
-            if self._main_depth is None:
-                self._main_depth = self._depth
-
+        if not void:
+            self._open.append(tag)
+            if self._main_at is None and (tag in ('main', 'article') or ad.get('role') == 'main'):
+                self._main_at = len(self._open) - 1
         attr_str = ''.join(
-            f' {k}="{v}"' for k, v in attrs
+            f' {k}="{html.escape(v, quote=True)}"' for k, v in attrs
             if k in _SAFE_ATTRS and v
         )
-        piece = f'<{tag}{attr_str}>'
-        self._buf.append(piece)
-        if self._main_depth is not None:
-            self._main_buf.append(piece)
+        self._emit(f'<{tag}{attr_str}>')
 
     def handle_endtag(self, tag: str) -> None:
         if tag in _VOID:
             return
-        self._depth -= 1
-        if self._skip_depth is not None:
-            if self._depth < self._skip_depth:
-                self._skip_depth = None  # Closed the root of the skipped subtree
-            return
-
-        piece = f'</{tag}>'
-        self._buf.append(piece)
-        if self._main_depth is not None:
-            self._main_buf.append(piece)
-            if self._depth < self._main_depth:
-                self._main_depth = None  # Exited the main content block
+        for i in range(len(self._open) - 1, -1, -1):
+            if self._open[i] == tag:
+                self._pop_to(i)
+                return
+        # A stray end tag closes nothing
 
     def handle_data(self, data: str) -> None:
-        if self._skip_depth is not None:
+        if self._skip_at is not None:
             return
-        self._buf.append(data)
-        if self._main_depth is not None:
-            self._main_buf.append(data)
+        self._emit(html.escape(data, quote=False))
 
     def get_html(self) -> str:
         return ''.join(self._main_buf or self._buf)
 
 
-def extract_content(html: str, profiles: Sequence[tuple["SiteProfile", object]] = ()) -> str:
+def extract_content(html_text: str, profiles: Sequence[SiteProfile] = ()) -> str:
     """Return the main content of an HTML page, without navigation and other chrome.
 
     Args:
-        html: The page source.
-        profiles: Active site profiles with their settings; their
-            ``skip_subtree`` hooks drop site-specific chrome.
+        html_text: The page source.
+        profiles: Active site profiles; their ``skip_subtree`` hooks drop
+            site-specific chrome.
     """
     ex = _ContentExtractor(profiles)
-    ex.feed(html)
+    ex.feed(html_text)
     return ex.get_html()
 
 
@@ -594,22 +694,21 @@ def parse_html(
     text: str,
     *,
     extract_html: bool = False,
-    profiles: Sequence[tuple["SiteProfile", object]] = (),
+    profiles: Sequence[SiteProfile] = (),
 ) -> Document:
     """Parse HTML text into an AST Document.
 
     Args:
         text: HTML source.
         extract_html: Keep only the main content (see ``extract_content``).
-        profiles: Active site profiles with their settings; used with
-            ``extract_html``, then their ``clean_ast`` hooks edit the tree.
+        profiles: Active site profiles; used with ``extract_html``, then
+            their ``clean_ast`` hooks edit the tree.
     """
     if extract_html:
         text = extract_content(text, profiles)
     parser = ASTHTMLParser()
     parser.feed(text)
     parser.close()
-    for profile, cfg in profiles:
-        profile.clean_ast(parser.doc, cfg)
+    for profile in profiles:
+        profile.clean_ast(parser.doc)
     return parser.doc
-

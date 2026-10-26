@@ -134,7 +134,8 @@ _RENDERERS = {
     Link: _link,
     Image: _image,
     CodeInline: lambda node: f"`{node.code}`",
-    LineBreak: lambda node: "  \n",
+    # The enclosing paragraph turns every "\n" into a hard break ("  \n")
+    LineBreak: lambda node: "\n",
     BlockQuote: _block_quote,
     HorizontalRule: lambda node: "---",
     Equation: _equation,

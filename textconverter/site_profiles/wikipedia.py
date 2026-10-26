@@ -1,8 +1,8 @@
 from __future__ import annotations
 from urllib.parse import urlparse
 
-from ..ast import Document, Heading, Node, Text
-from ..config import WikipediaCleanupConfig
+from ..ast import Document, Heading, Node, Text, walk
+from ..config import HtmlConfig, WikipediaCleanupConfig
 from .base import SiteProfile
 
 # MediaWiki generates these class/id hooks from software, not from article text,
@@ -56,22 +56,14 @@ def _normalize(text: str) -> str:
 
 
 def _node_text(nodes: list[Node]) -> str:
-    """Concatenate the visible text of a list of inline nodes."""
-    parts: list[str] = []
-    for node in nodes:
-        if isinstance(node, Text):
-            parts.append(node.content)
-        elif isinstance(getattr(node, "content", None), list):
-            parts.append(_node_text(node.content))
-        elif isinstance(getattr(node, "children", None), list):
-            parts.append(_node_text(node.children))
-    return "".join(parts)
+    """The text of a list of nodes, descendants included."""
+    return "".join(n.content for node in nodes for n in walk(node) if isinstance(n, Text))
 
 
 class WikipediaProfile(SiteProfile):
     """Cleanup for Wikipedia / MediaWiki article pages, in any language.
 
-    Config: :class:`textconverter.config.WikipediaCleanupConfig`.
+    Settings: :class:`textconverter.config.WikipediaCleanupConfig` (``html.wikipedia``).
     Removes edit links, navboxes, maintenance banners, the table of contents,
     category footers and (optionally) inline ``[n]`` citation markers, and
     prunes a configurable set of end-matter sections. Images are left untouched
@@ -80,7 +72,15 @@ class WikipediaProfile(SiteProfile):
 
     name = "wikipedia"
 
-    def matches(self, url: str | None, html: str) -> bool:
+    def __init__(self, cfg: WikipediaCleanupConfig | None = None):
+        self.cfg = cfg or WikipediaCleanupConfig()
+
+    @classmethod
+    def from_config(cls, config: HtmlConfig) -> WikipediaProfile:
+        return cls(config.wikipedia)
+
+    @classmethod
+    def matches(cls, url: str | None, html: str) -> bool:
         if url:
             host = (urlparse(url).hostname or "").lower()
             if host == "wikipedia.org" or host.endswith(".wikipedia.org"):
@@ -88,7 +88,8 @@ class WikipediaProfile(SiteProfile):
         head = html[:50000]
         return 'class="mediawiki' in head or 'id="mw-content-text"' in head
 
-    def skip_subtree(self, tag: str, attrs: dict[str, str | None], cfg: WikipediaCleanupConfig) -> bool:
+    def skip_subtree(self, tag: str, attrs: dict[str, str | None]) -> bool:
+        cfg = self.cfg
         classes = frozenset((attrs.get("class") or "").split())
         node_id = attrs.get("id") or ""
         if classes & _STRIP_CLASSES or node_id in _STRIP_IDS:
@@ -102,8 +103,8 @@ class WikipediaProfile(SiteProfile):
             return True
         return False
 
-    def clean_ast(self, doc: Document, cfg: WikipediaCleanupConfig) -> None:
-        drop_titles = self._resolve_drop_titles(cfg.drop_sections)
+    def clean_ast(self, doc: Document) -> None:
+        drop_titles = self._resolve_drop_titles(self.cfg.drop_sections)
         if not drop_titles:
             return
         kept: list[Node] = []

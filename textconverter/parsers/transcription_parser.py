@@ -7,18 +7,12 @@ output into AST nodes so every caller treats it the same way.
 from __future__ import annotations
 import re
 from ..ast import Document, Equation, Node
+from ._math import unwrap_math
 from .html_parser import parse_html
 from .markdown_parser import parse_markdown
 
 _HTML_TABLE = re.compile(r"<table\b.*?</table>", re.IGNORECASE | re.DOTALL)
 _FENCE = re.compile(r"^```[\w-]*\n(.*?)\n?```$", re.DOTALL)
-_MATH_DELIMITERS = (
-    ("$$", "$$"),
-    (r"\[", r"\]"),
-    (r"\begin{equation}", r"\end{equation}"),
-    (r"\begin{align}", r"\end{align}"),
-    (r"\begin{displaymath}", r"\end{displaymath}"),
-)
 
 
 def strip_fence(text: str) -> str:
@@ -81,17 +75,23 @@ def equation_code(text: str, bare_is_formula: bool = False) -> str | None:
     Args:
         text: Model output.
         bare_is_formula: Treat text without math delimiters as a formula too
-            (the image was classified as one), also accepting inline ``$...$``.
+            (the image was classified as one), also accepting inline ``$...$``
+            and ``\\(...\\)``.
 
     Returns:
         The formula without delimiters, or None if the text is not a formula.
+        Several delimited formulas (``$$a$$ and $$b$$``) are not one formula.
     """
     code = strip_fence(text)
-    for start, end in _MATH_DELIMITERS:
-        if code.startswith(start) and code.endswith(end) and len(code) > len(start) + len(end):
-            return code[len(start):-len(end)].strip()
+    inner = unwrap_math(code, display_only=True)
+    if inner is not None:
+        return inner
     if not bare_is_formula or not code:
         return None
-    if len(code) > 2 and code.startswith("$") and code.endswith("$"):
-        return code[1:-1].strip()
+    inner = unwrap_math(code)
+    if inner is not None:
+        return inner
+    if code.startswith("$") or code.endswith("$"):
+        inner = code.strip("$")
+        return inner.strip() if len(code) > 2 and "$" not in inner else None
     return code

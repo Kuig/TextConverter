@@ -70,13 +70,12 @@ class TestWikipediaCleanup(BaseConverterTest):
         """keep_reference_list / drop_citation_marks / extra_strip_selectors honoured."""
         from textconverter.config import WikipediaCleanupConfig
         from textconverter.site_profiles import WikipediaProfile
-        prof = WikipediaProfile()
 
-        md = self._render(profiles=[(prof, WikipediaCleanupConfig(keep_reference_list=False))])
+        md = self._render(profiles=[WikipediaProfile(WikipediaCleanupConfig(keep_reference_list=False))])
         self.assertNotIn("Full citation text", md)
 
-        md = self._render(profiles=[(prof, WikipediaCleanupConfig(drop_citation_marks=False))])
+        md = self._render(profiles=[WikipediaProfile(WikipediaCleanupConfig(drop_citation_marks=False))])
         self.assertIn("[[1]](#cite_note-1)", md)
 
-        md = self._render(profiles=[(prof, WikipediaCleanupConfig(extra_strip_selectors=["infobox"]))])
+        md = self._render(profiles=[WikipediaProfile(WikipediaCleanupConfig(extra_strip_selectors=["infobox"]))])
         self.assertNotIn("Founded", md)

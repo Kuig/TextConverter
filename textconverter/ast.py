@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
@@ -188,3 +189,23 @@ def walk(node: Node) -> Iterator[Node]:
     for lst in child_lists(node):
         for child in lst:
             yield from walk(child)
+
+
+_ABSTRACT_PREFIX = re.compile(r'^\s*abstract\b[\s:.]*', re.IGNORECASE)
+
+
+def abstract_from(children: list[Node]) -> Abstract | None:
+    """Return an Abstract holding ``children`` when their text opens with the word "Abstract".
+
+    Parsers call it on a block quote's content. The leading word (and a
+    following colon) is removed from the first text node; "Abstraction ..."
+    does not count.
+
+    Returns:
+        The Abstract, or None when the quote is not one.
+    """
+    first = next((n for c in children for n in walk(c) if isinstance(n, Text) and n.content.strip()), None)
+    if first is None or not _ABSTRACT_PREFIX.match(first.content):
+        return None
+    first.content = _ABSTRACT_PREFIX.sub('', first.content, count=1)
+    return Abstract(children=children)

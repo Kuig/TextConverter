@@ -91,7 +91,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   start or end of a paragraph is dropped; `~` in a link URL is no longer turned into
   `\textasciitilde{}`.
 - HTML output renders `javascript:`, `vbscript:` and `data:` links as `#`.
-- Strikethrough text is rendered in every format (`~~x~~`, `<s>`, `\sout`).
+- Strikethrough text is rendered in every format (`~~x~~`, `<s>`, `\sout`), and read from
+  HTML `<s>`, `<del>` and `<strike>`.
+- HTML main-content extraction (`--extract-html`) no longer corrupts or loses content:
+  escaped markup in the text (`a &lt;b&gt;`, code samples) stayed escaped instead of turning
+  into tags or vanishing; quoted attributes are no longer truncated; an omitted end tag
+  (`</li>`, `</p>`, valid HTML5) inside dropped navigation no longer swallows the rest of the
+  page, and a stray end tag no longer ends the main block early.
+- HTML parsing: `<br>` (or another void element) inside `<b>`/`<i>` no longer makes the
+  following text bold or italic; line breaks of the HTML source are spaces instead of hard
+  breaks, and the space between two inline elements (`<b>a</b> <i>b</i>`) is kept; a stray
+  end tag (such as `</code>` inside `<pre>`) no longer closes the enclosing block; a first
+  row of `<th>` cells without `<thead>` is the table header; unclosed rows and cells are
+  closed in place.
+- HTML round trips: the page `<title>` becomes the main heading only when the page has no
+  `h1` (TextConverter's own HTML is recognized and its placeholder title skipped, so
+  md → html → md no longer adds `# Document`); the code language is read from
+  `<code class="language-x">` (as written) and only from `language-`/`lang-` classes.
+- Lazy-loaded images (`data-src`, `srcset`) keep their real source.
+- A block quote starting with "Abstraction" (or any word beginning with "abstract") is no
+  longer turned into an abstract.
+- A Markdown hard break inside a paragraph is written with two trailing spaces, not four.
+- A transcription with several formulas (`$$a$$ and $$b$$`) is no longer merged into one
+  broken equation.
 - Without a `config.json`, changing a setting in the GUI (e.g. the context size) no longer
   changes the built-in defaults for every later configuration in the same process.
 - A `config.json` section that is not a JSON object (e.g. `"wikipedia": [...]`) is reported

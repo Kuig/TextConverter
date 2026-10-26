@@ -43,3 +43,15 @@ class TestTranscriptionNodes(BaseConverterTest):
         self.assertIsInstance(transcription_nodes("x^2")[0], Paragraph)
         nodes = transcription_nodes("<table><tr><td>a</td></tr></table>", "table")
         self.assertIsInstance(nodes[0], Table)
+
+
+class TestEquationCode(BaseConverterTest):
+
+    def test_several_formulas_are_not_one(self):
+        """'$$a$$ text $$b$$' used to become the single formula 'a$$ text $$b'."""
+        from textconverter.parsers.transcription_parser import equation_code
+        self.assertIsNone(equation_code("$$a$$ and text $$b$$"))
+        self.assertIsNone(equation_code("$a$ and $b$", bare_is_formula=True))
+        self.assertEqual(equation_code("$$E=mc^2$$"), "E=mc^2")
+        self.assertEqual(equation_code(r"\(x\)", bare_is_formula=True), "x")
+        self.assertIsNone(equation_code(r"\(x\)"))

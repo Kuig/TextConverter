@@ -6,6 +6,7 @@ PLAIN_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="generator" content="TextConverter">
 <title>Document</title>
 </head>
 <body>
@@ -18,6 +19,7 @@ PRETTY_LIGHT_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="generator" content="TextConverter">
 <title>Document</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
