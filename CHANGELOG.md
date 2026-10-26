@@ -112,6 +112,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A block quote starting with "Abstraction" (or any word beginning with "abstract") is no
   longer turned into an abstract.
 - A Markdown hard break inside a paragraph is written with two trailing spaces, not four.
+- Markdown output escapes literal text that would read back as markup (`*`, `` ` ``, `[`,
+  `]`, `$`, word-edge `_`, `~~`, a backslash before punctuation or a macro name, and a line
+  starting with `#`, `>`, `-`, `+`, `1.` or `---`); the Markdown parser understands backslash
+  escapes. Code spans and code blocks use more backticks than the code holds, and a link or
+  image URL with spaces or unbalanced parentheses goes between `<...>`. Markdown round trips
+  are stable on the test documents.
+- Markdown parsing: the text right after a heading line is no longer dropped; an empty header
+  cell (`| | Q1 | Q2 |`) no longer shifts the columns and loses the last one; only a real
+  delimiter row (`|---|`) makes a table; an undefined reference (`matrix[i][j]`) stays text
+  instead of a link to `#`; an underscore inside a word (`my_var_name`) is not emphasis;
+  nested emphasis (`**_x_**`) is bold and italic; `~~x~~` is strikethrough; URLs with
+  parentheses (Wikipedia's `Foo_(bar)`) are kept whole; reference links work in list
+  continuation lines; `\citet*{...}` is a citation; a code fence right after a `•` item
+  belongs to that item; the two trailing spaces of a hard break are not kept as text.
+- The described-image block written to Markdown is read back into the image's description
+  and category.
+- `--code-parsing` no longer alters the code it detects (`__init__` became `init`,
+  `a * b * c` became `a  b  c`).
+- A root-relative image path in a local HTML file (`/media/x.png`) is kept as is instead of
+  being turned into a path on the current drive.
 - A transcription with several formulas (`$$a$$ and $$b$$`) is no longer merged into one
   broken equation.
 - Without a `config.json`, changing a setting in the GUI (e.g. the context size) no longer

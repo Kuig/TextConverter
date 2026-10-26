@@ -6,6 +6,7 @@ from ..ast import (
     CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, InlineElement,
     BlockQuote, Equation
 )
+from ._latex_macros import REFERENCE_MACROS, extract_macro_args, find_balanced_braces, parse_reference_macro
 
 def _normalize_latex_quotes(text: str) -> str:
     """Convert LaTeX typographic quote sequences to Unicode curly quotes.
@@ -20,80 +21,11 @@ def _normalize_latex_quotes(text: str) -> str:
     return text
 
 
-def _find_balanced_braces(text: str, start_pos: int) -> tuple[str, int]:
-    """Finds the content enclosed in balanced curly braces starting from start_pos.
-    
-    Returns a tuple of (content_inside, index_after_closing_brace).
-    If braces are not balanced or not found, returns ("", start_pos).
-    """
-    brace_start = text.find('{', start_pos)
-    if brace_start == -1:
-        return "", start_pos
-        
-    depth = 0
-    content_chars = []
-    i = brace_start
-    while i < len(text):
-        char = text[i]
-        if char == '{':
-            if depth > 0:
-                content_chars.append(char)
-            depth += 1
-        elif char == '}':
-            depth -= 1
-            if depth == 0:
-                return "".join(content_chars), i + 1
-            content_chars.append(char)
-        else:
-            if depth > 0:
-                content_chars.append(char)
-        i += 1
-    return "".join(content_chars), len(text)
-
-
-def _extract_macro_args(text: str, macro_name: str, start_pos: int = 0) -> tuple[list[str], int, int]:
-    """Finds the first occurrence of macro_name in text after start_pos and extracts its arguments.
-    
-    A macro can have one or more consecutive {...} argument blocks.
-    Returns:
-        (args_list, macro_start_index, macro_end_index)
-        If not found, returns ([], -1, -1).
-    """
-    pos = text.find(macro_name, start_pos)
-    if pos == -1:
-        return [], -1, -1
-        
-    # Check if there is an opening brace following the macro name (possibly with spaces/newline)
-    idx = pos + len(macro_name)
-    
-    # Skip optional parameter [...] if present
-    if idx < len(text) and text[idx] == '[':
-        end_opt = text.find(']', idx)
-        if end_opt != -1:
-            idx = end_opt + 1
-            
-    args = []
-    while idx < len(text):
-        saved_idx = idx
-        while idx < len(text) and text[idx].isspace():
-            idx += 1
-            
-        if idx < len(text) and text[idx] == '{':
-            content, next_idx = _find_balanced_braces(text, idx)
-            args.append(content)
-            idx = next_idx
-        else:
-            idx = saved_idx
-            break
-            
-    return args, pos, idx
-
-
 def _strip_macro(text: str, macro_name: str, num_args: int = 1) -> str:
     """Finds all occurrences of macro_name and strips them out along with their arguments."""
     pos = 0
     while True:
-        args, start, end = _extract_macro_args(text, macro_name, pos)
+        args, start, end = extract_macro_args(text, macro_name, pos)
         if start == -1:
             break
         text = text[:start] + text[end:]
@@ -125,7 +57,7 @@ def _extract_environment(text: str, env_name: str, start_pos: int = 0) -> tuple[
     while idx < len(content) and content[idx].isspace():
         idx += 1
     if idx < len(content) and content[idx] == '{':
-        _, next_idx = _find_balanced_braces(content, idx)
+        _, next_idx = find_balanced_braces(content, idx)
         content = content[next_idx:]
         
     return content, start_idx, end_idx + len(end_str)
@@ -153,17 +85,17 @@ def parse_latex(text: str) -> Document:
 
     # Extract \title{...}, \author{...}, \date{...} (now clean of layout commands)
     title_text = None
-    args_title, _, _ = _extract_macro_args(text, "\\title")
+    args_title, _, _ = extract_macro_args(text, "\\title")
     if args_title:
         title_text = args_title[0].strip()
 
     author_text = None
-    args_author, _, _ = _extract_macro_args(text, "\\author")
+    args_author, _, _ = extract_macro_args(text, "\\author")
     if args_author:
         author_text = args_author[0].strip()
 
     date_text = None
-    args_date, _, _ = _extract_macro_args(text, "\\date")
+    args_date, _, _ = extract_macro_args(text, "\\date")
     if args_date:
         date_text = args_date[0].strip()
 
@@ -246,7 +178,7 @@ def parse_latex(text: str) -> Document:
             else:
                 cmd_name = first_cmd
                 
-            args, start, end = _extract_macro_args(text, cmd_name, first_pos)
+            args, start, end = extract_macro_args(text, cmd_name, first_pos)
             if start != -1 and args:
                 level = {'section': 1, 'subsection': 2, 'subsubsection': 3, 'paragraph': 4}.get(first_type, 1)
                 doc.children.append(Heading(level=level, children=parse_inline_latex(args[0])))
@@ -300,8 +232,8 @@ def parse_latex(text: str) -> Document:
             env_name = first_type
             content, start, end = _extract_environment(text, env_name, first_pos)
             if start != -1:
-                img_args, img_start, img_end = _extract_macro_args(content, "\\includegraphics")
-                cap_args, cap_start, cap_end = _extract_macro_args(content, "\\caption")
+                img_args, img_start, img_end = extract_macro_args(content, "\\includegraphics")
+                cap_args, cap_start, cap_end = extract_macro_args(content, "\\caption")
                 caption_text = cap_args[0].strip() if cap_args else None
                 
                 if img_args:
@@ -320,7 +252,7 @@ def parse_latex(text: str) -> Document:
             content, start, end = _extract_environment(text, env_name, first_pos)
             if start != -1:
                 tab_content, tab_start, tab_end = _extract_environment(content, "tabular")
-                cap_args, cap_start, cap_end = _extract_macro_args(content, "\\caption")
+                cap_args, cap_start, cap_end = extract_macro_args(content, "\\caption")
                 caption_text = cap_args[0].strip() if cap_args else None
                 
                 if caption_text:
@@ -474,29 +406,17 @@ def parse_inline_latex(text: str, is_bold: bool = False, is_italic: bool = False
         cmd_name = m.group(0) # e.g. \textbf or \cite
         cmd_base = m.group(1) # e.g. textbf or cite
         
-        # Check if it is a safeguarded macro: cite, citet, citet*, citet, citet*, ref, label, footnote
-        if cmd_base in ('cite', 'citet', 'citep', 'ref', 'label', 'footnote'):
-            from ..ast import Footnote, Citation, Reference, Label
-            args, start, end = _extract_macro_args(text, cmd_name, pos)
-            if start != -1 and args:
-                if cmd_base == 'footnote':
-                    elements.append(Footnote(content=parse_inline_latex(args[0], is_bold=is_bold, is_italic=is_italic)))
-                elif cmd_base in ('cite', 'citet', 'citep'):
-                    keys = [k.strip() for k in args[0].split(',') if k.strip()]
-                    elements.append(Citation(keys=keys, style=cmd_base))
-                elif cmd_base == 'ref':
-                    elements.append(Reference(label=args[0].strip()))
-                elif cmd_base == 'label':
-                    elements.append(Label(name=args[0].strip()))
-                pos = end
-            else:
-                elements.append(Text(content=cmd_name, bold=is_bold, italic=is_italic))
-                pos += len(cmd_name)
+        # Footnotes, citations and cross-references stay AST nodes
+        if cmd_base in REFERENCE_MACROS:
+            node, pos = parse_reference_macro(
+                text, pos, cmd_name,
+                lambda arg: parse_inline_latex(arg, is_bold=is_bold, is_italic=is_italic))
+            elements.append(node or Text(content=cmd_name, bold=is_bold, italic=is_italic))
             continue
             
         # Check if it is a known inline style command
         if cmd_base in ('textbf', 'textit', 'texttt', 'href', 'url', 'includegraphics'):
-            args, start, end = _extract_macro_args(text, cmd_name, pos)
+            args, start, end = extract_macro_args(text, cmd_name, pos)
             if start != -1 and args:
                 if cmd_base == 'textbf':
                     elements.extend(parse_inline_latex(args[0], is_bold=True, is_italic=is_italic))
@@ -523,7 +443,7 @@ def parse_inline_latex(text: str, is_bold: bool = False, is_italic: bool = False
             continue
             
         # 4. Any other unrecognized macro command
-        args, start, end = _extract_macro_args(text, cmd_name, pos)
+        args, start, end = extract_macro_args(text, cmd_name, pos)
         if start != -1:
             if args:
                 # Replace command with its recursively parsed argument content

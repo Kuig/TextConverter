@@ -7,6 +7,25 @@ from ..ast import (
 )
 from ._common import latex_reference_macro, table_grid
 
+# Characters of literal text that Markdown would read as markup (see _escape).
+_MD_SPECIAL = re.compile(
+    r'\\(?=[!-/:-@\[-`{-~]|(?:footnote|citet|citep|cite|ref|label)(?![a-zA-Z])|$)'
+    r'|[*`\[\]$]'
+    r'|(?<!\w)_|_(?!\w)'
+    r'|~(?=~)|(?<=~)~'
+    r'|<(?=br\b)'
+)
+# A block marker at the start of a line: heading, quote, list item or rule.
+_LINE_START = re.compile(r'^([ \t]*)(#{1,6}(?=[ \t]|$)|>|[-+](?=[ \t])|-(?=--)|\d+\.(?=[ \t]))',
+                         re.MULTILINE)
+
+
+def _escape_line_start(m: re.Match) -> str:
+    indent, marker = m.groups()
+    if marker[-1] == '.':  # "1." -> "1\."
+        return f"{indent}{marker[:-1]}\\."
+    return f"{indent}\\{marker}"
+
 
 def _sanitize_table_cell(text: str) -> str:
     """Flatten a rendered cell so it can never break its one-line table row.
@@ -46,11 +65,16 @@ def _heading(node: Heading) -> str:
 
 
 def _paragraph(node: Paragraph) -> str:
-    return _inline(node.children).strip().replace('\n', '  \n')
+    # A line of the paragraph that starts like a block (heading, quote, item, rule) is escaped
+    content = _LINE_START.sub(_escape_line_start, _inline(node.children).strip())
+    return content.replace('\n', '  \n')
 
 
 def _code_block(node: CodeBlock) -> str:
-    return f"```{node.language or ''}\n{node.code}\n```"
+    # The fence must be longer than any backtick run in the code
+    longest = max((len(run) for run in re.findall(r'`+', node.code)), default=0)
+    fence = '`' * max(3, longest + 1)
+    return f"{fence}{node.language or ''}\n{node.code}\n{fence}"
 
 
 def _list(node: ListBlock) -> str:
@@ -89,8 +113,35 @@ def _table_cell(node: TableCell) -> str:
     return _inline(node.children).strip()
 
 
+def _escape(text: str) -> str:
+    """Backslash-escape what the Markdown parser would read as markup in literal text.
+
+    Escapes ``*``, `````, ``[``, ``]``, ``$``, an underscore at a word edge,
+    doubled ``~``, ``<br``, and a backslash that would start an escape or a
+    reference macro. Block markers at the start of a line are escaped per
+    paragraph (see ``_paragraph``).
+    """
+    return _MD_SPECIAL.sub(lambda m: '\\' + m.group(0), text)
+
+
+def _escape_title(title: str | None) -> str:
+    return f' "{title.replace(chr(34), chr(92) + chr(34))}"' if title else ''
+
+
+def _destination(url: str) -> str:
+    """A link or image URL; in ``<...>`` when it has spaces or unbalanced parentheses."""
+    depth = 0
+    for ch in url:
+        depth += {'(': 1, ')': -1}.get(ch, 0)
+        if depth < 0:
+            break
+    if depth or re.search(r'\s', url) or not url:
+        return f"<{url}>"
+    return url
+
+
 def _text(node: Text) -> str:
-    content = node.content
+    content = _escape(node.content)
     if node.italic: content = f"_{content}_"
     if node.bold: content = f"**{content}**"
     if node.strikethrough: content = f"~~{content}~~"
@@ -98,13 +149,20 @@ def _text(node: Text) -> str:
 
 
 def _link(node: Link) -> str:
-    title_str = f' "{node.title}"' if node.title else ''
-    return f"[{_inline(node.content)}]({node.url}{title_str})"
+    return f"[{_inline(node.content)}]({_destination(node.url)}{_escape_title(node.title)})"
 
 
 def _image(node: Image) -> str:
-    title_str = f' "{node.title}"' if node.title else ''
-    return f'![{node.alt}]({node.src}{title_str})'
+    alt = re.sub(r'([\\\[\]])', r'\\\1', node.alt)
+    return f'![{alt}]({_destination(node.src)}{_escape_title(node.title)})'
+
+
+def _code_inline(node: CodeInline) -> str:
+    """A code span fenced by more backticks than the code holds in a row."""
+    longest = max((len(run) for run in re.findall(r'`+', node.code)), default=0)
+    fence = '`' * (longest + 1)
+    pad = ' ' if node.code.startswith('`') or node.code.endswith('`') else ''
+    return f"{fence}{pad}{node.code}{pad}{fence}"
 
 
 def _block_quote(node: BlockQuote) -> str:
@@ -133,7 +191,7 @@ _RENDERERS = {
     Text: _text,
     Link: _link,
     Image: _image,
-    CodeInline: lambda node: f"`{node.code}`",
+    CodeInline: _code_inline,
     # The enclosing paragraph turns every "\n" into a hard break ("  \n")
     LineBreak: lambda node: "\n",
     BlockQuote: _block_quote,

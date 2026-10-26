@@ -127,9 +127,13 @@ class ImagePaths:
         node.src = new_src
 
     def absolutize(self, doc: Node) -> None:
-        """Make every relative local image path absolute."""
+        """Make every relative local image path absolute.
+
+        A root-relative source (``/media/x.png``) is a path on the site the
+        document came from, not next to it, and stays as it is.
+        """
         for node in walk(doc):
-            if isinstance(node, Image):
+            if isinstance(node, Image) and not node.src.startswith(("/", "\\")):
                 path = resolve_local(node.src, self.doc_dir)
                 if path and not os.path.isabs(node.src):
                     self._rewrite(node, os.path.abspath(path))

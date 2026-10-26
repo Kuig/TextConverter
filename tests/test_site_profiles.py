@@ -51,7 +51,7 @@ class TestWikipediaCleanup(BaseConverterTest):
         md = self._render(profiles=())
         self.assertIn("Navlink A", md)
         self.assertIn("See also", md)
-        self.assertIn("[[1]](#cite_note-1)", md)
+        self.assertIn(r"[\[1\]](#cite_note-1)", md)
 
     def test_fingerprint_activation_via_convert(self):
         """No URL: the <body class="mediawiki"> fingerprint still activates the profile."""
@@ -75,7 +75,7 @@ class TestWikipediaCleanup(BaseConverterTest):
         self.assertNotIn("Full citation text", md)
 
         md = self._render(profiles=[WikipediaProfile(WikipediaCleanupConfig(drop_citation_marks=False))])
-        self.assertIn("[[1]](#cite_note-1)", md)
+        self.assertIn(r"[\[1\]](#cite_note-1)", md)
 
         md = self._render(profiles=[WikipediaProfile(WikipediaCleanupConfig(extra_strip_selectors=["infobox"]))])
         self.assertNotIn("Founded", md)

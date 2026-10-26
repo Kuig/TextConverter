@@ -204,8 +204,21 @@ def abstract_from(children: list[Node]) -> Abstract | None:
     Returns:
         The Abstract, or None when the quote is not one.
     """
-    first = next((n for c in children for n in walk(c) if isinstance(n, Text) and n.content.strip()), None)
-    if first is None or not _ABSTRACT_PREFIX.match(first.content):
-        return None
-    first.content = _ABSTRACT_PREFIX.sub('', first.content, count=1)
-    return Abstract(children=children)
+    holder = Document(children=children)
+    for parent in walk(holder):
+        for lst in child_lists(parent):
+            for i, node in enumerate(lst):
+                if not isinstance(node, Text) or not node.content.strip():
+                    continue
+                if not _ABSTRACT_PREFIX.match(node.content):
+                    return None
+                node.content = _ABSTRACT_PREFIX.sub('', node.content, count=1)
+                if not node.content:
+                    # The heading word alone (e.g. **Abstract**): drop it and the break after it
+                    del lst[i]
+                    if i < len(lst) and isinstance(lst[i], Text):
+                        lst[i].content = lst[i].content.lstrip()
+                    elif i < len(lst) and isinstance(lst[i], LineBreak):
+                        del lst[i]
+                return Abstract(children=children)
+    return None

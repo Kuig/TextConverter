@@ -2,6 +2,7 @@ from __future__ import annotations
 import re
 
 from textconverter.logger import log_info, log_action, log_warning
+from textconverter.parsers.markdown_parser import TABLE_SEPARATOR
 
 
 KEYWORDS = {
@@ -194,7 +195,7 @@ def pre_process_markdown_code(text: str) -> str:
             is_candidate = False
         elif "|" in stripped and "\n" in stripped:
             lines = stripped.split("\n")
-            has_separator = len(lines) >= 2 and "|" in lines[0] and "-" in lines[1]
+            has_separator = len(lines) >= 2 and "|" in lines[0] and bool(TABLE_SEPARATOR.match(lines[1]))
             is_strict_table = len(lines) >= 1 and all(
                 line.strip().startswith("|") and line.strip().endswith("|") for line in lines
             )
@@ -211,19 +212,17 @@ def pre_process_markdown_code(text: str) -> str:
         if is_candidate:
             is_code, lang = detect_code(block)
             if is_code:
-                # Double-pass validation:
-                # 1. We strip markdown formatting AND URLs to check if it's genuinely code.
-                # 2. We keep the URL in the final text, but remove bold/italic formatting.
-                clean_code_block = re.sub(r'\*\*(.*?)\*\*|__(.*?)__', lambda m: m.group(1) or m.group(2) or '', block)
-                clean_code_block = re.sub(r'\*(.*?)\*|_(.*?)_', lambda m: m.group(1) or m.group(2) or '', clean_code_block)
-                
-                # Strip URLs only for the validation check to avoid false positives from URL characters
-                stripped_block_for_detection = re.sub(r'https?://\S+', '', clean_code_block)
-                
-                still_code, still_lang = detect_code(stripped_block_for_detection)
+                # Second check on a copy without Markdown emphasis and URLs, whose
+                # characters can look like code; the block itself is kept as is
+                # (removing "emphasis" from real code turned __init__ into init).
+                detection_copy = re.sub(r'\*\*(.*?)\*\*|__(.*?)__', lambda m: m.group(1) or m.group(2) or '', block)
+                detection_copy = re.sub(r'\*(.*?)\*|_(.*?)_', lambda m: m.group(1) or m.group(2) or '', detection_copy)
+                detection_copy = re.sub(r'https?://\S+', '', detection_copy)
+
+                still_code, still_lang = detect_code(detection_copy)
                 if still_code:
-                    log_action(f"Detected code block (language: {still_lang or lang or 'unknown'}) for: {clean_code_block[:60]}...")
-                    classified_blocks.append((True, still_lang or lang, clean_code_block))
+                    log_action(f"Detected code block (language: {still_lang or lang or 'unknown'}) for: {block[:60]}...")
+                    classified_blocks.append((True, still_lang or lang, block))
                 else:
                     classified_blocks.append((False, None, block))
             else:
