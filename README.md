@@ -4,7 +4,7 @@ Multi-format document conversion tool with AI-powered image description and heur
 
 ## Overview
 
-TextConverter converts between PDF, HTML, Markdown, LaTeX, and JSON formats. It supports:
+TextConverter converts between PDF, HTML, Markdown, LaTeX, and JSON formats (PDF output is printed from the light HTML theme). It supports:
 - **URL Inputs**: Directly convert remote documents (both PDFs and HTML pages) from a remote URL.
 - **HTML Content Extraction**: A zero-dependency heuristic parser to clean up webpage boilerplates (like navigation headers, footers, script, and style elements) and isolate the primary content (`<main>`, `<article>`).
 - **Remote Image Downloading**: Automatically downloads and cleans remote images referenced in webpages, applying OS-safe filename sanitization and exact binary content-based deduplication to prevent duplicate copies on disk.
@@ -107,6 +107,9 @@ textconverter convert https://en.wikipedia.org/wiki/Modena DocsOutput/modena.md 
 # Scanned PDF: render every page and transcribe it with AI (classification, then OCR or description)
 textconverter convert DocsInput/scan.pdf DocsOutput/scan.md --pdf-mode raster
 
+# Any source to PDF (printed with Edge/Chrome when installed, else a built-in renderer)
+textconverter convert DocsInput/document.md DocsOutput/document.pdf
+
 # Convert with AI image description
 textconverter convert DocsInput/document.pdf DocsOutput/document.md --image-handling describe
 
@@ -197,6 +200,8 @@ def save_to_file(
     """Convert and write the result directly to output_path (format inferred from its extension)."""
 ```
 Same semantics as `convert()`, but infers both `to_format` (from `output_path`'s extension) and `is_file=True`, and writes the result to disk instead of returning it.
+
+A `.pdf` output path renders the document as HTML with the light theme and prints it: with a headless Edge, Chrome or Chromium when one is installed (full styling, formulas typeset by MathJax when online), otherwise with PyMuPDF's built-in layout engine (simpler styling, formulas shown as TeX). `template` is ignored, and images are embedded in the PDF (`auto` and `link` act as `embed`).
 
 ### Windows Context Menu Integration
 

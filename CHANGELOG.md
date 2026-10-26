@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for scanned PDFs or PDFs with an unusable text layer. A page that cannot be transcribed is
   kept as an image.
 - Opt-in live tests against the configured AI provider (`TEXTCONVERTER_LIVE_AI=1`).
+- **PDF output.** An output path ending in `.pdf` prints the light-theme HTML rendering, with
+  images embedded: through a headless Edge, Chrome or Chromium when one is installed
+  (formulas typeset by MathJax), otherwise through PyMuPDF's built-in layout engine. No new
+  dependency.
 
 ### Changed
 

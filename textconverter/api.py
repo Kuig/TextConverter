@@ -18,6 +18,9 @@ from .renderers.json_renderer import render_json
 from .site_profiles import resolve_profiles
 from .config import AppConfig, load_config
 
+# HTML template that PDF output is printed from.
+PDF_TEMPLATE = "light"
+
 def _extract_image_filename(url: str) -> str:
     """Extracts a clean filename from a remote URL, handling nested/proxied URL structures.
 
@@ -402,6 +405,11 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
 def save_to_file(source: str, output_path: str, template: str = "plain", image_handling: str = "auto", code_parsing: bool = False, extract_html: bool = False, discard_links: bool = False, site_cleanup: bool | None = None, config: AppConfig | None = None, pdf_mode: str = "text") -> None:
     """
     Convert and save directly to file, inferring to_format and from_format.
+
+    A ``.pdf`` output is the HTML rendering with the light template, printed by
+    ``renderers.pdf_renderer.render_pdf``. ``template`` is ignored for it, and
+    images are embedded (``auto`` and ``link`` both resolve to ``embed``), so
+    the PDF is self-contained and no image folder is left next to it.
     """
     out_path = pathlib.Path(output_path)
     to_ext = out_path.suffix.lower()
@@ -409,8 +417,19 @@ def save_to_file(source: str, output_path: str, template: str = "plain", image_h
     elif to_ext in ('.html', '.htm'): to_format = 'html'
     elif to_ext in ('.tex', '.latex'): to_format = 'latex'
     elif to_ext == '.json': to_format = 'json'
+    elif to_ext == '.pdf': to_format = 'pdf'
     else:
         raise ValueError("Could not infer output format from extension.")
+
+    if to_format == 'pdf':
+        import tempfile
+        from .renderers.pdf_renderer import render_pdf
+        if image_handling in ("auto", "link"):
+            image_handling = "embed"
+        with tempfile.TemporaryDirectory(prefix="textconverter_pdf_") as tmp:
+            html = convert(source, to_format="html", template=PDF_TEMPLATE, is_file=True, output_dir=tmp, image_dir_name="images", image_handling=image_handling, code_parsing=code_parsing, extract_html=extract_html, discard_links=discard_links, site_cleanup=site_cleanup, config=config, pdf_mode=pdf_mode)
+            render_pdf(html, output_path, base_dir=tmp)
+        return
 
     result = convert(source, to_format=to_format, template=template, is_file=True, output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images", image_handling=image_handling, code_parsing=code_parsing, extract_html=extract_html, discard_links=discard_links, site_cleanup=site_cleanup, config=config, pdf_mode=pdf_mode)
     with open(output_path, 'w', encoding='utf-8') as f:
