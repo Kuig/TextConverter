@@ -11,7 +11,6 @@ TextConverter/
 ├── pyproject.toml                   ← Packaging and project setup
 ├── requirements_dev.txt             ← Development dependencies
 ├── requirements_prod.txt            ← Production dependencies (includes unified_ai_client)
-├── test.py                          ← Convenience wrapper around tests/test.py
 ├── README.md
 ├── ARCHITECTURE.md
 ├── CONTRIBUTING.md

@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pymupdf4llm` releases need `onnxruntime`; where it is unavailable (e.g. on new Python
   versions) pip installed `pymupdf4llm` 2.0, an empty package, and PDF input failed.
 - HTML main-content extraction drops a skipped element together with all its nested children.
+- The test suite is split into one `tests/test_<area>.py` per area and runs with
+  `python -m unittest discover -s tests`; the root `test.py` wrapper is gone. No test can
+  reach a live AI model any more (a LaTeX conversion test used to preload one).
 
 ### Removed
 
