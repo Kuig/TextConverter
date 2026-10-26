@@ -45,7 +45,8 @@ def _escape_latex(text: str) -> str:
     # basic escapes
     chars = {
         '&': r'\&', '%': r'\%', '$': r'\$', '#': r'\#', '_': r'\_',
-        '{': r'\{', '}': r'\}', '~': r'\textasciitilde{}', '^': r'\textasciicircum{}', '\\': r'\textbackslash{}'
+        '{': r'\{', '}': r'\}', '~': r'\textasciitilde{}', '^': r'\textasciicircum{}', '\\': r'\textbackslash{}',
+        ' ': '~',  # no-break space
     }
     return "".join(chars.get(c, c) for c in text)
 
@@ -115,7 +116,8 @@ def _table(node: Table) -> str:
 
 
 def _text(node: Text) -> str:
-    content = _escape_latex(node.content)
+    # A "\n" in a Text node is a hard break (the parsers turn soft ones into spaces)
+    content = _escape_latex(node.content).replace('\n', '\\\\\n')
     if node.italic: content = f"\\textit{{{content}}}"
     if node.bold: content = f"\\textbf{{{content}}}"
     if node.strikethrough: content = f"\\sout{{{content}}}"
@@ -160,7 +162,7 @@ _RENDERERS = {
     Link: _link,
     Image: lambda node: f"\\includegraphics{{{node.src}}}",
     CodeInline: lambda node: f"\\texttt{{{_escape_latex(node.code)}}}",
-    LineBreak: lambda node: "\\\\",
+    LineBreak: lambda node: "\\\\\n",
     BlockQuote: _block_quote,
     HorizontalRule: lambda node: "\\noindent\\rule{\\textwidth}{0.4pt}",
     Equation: _equation,

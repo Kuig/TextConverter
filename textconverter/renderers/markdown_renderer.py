@@ -52,7 +52,17 @@ def _render_node(node: Node) -> str:
 
 
 def _inline(nodes: list[Node]) -> str:
-    return ''.join(_render_node(c) for c in nodes)
+    # Adjacent texts with the same formatting are one run: "**a b**", not "**a ****b**"
+    merged: list[Node] = []
+    for node in nodes:
+        prev = merged[-1] if merged else None
+        if (isinstance(node, Text) and isinstance(prev, Text)
+                and (node.bold, node.italic, node.strikethrough) == (prev.bold, prev.italic, prev.strikethrough)):
+            merged[-1] = Text(content=prev.content + node.content, bold=node.bold, italic=node.italic,
+                              strikethrough=node.strikethrough)
+        else:
+            merged.append(node)
+    return ''.join(_render_node(c) for c in merged)
 
 
 def _quote(lines: list[str]) -> str:
@@ -67,7 +77,7 @@ def _heading(node: Heading) -> str:
 def _paragraph(node: Paragraph) -> str:
     # A line of the paragraph that starts like a block (heading, quote, item, rule) is escaped
     content = _LINE_START.sub(_escape_line_start, _inline(node.children).strip())
-    return content.replace('\n', '  \n')
+    return re.sub(r'[ \t]*\n', '  \n', content)
 
 
 def _code_block(node: CodeBlock) -> str:

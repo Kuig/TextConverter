@@ -141,3 +141,88 @@ class TestLatexParser(BaseConverterTest):
         self.assertIn('<span class="math inline">\\(x=1\\)</span>', result)
         self.assertIn('<div class="math block">$$\ny=2\n$$</div>', result)
         self.assertIn('<div class="math block">$$\nz=3\n$$</div>', result)
+
+
+def _blocks(body: str):
+    from textconverter.parsers.latex_parser import parse_latex
+    return parse_latex("\\begin{document}\n" + body + "\n\\end{document}").children
+
+
+def _md(body: str) -> str:
+    return textconverter.convert_text("\\begin{document}\n" + body + "\n\\end{document}", "latex", "markdown")
+
+
+class TestLatexFixes(BaseConverterTest):
+    """LaTeX constructs that used to be lost, garbled or printed as text."""
+
+    def test_starred_and_alignment_environments(self):
+        from textconverter.ast import Equation
+        self.assertEqual(_blocks(r"\begin{equation*} a=\frac{b}{c} \end{equation*}"),
+                         [Equation(code=r"a=\frac{b}{c}")])
+        self.assertEqual(_blocks(r"\begin{align*} a &= b \\ c &= d \end{align*}"),
+                         [Equation(code=r"a &= b \\ c &= d", env="align*")])
+        self.assertEqual(_blocks(r"\begin{gather} x \end{gather}")[0].env, "gather")
+
+    def test_alignment_round_trips_through_latex(self):
+        tex = textconverter.convert_text("\\begin{document}\n\\begin{align}a&=b\\\\c&=d\\end{align}\n\\end{document}",
+                                         "latex", "latex")
+        self.assertIn("\\begin{align}\na&=b\\\\c&=d\n\\end{align}", tex)
+
+    def test_itemsep_and_nested_lists(self):
+        md = _md("\\begin{itemize}\\itemsep0pt\n\\item a\n\\begin{itemize}\n\\item b\n\\end{itemize}\n\\item c\n\\end{itemize}")
+        self.assertEqual(md.strip(), "- a\n    - b\n- c")
+
+    def test_escaped_ampersand_in_a_table(self):
+        md = _md("\\begin{tabular}{ll}\nA \\& B & C \\\\\n1 & 2 \\\\\n\\end{tabular}")
+        self.assertEqual(md.splitlines()[0], "| A & B | C |")
+
+    def test_percent_inside_verbatim_is_code(self):
+        md = _md('\\begin{verbatim}\nprintf("%d", x); % not a comment\n\\end{verbatim}')
+        self.assertIn('printf("%d", x); % not a comment', md)
+
+    def test_lstlisting_language(self):
+        from textconverter.ast import CodeBlock
+        (block,) = _blocks("\\begin{lstlisting}[language=Python]\nx = 1\n\\end{lstlisting}")
+        self.assertEqual(block, CodeBlock(code="x = 1", language="python"))
+
+    def test_emphasis_strikethrough_accents_and_spaces(self):
+        from textconverter.ast import Text
+        (para,) = _blocks("\\emph{x} \\sout{y} citt\\`a perch\\'e \\c{c}a Stra\\ss e Fig.~1 caff\\`{e}")
+        self.assertIn(Text(content="x", italic=True), para.children)
+        self.assertIn(Text(content="y", strikethrough=True), para.children)
+        text = "".join(n.content for n in para.children if isinstance(n, Text))
+        self.assertIn("città perché ça Straße Fig.\u00a01 caffè", text)
+
+    def test_source_line_breaks_are_spaces(self):
+        """Wrapped source lines used to become hard breaks in Markdown and HTML."""
+        self.assertEqual(_md("one line\n    wrapped here\\\\\nnext").strip(), "one line wrapped here  \nnext")
+
+    def test_section_after_sectionmark(self):
+        from textconverter.ast import Heading
+        blocks = _blocks("\\sectionmark{Short}\n\\section{Real title}\nBody.")
+        self.assertIsInstance(blocks[0], Heading)
+
+    def test_citation_with_two_optional_arguments(self):
+        from textconverter.ast import Citation
+        (para,) = _blocks("as shown \\citep[e.g.][p. 3]{vanDijk1902}.")
+        self.assertIn(Citation(keys=["vanDijk1902"], style="citep"), para.children)
+
+    def test_literal_arguments_are_unescaped(self):
+        from textconverter.ast import CodeInline, Link
+        (para,) = _blocks("\\texttt{mnras\\_sample.tex}. \\href{https://x.org/a\\_b\\%20c}{link}")
+        self.assertIn(CodeInline(code="mnras_sample.tex"), para.children)
+        self.assertEqual([n.url for n in para.children if isinstance(n, Link)], ["https://x.org/a_b%20c"])
+
+    def test_layout_environments_keep_their_content(self):
+        """\\begin{center} used to come out as the text 'center'."""
+        md = _md("\\begin{center}\nCentered text.\n\\end{center}")
+        self.assertEqual(md.strip(), "Centered text.")
+
+    def test_horizontal_rule_round_trips(self):
+        from textconverter.ast import HorizontalRule
+        tex = textconverter.convert_text("a\n\n---\n\nb", "markdown", "latex")
+        self.assertIn(HorizontalRule(), textconverter.parsers.latex_parser.parse_latex(tex).children)
+
+    def test_hard_break_in_text_is_a_latex_line_break(self):
+        tex = textconverter.convert_text("one  \ntwo", "markdown", "latex")
+        self.assertIn("one\\\\\ntwo", tex)

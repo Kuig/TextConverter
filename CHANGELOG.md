@@ -132,6 +132,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `a * b * c` became `a  b  c`).
 - A root-relative image path in a local HTML file (`/media/x.png`) is kept as is instead of
   being turned into a path on the current drive.
+- LaTeX parsing:
+  - source line breaks and indentation are spaces, as LaTeX typesets them, instead of hard
+    breaks in Markdown and HTML (`\\` stays a line break, which LaTeX output now writes for a
+    hard break from any source);
+  - `equation*`, `align(*)`, `gather(*)`, `multline(*)`, `flalign(*)` and `eqnarray(*)` are
+    equations (the environment is kept), not text like `equation* a=b equation*`;
+  - nested lists are kept, `\itemsep` is not an item, and `\item[label]` keeps its label;
+  - `%` inside `verbatim`/`lstlisting` is code, not a comment, and `lstlisting`'s
+    `language=` sets the code language;
+  - `\&` in a table cell is an ampersand, not a column separator;
+  - `\emph` and `\textsl` are italic, `\sout` is strikethrough; accents (`\'e`, `` \`a ``,
+    `\"o`, `\c{c}`, ...), `\ss`, `\o` and similar, `~` (no-break space), `--`/`---` (dashes),
+    `\,` and the other spacing commands become the characters they print;
+  - a `\section` after `\sectionmark` is no longer read as plain text;
+  - `\citep[e.g.][p. 3]{key}` is a citation;
+  - `\texttt{...}` and link URLs lose their LaTeX escapes (`a\_b` is `a_b`);
+  - layout environments (`center`, `minipage`, ...) contribute their content instead of their
+    name, and `quote` is a block quote;
+  - a full-width `\rule` (how LaTeX output writes a horizontal rule) is read back as one.
+  LaTeX → LaTeX and Markdown → Markdown round trips are stable on the test documents.
 - A transcription with several formulas (`$$a$$ and $$b$$`) is no longer merged into one
   broken equation.
 - Without a `config.json`, changing a setting in the GUI (e.g. the context size) no longer

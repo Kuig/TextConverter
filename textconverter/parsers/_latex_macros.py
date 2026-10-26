@@ -59,11 +59,12 @@ def extract_macro_args(text: str, macro_name: str, start_pos: int = 0) -> tuple[
     # Check if there is an opening brace following the macro name (possibly with spaces/newline)
     idx = pos + len(macro_name)
     
-    # Skip optional parameter [...] if present
-    if idx < len(text) and text[idx] == '[':
+    # Skip the optional parameters, e.g. \citep[e.g.][p. 3]{key}
+    while idx < len(text) and text[idx] == '[':
         end_opt = text.find(']', idx)
-        if end_opt != -1:
-            idx = end_opt + 1
+        if end_opt == -1:
+            break
+        idx = end_opt + 1
             
     args = []
     while idx < len(text):
