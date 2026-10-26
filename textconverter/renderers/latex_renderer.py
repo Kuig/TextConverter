@@ -1,6 +1,6 @@
 from __future__ import annotations
 import re
-from ..ast import Node, Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation
+from ..ast import Node, Document, Paragraph, Heading, Text, Link, Image, CodeInline, CodeBlock, ListBlock, ListItem, Table, TableRow, TableCell, LineBreak, BlockQuote, HorizontalRule, Equation, walk
 
 def render_latex(doc: Document, image_handling: str = "auto") -> str:
     """Renders an AST Document to a compiling LaTeX document."""
@@ -21,23 +21,7 @@ def render_latex(doc: Document, image_handling: str = "auto") -> str:
     return preamble + '\n\n'.join(body) + "\n\n\\end{document}\n"
 
 def _has_type_in_doc(doc: Document, cls: type) -> bool:
-    def _check(node: Node) -> bool:
-        if isinstance(node, cls): return True
-        if hasattr(node, "children"):
-            for c in node.children:
-                if _check(c): return True
-        if hasattr(node, "items"):
-            for c in node.items:
-                if _check(c): return True
-        if hasattr(node, "rows"):
-            for r in node.rows:
-                for c in r.cells:
-                    if _check(c): return True
-        return False
-        
-    for child in doc.children:
-        if _check(child): return True
-    return False
+    return any(isinstance(node, cls) for node in walk(doc))
 
 def _escape_latex(text: str) -> str:
     # Convert Unicode typographic quotes back to LaTeX notation

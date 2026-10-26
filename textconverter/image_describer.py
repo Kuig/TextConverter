@@ -2,7 +2,7 @@ from __future__ import annotations
 import os
 import json
 from textconverter.logger import log_action, log_info, log_success, log_warning
-from .ast import Image, Node
+from .ast import Image, Node, child_lists, walk
 
 from .config import AppConfig, load_config, get_ai_config
 
@@ -166,39 +166,6 @@ def _call_ai(
         return None, category
 
 
-def _count_images(node: Node) -> int:
-    """Recursively count Image nodes in the document AST.
-
-    Args:
-        node: Any AST node.
-
-    Returns:
-        Total number of Image nodes found.
-    """
-    count = 0
-    if isinstance(node, Image):
-        count += 1
-    if hasattr(node, "children"):
-        for c in node.children:
-            count += _count_images(c)
-    if hasattr(node, "content") and isinstance(node.content, list):
-        for c in node.content:
-            count += _count_images(c)
-    if hasattr(node, "items"):
-        for c in node.items:
-            count += _count_images(c)
-    if hasattr(node, "rows"):
-        for c in node.rows:
-            count += _count_images(c)
-    if hasattr(node, "cells"):
-        for c in node.cells:
-            count += _count_images(c)
-    if hasattr(node, "headers") and getattr(node, "headers", None):
-        for c in node.headers:
-            count += _count_images(c)
-    return count
-
-
 def _traverse(node: Node, base_dir: str, config: AppConfig, state: dict, latex_auto: bool = False) -> None:
     """Recursively walk an AST node and process Image children in-place.
 
@@ -209,22 +176,8 @@ def _traverse(node: Node, base_dir: str, config: AppConfig, state: dict, latex_a
         state: Mutable dict with 'total' and 'current' counters.
         latex_auto: Whether to skip non-formula images in LaTeX mode.
     """
-    if hasattr(node, "children"):
-        node.children = _process_list(node.children, base_dir, config, state, latex_auto)
-    if hasattr(node, "content") and isinstance(node.content, list):
-        node.content = _process_list(node.content, base_dir, config, state, latex_auto)
-    if hasattr(node, "items"):
-        for item in node.items:
-            _traverse(item, base_dir, config, state, latex_auto)
-    if hasattr(node, "rows"):
-        for row in node.rows:
-            _traverse(row, base_dir, config, state, latex_auto)
-    if hasattr(node, "cells"):
-        for cell in node.cells:
-            _traverse(cell, base_dir, config, state, latex_auto)
-    if hasattr(node, "headers") and node.headers:
-        for header in node.headers:
-            _traverse(header, base_dir, config, state, latex_auto)
+    for lst in child_lists(node):
+        lst[:] = _process_list(lst, base_dir, config, state, latex_auto)
 
 
 def _process_list(node_list: list[Node], base_dir: str, config: AppConfig, state: dict, latex_auto: bool = False) -> list[Node]:
@@ -285,19 +238,10 @@ def _process_list(node_list: list[Node], base_dir: str, config: AppConfig, state
                     continue
             
             new_list.append(child)
-        elif (
-            hasattr(child, "children")
-            or hasattr(child, "content")
-            or hasattr(child, "items")
-            or hasattr(child, "rows")
-            or hasattr(child, "cells")
-            or hasattr(child, "headers")
-        ):
+        else:
             _traverse(child, base_dir, config, state, latex_auto)
             new_list.append(child)
-        else:
-            new_list.append(child)
-            
+
     return new_list
 
 
@@ -314,7 +258,7 @@ def process_images(doc: Node, base_dir: str, latex_auto: bool = False) -> None:
         latex_auto: If True, skip description for non-table/formula images.
     """
     config = load_config()
-    total_images = _count_images(doc)
+    total_images = sum(isinstance(n, Image) for n in walk(doc))
     state = {"total": total_images, "current": 0}
 
     if total_images > 0:

@@ -50,6 +50,8 @@ Every format flows through the same **parser → AST → renderer** pipeline: it
 
 A small set of `@dataclass` node types (`Document`, `Paragraph`, `Heading`, `Text`, `Link`, `Image`, `Table`, `CodeBlock`, `Equation`, `Citation`, `Footnote`, ...) in `ast.py` models the structural and inline elements common across PDF, HTML, Markdown, LaTeX, and JSON. `Image` nodes carry both the raw source path and AI-derived metadata (`description`, `category`, `extracted_text`) populated during the transform step.
 
+Passes over the tree never probe node types for their children themselves: `walk()` iterates every node, and `child_lists()` exposes each node's child lists for in-place edits. Both read a single list of child attribute names, so a new container node type is registered in one place.
+
 ## Interfaces
 
 All four interfaces are thin wrappers around the same `convert()`/`save_to_file()` API in `api.py`:

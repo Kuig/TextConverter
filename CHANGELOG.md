@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The `--code-parsing` help text described the detection as AI-assisted; it is heuristic.
+- LaTeX output omitted `\usepackage{graphicx}` (or `hyperref`) when the only image or link sat
+  inside a link or a table header.
+- PDF input left the extraction folder prefix on image paths found in table headers.
 
 ## [0.1.4] - 2026-09-10
 

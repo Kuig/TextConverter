@@ -1,4 +1,5 @@
 from __future__ import annotations
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 @dataclass
@@ -137,3 +138,27 @@ class Equation(Node):
 class Document(Node):
     """The root of the AST."""
     children: list[Node] = field(default_factory=list)
+
+
+# Every attribute through which a node can hold child nodes. A new container
+# node type only needs its child attribute listed here.
+_CHILD_ATTRS = ("children", "content", "items", "headers", "rows", "cells")
+
+
+def child_lists(node: Node) -> list[list[Node]]:
+    """Return the node's lists of child nodes, in document order.
+
+    The lists are the node's own attributes, so callers may filter or replace
+    their items in place (``lst[:] = ...``). ``Text.content`` is a string and
+    is not included.
+    """
+    lists = (getattr(node, attr, None) for attr in _CHILD_ATTRS)
+    return [lst for lst in lists if isinstance(lst, list)]
+
+
+def walk(node: Node) -> Iterator[Node]:
+    """Yield the node and all its descendants, depth-first in document order."""
+    yield node
+    for lst in child_lists(node):
+        for child in lst:
+            yield from walk(child)

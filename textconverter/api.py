@@ -1,7 +1,7 @@
 from __future__ import annotations
 import pathlib
 from . import _net
-from .ast import Document
+from .ast import Document, Image, Link, Node, child_lists, walk
 
 from .parsers.markdown_parser import parse_markdown
 from .parsers.html_parser import parse_html
@@ -67,13 +67,11 @@ def _discard_links(node: object) -> None:
     """Recursively replace every Link node with its inline content.
 
     The link text (and any image it wrapped) is kept in place; the URL is
-    dropped. Traversal mirrors the other AST passes in this module.
+    dropped.
 
     Args:
         node: An AST node to descend into.
     """
-    from .ast import Link
-
     def _unwrap(nodes: list) -> list:
         out: list = []
         for n in nodes:
@@ -83,19 +81,18 @@ def _discard_links(node: object) -> None:
                 out.append(n)
         return out
 
-    if hasattr(node, 'children') and isinstance(node.children, list):
-        node.children = _unwrap(node.children)
-        for c in node.children:
+    for lst in child_lists(node):
+        lst[:] = _unwrap(lst)
+        for c in lst:
             _discard_links(c)
-    if hasattr(node, 'content') and isinstance(node.content, list):
-        node.content = _unwrap(node.content)
-        for c in node.content:
-            _discard_links(c)
-    for attr in ('items', 'rows', 'cells', 'headers'):
-        seq = getattr(node, attr, None)
-        if seq:
-            for c in seq:
-                _discard_links(c)
+
+
+def _remove_images(node: Node) -> None:
+    """Recursively drop every Image node from the tree."""
+    for lst in child_lists(node):
+        lst[:] = [c for c in lst if not isinstance(c, Image)]
+        for c in lst:
+            _remove_images(c)
 
 
 def _download_remote_images(doc: Document, output_dir: str | None, image_dir_name: str | None, is_url: bool, source: str) -> None:
@@ -111,7 +108,6 @@ def _download_remote_images(doc: Document, output_dir: str | None, image_dir_nam
     import urllib.request
     import urllib.parse
     import os
-    from .ast import Image, Node
     from .logger import log_action, log_warning
 
     base_dir = os.getcwd()
@@ -204,20 +200,8 @@ def _download_remote_images(doc: Document, output_dir: str | None, image_dir_nam
                 except Exception as exc:
                     log_warning(f"Failed to download remote image {node.src}: {exc}")
 
-        if hasattr(node, 'children'):
-            for c in node.children: _process(c)
-        if hasattr(node, 'content') and isinstance(node.content, list):
-            for c in node.content: _process(c)
-        if hasattr(node, 'items'):
-            for c in node.items: _process(c)
-        if hasattr(node, 'rows'):
-            for c in node.rows: _process(c)
-        if hasattr(node, 'cells'):
-            for c in node.cells: _process(c)
-        if hasattr(node, 'headers') and getattr(node, 'headers', None):
-            for c in node.headers: _process(c)
-
-    _process(doc)
+    for node in walk(doc):
+        _process(node)
 
 
 
@@ -365,7 +349,6 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
                 elif image_handling == "embed":
                     import base64
                     import mimetypes
-                    from .ast import Image, Node
                     from .logger import log_warning
                     def _embed(node: Node) -> None:
                         if isinstance(node, Image):
@@ -382,37 +365,10 @@ def convert(source: str, to_format: str, from_format: str | None = None, templat
                                     node.src = f"data:{mime_type};base64,{img_b64}"
                                 except OSError as exc:
                                     log_warning(f"Could not embed image {img_path}: {exc}")
-                        if hasattr(node, 'children'):
-                            for c in node.children: _embed(c)
-                        if hasattr(node, 'content') and isinstance(node.content, list):
-                            for c in node.content: _embed(c)
-                        if hasattr(node, 'items'):
-                            for c in node.items: _embed(c)
-                        if hasattr(node, 'rows'):
-                            for c in node.rows: _embed(c)
-                        if hasattr(node, 'cells'):
-                            for c in node.cells: _embed(c)
-                        if hasattr(node, 'headers') and getattr(node, 'headers', None):
-                            for c in node.headers: _embed(c)
-                    _embed(doc)
-                    
+                    for node in walk(doc):
+                        _embed(node)
+
             elif image_handling == "discard":
-                from .ast import Image, Node
-                def _remove_images(node: Node) -> None:
-                    if hasattr(node, 'children'):
-                        node.children = [c for c in node.children if not isinstance(c, Image)]
-                        for c in node.children: _remove_images(c)
-                    if hasattr(node, 'content') and isinstance(node.content, list):
-                        node.content = [c for c in node.content if not isinstance(c, Image)]
-                        for c in node.content: _remove_images(c)
-                    if hasattr(node, 'items'):
-                        for c in node.items: _remove_images(c)
-                    if hasattr(node, 'rows'):
-                        for c in node.rows: _remove_images(c)
-                    if hasattr(node, 'cells'):
-                        for c in node.cells: _remove_images(c)
-                    if hasattr(node, 'headers') and getattr(node, 'headers', None):
-                        for c in node.headers: _remove_images(c)
                 _remove_images(doc)
 
         if discard_links:

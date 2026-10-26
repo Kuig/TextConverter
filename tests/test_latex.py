@@ -175,6 +175,13 @@ class TestLatexParser(BaseConverterTest):
         self.assertIn("This is the abstract text.", final_tex)
         self.assertIn("\\end{abstract}", final_tex)
 
+    def test_preamble_detects_image_inside_link(self):
+        """An image reachable only through a link still loads graphicx."""
+        md = "[![alt](pic.png)](http://x.test)"
+        tex = textconverter.convert(md, to_format="latex", from_format="markdown", image_handling="link")
+        self.assertIn("\\usepackage{graphicx}", tex)
+        self.assertIn("\\usepackage{hyperref}", tex)
+
     def test_latex_math_to_html(self):
         """Verify that LaTeX math environments are correctly converted to HTML math elements."""
         tex_content = "Inline $x=1$ and block \\begin{equation} y=2 \\end{equation} and display \\[ z=3 \\]."
