@@ -2,6 +2,8 @@
 
 TextConverter reads `config.json` from the **current working directory**, falling back to the package root, then to built-in defaults, so the app always starts. Place a local `config.json` in your working directory to override the project-level settings without modifying the package.
 
+Loading is tolerant: a missing key takes its default, and an unknown key, or a section that is not a JSON object, is reported as a warning and ignored (the section then takes its defaults).
+
 `config.json` holds no secrets and is committed: it doubles as its own example.
 
 ## `config.json`

@@ -69,12 +69,13 @@ def set_backend(backend: str) -> None:
     elif backend == "silent":
         _emit, _sep = _silent_emit, _silent_sep
     elif backend == "streamlit":
+        import html
         import streamlit as st
 
         def _st_emit(emoji: str, msg: str, color: str) -> None:
             st.markdown(
                 f'<div style="color:{color};font-family:monospace;'
-                f'line-height:1.4;margin:2px 0">{emoji} {msg}</div>',
+                f'line-height:1.4;margin:2px 0">{emoji} {html.escape(msg)}</div>',
                 unsafe_allow_html=True,
             )
 

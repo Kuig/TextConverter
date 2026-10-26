@@ -62,6 +62,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   network paths on Windows; `data:` images are no longer looked up as files.
 - With LaTeX or JSON output, image sources and PDF pages in raster mode are no longer sent to
   the AI a second time.
+- Without a `config.json`, changing a setting in the GUI (e.g. the context size) no longer
+  changes the built-in defaults for every later configuration in the same process.
+- A `config.json` section that is not a JSON object (e.g. `"wikipedia": [...]`) is reported
+  with a warning before it is replaced by defaults, instead of being ignored silently.
+- GUI log messages are shown as text: a URL or an error message containing `<` no longer
+  injects markup into the page.
+
+### Removed
+
+- `config.get_ai_config()`, which had no callers; use `AppConfig.ai`. `AppConfig` gains
+  `provider_settings()` for the active provider's settings block.
 
 ## [0.2.0] - 2026-10-26
 

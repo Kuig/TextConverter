@@ -73,7 +73,7 @@ def _available_models(provider: str) -> tuple[list[str], str]:
 
 def _configured_context_size(provider: str) -> int:
     """The provider's ``context_size`` in config.json, or the default when it sets none."""
-    return load_config().providers.get(provider, {}).get("context_size", DEFAULT_CONTEXT_SIZE)
+    return load_config().provider_settings(provider).get("context_size", DEFAULT_CONTEXT_SIZE)
 
 
 def _init_state() -> None:

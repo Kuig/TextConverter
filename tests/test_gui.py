@@ -113,3 +113,16 @@ class TestFileDialog(BaseConverterTest):
 
     def test_cancel_returns_none(self):
         self.assertIsNone(self._ask("")[0])
+
+
+class TestStreamlitLogger(BaseConverterTest):
+
+    def test_messages_are_escaped(self):
+        """A log message with markup (a URL, an exception text) is shown, not interpreted."""
+        import textconverter.logger as logger
+        self.addCleanup(logger.set_backend, "silent")
+        with patch("streamlit.markdown") as markdown:
+            logger.set_backend("streamlit")
+            logger.log_warning('Failed <img src="x"> & co')
+        html = markdown.call_args.args[0]
+        self.assertIn("&lt;img src=&quot;x&quot;&gt; &amp; co", html)

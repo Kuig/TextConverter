@@ -40,7 +40,7 @@ def init_ai(config: AppConfig) -> None:
     from unified_ai_client import configure_provider, silence_sdks
 
     silence_sdks()
-    settings = dict(config.providers.get(config.ai.provider, {}))
+    settings = dict(config.provider_settings())
     settings.pop("context_size", None)
     if not settings:
         return
@@ -54,7 +54,7 @@ def _preload(model: str, config: AppConfig) -> None:
     """Load a model before its phase; a failure is logged and left to the calls."""
     from unified_ai_client import preload_model
 
-    context_size = config.providers.get(config.ai.provider, {}).get("context_size")
+    context_size = config.provider_settings().get("context_size")
     try:
         preload_model(config.ai.provider, model, context_size=context_size)
     except Exception as exc:

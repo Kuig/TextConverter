@@ -1,6 +1,7 @@
 from __future__ import annotations
+import copy
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import MISSING, asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
@@ -143,7 +144,7 @@ class AppConfig:
 
     ai: AiConfig = field(default_factory=AiConfig)
     html: HtmlConfig = field(default_factory=HtmlConfig)
-    providers: dict[str, dict[str, Any]] = field(default_factory=lambda: dict(_DEFAULT_PROVIDERS))
+    providers: dict[str, dict[str, Any]] = field(default_factory=lambda: copy.deepcopy(_DEFAULT_PROVIDERS))
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "AppConfig":
@@ -161,13 +162,25 @@ class AppConfig:
         if not raw:
             return cls()
 
-        ai_config = _ai_config_from_dict(raw.get("ai"))
-        html_config = _html_config_from_dict(raw.get("html"))
+        ai_config = _dataclass_from_dict(AiConfig, raw.get("ai"), "ai")
+        html_config = _dataclass_from_dict(HtmlConfig, raw.get("html"), "html")
         providers = {
             k: v for k, v in raw.items()
             if k not in ("ai", "html") and isinstance(v, dict)
         }
-        return cls(ai=ai_config, html=html_config, providers=providers or dict(_DEFAULT_PROVIDERS))
+        return cls(ai=ai_config, html=html_config, providers=providers or copy.deepcopy(_DEFAULT_PROVIDERS))
+
+    def provider_settings(self, name: str | None = None) -> dict[str, Any]:
+        """Return the settings block of a provider (the active one by default).
+
+        Args:
+            name: Provider name; ``ai.provider`` when None.
+
+        Returns:
+            The provider's raw settings, or an empty dict when it has none.
+            The dict is the live block: changes to it change this config.
+        """
+        return self.providers.get(name or self.ai.provider, {})
 
     def save(self, path: str | Path | None = None) -> Path:
         """Write this configuration as JSON, in the layout ``load()`` reads.
@@ -225,71 +238,39 @@ def _load_raw_dict(path: str | Path | None = None) -> dict:
     return {}
 
 
-def _ai_config_from_dict(data: Any) -> AiConfig:
-    """Build an AiConfig from the raw ``"ai"`` section of config.json.
+def _dataclass_from_dict(cls: type, data: Any, section: str) -> Any:
+    """Build the config dataclass ``cls`` from its raw section of config.json.
 
-    Tolerant but noisy: unknown keys are dropped with a ``log_warning`` instead
-    of being silently ignored. A missing or malformed section falls back to
-    defaults.
-
-    Args:
-        data: The raw ``"ai"`` value from the parsed config.json.
-
-    Returns:
-        A populated AiConfig instance.
-    """
-    if not isinstance(data, dict):
-        return AiConfig()
-    fields = AiConfig.__dataclass_fields__
-    filtered = {k: v for k, v in data.items() if k in fields}
-    unknown = sorted(set(data) - set(filtered))
-    if unknown:
-        log_warning(f"Ignoring unknown keys in config 'ai' section: {', '.join(unknown)}")
-    return AiConfig(**filtered)
-
-
-def _wikipedia_cleanup_from_dict(data: Any) -> WikipediaCleanupConfig:
-    """Build a WikipediaCleanupConfig from the raw ``"html.wikipedia"`` section.
-
-    Tolerant but noisy: unknown keys are dropped with a ``log_warning``. A
-    missing or malformed section falls back to defaults.
+    Tolerant but noisy: unknown keys are dropped with a ``log_warning``, a
+    missing section falls back to defaults, and a section that is not a JSON
+    object is reported and replaced by defaults. A field whose default is a
+    nested config dataclass is built from its sub-section the same way.
 
     Args:
-        data: The raw ``"wikipedia"`` value from the parsed ``"html"`` section.
+        cls: The config dataclass to build.
+        data: The raw section value from the parsed config.json.
+        section: The section's dotted name, for messages (e.g. ``"html.wikipedia"``).
 
     Returns:
-        A populated WikipediaCleanupConfig instance.
+        A populated ``cls`` instance.
     """
+    if data is None:
+        return cls()
     if not isinstance(data, dict):
-        return WikipediaCleanupConfig()
-    fields = WikipediaCleanupConfig.__dataclass_fields__
-    filtered = {k: v for k, v in data.items() if k in fields}
-    unknown = sorted(set(data) - set(filtered))
+        log_warning(f"Ignoring config '{section}' section: expected an object, got {type(data).__name__}")
+        return cls()
+    kwargs = {}
+    for f in fields(cls):
+        if f.name not in data:
+            continue
+        if f.default_factory is not MISSING and is_dataclass(f.default_factory):
+            kwargs[f.name] = _dataclass_from_dict(f.default_factory, data[f.name], f"{section}.{f.name}")
+        else:
+            kwargs[f.name] = data[f.name]
+    unknown = sorted(set(data) - set(kwargs))
     if unknown:
-        log_warning(f"Ignoring unknown keys in config 'html.wikipedia' section: {', '.join(unknown)}")
-    return WikipediaCleanupConfig(**filtered)
-
-
-def _html_config_from_dict(data: Any) -> HtmlConfig:
-    """Build an HtmlConfig from the raw ``"html"`` section of config.json.
-
-    Tolerant but noisy: unknown keys are dropped with a ``log_warning``. A
-    missing or malformed section falls back to defaults.
-
-    Args:
-        data: The raw ``"html"`` value from the parsed config.json.
-
-    Returns:
-        A populated HtmlConfig instance.
-    """
-    if not isinstance(data, dict):
-        return HtmlConfig()
-    fields = HtmlConfig.__dataclass_fields__
-    filtered = {k: v for k, v in data.items() if k in fields and k != "wikipedia"}
-    unknown = sorted(set(data) - set(fields))
-    if unknown:
-        log_warning(f"Ignoring unknown keys in config 'html' section: {', '.join(unknown)}")
-    return HtmlConfig(wikipedia=_wikipedia_cleanup_from_dict(data.get("wikipedia")), **filtered)
+        log_warning(f"Ignoring unknown keys in config '{section}' section: {', '.join(unknown)}")
+    return cls(**kwargs)
 
 
 def load_config() -> AppConfig:
@@ -302,16 +283,3 @@ def load_config() -> AppConfig:
         missing file, section, or field.
     """
     return AppConfig.load()
-
-
-def get_ai_config(cfg: AppConfig) -> AiConfig:
-    """Extract the app-level AI config section from a loaded AppConfig.
-
-    Args:
-        cfg: An AppConfig instance as returned by ``load_config()``.
-
-    Returns:
-        The ``ai`` sub-dataclass, containing provider name, model names,
-        prompts, and token budgets.
-    """
-    return cfg.ai
