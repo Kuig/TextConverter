@@ -14,40 +14,58 @@ $ImageSubcommands = @(
     [ordered]@{ Key="03html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain"; Extract=$false; ImageHandling="describe" }
     [ordered]@{ Key="04html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false; ImageHandling="describe" }
     [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false; ImageHandling="describe" }
+    [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false; ImageHandling="describe" }
 )
+
+# Define subcommands for PDF sources: text-layer conversions, then the same
+# conversions in raster mode (pages rendered and transcribed by AI). No PDF
+# target: the output would overwrite the source file.
+$PdfTextSubcommands = @(
+    [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="02tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="03html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="04html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false }
+    [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
+)
+# Explorer sorts subcommands by key, so the "r" prefix lists the raster ones last.
+$PdfRasterSubcommands = foreach ($Sub in $PdfTextSubcommands) {
+    $Copy = [ordered]@{} + $Sub
+    $Copy.Key = "r" + $Sub.Key
+    $Copy.Verb = $Sub.Verb + " (raster)"
+    $Copy.PdfMode = "raster"
+    $Copy
+}
 
 # Define associations and subcommands
 $Associations = [ordered]@{
-    ".pdf" = @(
-        [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
-        [ordered]@{ Key="02tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain"; Extract=$false }
-        [ordered]@{ Key="03html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain"; Extract=$false }
-        [ordered]@{ Key="04html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false }
-        [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
-    )
+    ".pdf" = @($PdfTextSubcommands) + @($PdfRasterSubcommands)
     ".md" = @(
         [ordered]@{ Key="01tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain"; Extract=$false }
         [ordered]@{ Key="02html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain"; Extract=$false }
         [ordered]@{ Key="03html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false }
         [ordered]@{ Key="04html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
+        [ordered]@{ Key="05pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
     )
     ".markdown" = @(
         [ordered]@{ Key="01tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain"; Extract=$false }
         [ordered]@{ Key="02html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain"; Extract=$false }
         [ordered]@{ Key="03html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false }
         [ordered]@{ Key="04html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
+        [ordered]@{ Key="05pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
     )
     ".tex" = @(
         [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
         [ordered]@{ Key="02html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain"; Extract=$false }
         [ordered]@{ Key="03html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false }
         [ordered]@{ Key="04html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
+        [ordered]@{ Key="05pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
     )
     ".latex" = @(
         [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
         [ordered]@{ Key="02html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain"; Extract=$false }
         [ordered]@{ Key="03html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false }
         [ordered]@{ Key="04html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
+        [ordered]@{ Key="05pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
     )
     ".html" = @(
         [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
@@ -60,6 +78,8 @@ $Associations = [ordered]@{
         [ordered]@{ Key="08html_light_main"; Verb="to HTML (light theme) - main content"; Ext=".html"; Template="light-theme"; Extract=$true }
         [ordered]@{ Key="09html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
         [ordered]@{ Key="10html_dark_main"; Verb="to HTML (dark theme) - main content"; Ext=".html"; Template="dark-theme"; Extract=$true }
+        [ordered]@{ Key="11pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
+        [ordered]@{ Key="12pdf_main"; Verb="to PDF - main content (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$true }
     )
     ".htm" = @(
         [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
@@ -72,6 +92,8 @@ $Associations = [ordered]@{
         [ordered]@{ Key="08html_light_main"; Verb="to HTML (light theme) - main content"; Ext=".html"; Template="light-theme"; Extract=$true }
         [ordered]@{ Key="09html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
         [ordered]@{ Key="10html_dark_main"; Verb="to HTML (dark theme) - main content"; Ext=".html"; Template="dark-theme"; Extract=$true }
+        [ordered]@{ Key="11pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
+        [ordered]@{ Key="12pdf_main"; Verb="to PDF - main content (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$true }
     )
     ".png"  = $ImageSubcommands
     ".jpg"  = $ImageSubcommands
@@ -104,10 +126,11 @@ foreach ($Ext in $Associations.Keys) {
         $Template = $Sub.Template
         $Extract = if ($Sub.Extract) { "True" } else { "False" }
         $ImgHandling = if ($Sub.ImageHandling) { $Sub.ImageHandling } else { "link" }
+        $PdfMode = if ($Sub.PdfMode) { $Sub.PdfMode } else { "text" }
         $CodeParsing = if ($Ext -eq ".md" -or $Ext -eq ".markdown" -or $Ext -eq ".tex" -or $Ext -eq ".latex") { "False" } else { "True" }
         
         # Construct the python one-liner command
-        $pyCode = "import sys, pathlib; sys.path.append('$PythonProjectDir'); from textconverter.api import save_to_file; src=pathlib.Path(sys.argv[1]); out=src.with_suffix('$TargetExt'); save_to_file(str(src), str(out), template='$Template', code_parsing=$CodeParsing, image_handling='$ImgHandling', extract_html=$Extract)"
+        $pyCode = "import sys, pathlib; sys.path.append('$PythonProjectDir'); from textconverter.api import save_to_file; src=pathlib.Path(sys.argv[1]); out=src.with_suffix('$TargetExt'); save_to_file(str(src), str(out), template='$Template', code_parsing=$CodeParsing, image_handling='$ImgHandling', extract_html=$Extract, pdf_mode='$PdfMode')"
         
         $RegisterContent += "`r`n[HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter\shell\$Key]`r`n"
         $RegisterContent += "`"MUIVerb`"=generic:`"$Verb`"`r`n".Replace("generic:", "")

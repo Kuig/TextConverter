@@ -160,7 +160,8 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
 #### Features
 * **Cascading Menu**: Adds a grouped `"Convert with TextConverter..."` menu.
 * **Extension Filtering**: Only shows relevant options:
-  * **PDFs**: Shows all output options (.md, .tex, light/dark HTML).
+  * **PDFs**: Shows all output options (.md, .tex, light/dark HTML), each also in a "(raster)" variant that renders the pages and transcribes them with AI (`--pdf-mode raster`), for scanned PDFs.
+  * **PDF output**: Every other source type also offers "to PDF (.pdf)" (and, for HTML, its main-content variant).
   * **Markdown / LaTeX**: Excludes self-conversion (e.g., no "convert to .md" option for `.md` files). Code detection is disabled for these source types (they are already structured text).
   * **HTML / HTM**: Includes duplicate options for "main content" extraction (`--extract-html` to filter out boilerplate).
   * **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`): Automatically runs with AI image description (`image_handling="describe"`).

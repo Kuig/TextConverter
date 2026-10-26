@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`AppConfig.save()`).
 - The GUI also offers the PDF input mode, PDF as an output type, and images as input files.
 - `docs/api.md` documents the library functions (moved out of the README).
+- The Windows context menu offers PDF output for every non-PDF source, and a "(raster)"
+  variant of every command for PDF sources.
 - **PDF output.** An output path ending in `.pdf` prints the light-theme HTML rendering, with
   images embedded: through a headless Edge, Chrome or Chromium when one is installed
   (formulas typeset by MathJax), otherwise through PyMuPDF's built-in layout engine. No new
