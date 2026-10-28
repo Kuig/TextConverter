@@ -1,14 +1,15 @@
 from __future__ import annotations
 import html
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from html.parser import HTMLParser
 from typing import TYPE_CHECKING, Sequence
 from ..ast import (
-    Abstract, BlockQuote, CodeBlock, CodeInline, Document, Equation, Heading, HorizontalRule, Image,
-    LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Table, TableCell, TableRow, Text,
-    abstract_from, child_lists, walk,
+    Abstract, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote, Heading,
+    HorizontalRule, Image, Label, LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Reference,
+    Table, TableCell, TableRow, Text, abstract_from, child_lists, walk,
 )
+from ._latex_macros import REFERENCE_MACROS, parse_reference_macro
 from ._math import strip_displaystyle, unwrap_math
 
 if TYPE_CHECKING:
@@ -28,17 +29,38 @@ _PARAGRAPH_CLOSERS = frozenset([
     'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'tr', 'td', 'th',
     'pre', 'blockquote', 'hr',
 ])
+
+
+@dataclass
+class _CaptionHolder(Node):
+    """The content of a ``<caption>`` or ``<figcaption>`` while it is read."""
+    children: list[Node] = field(default_factory=list)
+
+
+@dataclass
+class _RefHolder(Node):
+    """The raw text of a ``<span class="tc-ref">`` (a citation, reference or label macro)."""
+    raw: str = ""
+
+
 # End tag -> AST node types it closes.
 _NODE_TAGS: dict[str, tuple[type, ...]] = {
     **{f'h{i}': (Heading,) for i in range(1, 7)},
     'p': (Paragraph, Heading), 'ul': (ListBlock,), 'ol': (ListBlock,), 'li': (ListItem,),
     'table': (Table,), 'tr': (TableRow,), 'td': (TableCell,), 'th': (TableCell,),
     'a': (Link,), 'pre': (CodeBlock,), 'code': (CodeInline,), 'blockquote': (BlockQuote,),
+    'caption': (_CaptionHolder,), 'figcaption': (_CaptionHolder,),
 }
 # HTML whitespace (not U+00A0, which is meant to stay).
 _WHITESPACE = re.compile(r'[ \t\n\r\f]+')
+# Inline nodes: an inline node reaching a block container goes into a paragraph.
+_INLINE_NODES = (Text, Link, Image, CodeInline, LineBreak, Equation, Footnote, Citation, Reference, Label)
+# The classes TextConverter's HTML output marks its own constructs with.
+_META_CLASSES = {'tc-title': 'title', 'tc-author': 'author', 'tc-date': 'date'}
+_REFERENCE_MACRO = re.compile(rf'\\(?:{"|".join(REFERENCE_MACROS)})\*?(?![a-zA-Z])')
+
 # Containers whose children are blocks: inline content gets an anonymous paragraph.
-_BLOCK_CONTAINERS = (Document, BlockQuote, ListItem)
+_BLOCK_CONTAINERS = (Document, BlockQuote, ListItem, _CaptionHolder)
 
 
 @dataclass
@@ -47,13 +69,15 @@ class _MathCapture:
 
     ``kind`` is ``"mathml"`` (``<math>``, TeX from its annotation),
     ``"script"`` (``<script type="math/tex">``) or ``"element"`` (an element
-    with class ``math`` holding delimited TeX).
+    with class ``math`` holding delimited TeX). ``text`` is the MathML's
+    visible text, used when it has no TeX annotation.
     """
     kind: str
     inline: bool
     code: str = ""
     depth: int = 1
     in_annotation: bool = False
+    text: str = ""
 
 
 def _language(classes: list[str]) -> str | None:
@@ -110,10 +134,19 @@ class ASTHTMLParser(HTMLParser):
 
         # (tag, formatting) pairs: the formatting in force inside each open tag.
         self._formats: list[tuple[str, dict[str, bool]]] = []
+        # One entry per open <span>: the node it opened (a reference or footnote), or None.
+        self._open_spans: list[Node | None] = []
+        # Open <figure>s: {'label': data-label, 'target': the last image or table inside}.
+        self._figures: list[dict] = []
+        # id(table) -> content found directly inside it, placed before the table.
+        self._fostered: dict[int, list[Node]] = {}
+        # id(node) -> Document metadata field, for TextConverter's title block.
+        self._meta: dict[int, str] = {}
 
     @property
     def current_text_attrs(self) -> dict[str, bool]:
-        return self._formats[-1][1] if self._formats else {'bold': False, 'italic': False, 'strikethrough': False}
+        return self._formats[-1][1] if self._formats else {
+            'bold': False, 'italic': False, 'strikethrough': False, 'script': None}
 
     # ── Start tags ────────────────────────────────────────────────────────────
 
@@ -183,8 +216,13 @@ class ASTHTMLParser(HTMLParser):
         if tag == 'hr':
             self._append_to_parent(HorizontalRule())
             return
+        if tag == 'input':
+            self._checkbox(attr_dict)
+            return
         if tag in _VOID:
             return
+        if tag == 'figure':
+            self._figures.append({'label': attr_dict.get('data-label'), 'target': None})
 
         formats = dict(self.current_text_attrs)
         for c in classes:  # Google Docs styles by class
@@ -195,31 +233,57 @@ class ASTHTMLParser(HTMLParser):
             formats['italic'] = True
         elif tag in ('s', 'del', 'strike'):
             formats['strikethrough'] = True
+        elif tag in ('sup', 'sub'):
+            formats['script'] = tag
         self._formats.append((tag, formats))
 
         node = self._node_for(tag, attr_dict, classes)
+        if tag == 'span':
+            self._open_spans.append(node)
         if node is not None:
             self.stack.append(node)
 
+    def _checkbox(self, attr_dict: dict[str, str | None]) -> None:
+        """A checkbox at the start of a list item makes it a task list item."""
+        item = self.stack[-1]
+        if (attr_dict.get('type') or '').lower() == 'checkbox' and isinstance(item, ListItem) \
+                and not item.children and item.checked is None:
+            item.checked = 'checked' in attr_dict
+
     def _node_for(self, tag: str, attr_dict: dict[str, str | None], classes: list[str]) -> Node | None:
         """The AST node a start tag opens, or None for tags that only set state or formatting."""
+        node = self._block_node_for(tag, attr_dict, classes)
+        meta = next((_META_CLASSES[c] for c in classes if c in _META_CLASSES), None)
+        if meta and isinstance(node, (Heading, Paragraph)):
+            self._meta[id(node)] = meta
+        return node
+
+    def _block_node_for(self, tag: str, attr_dict: dict[str, str | None], classes: list[str]) -> Node | None:
         if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
             return Heading(level=int(tag[1]))
         if tag == 'p':
             return Heading(level=1) if 'title' in classes else Paragraph()
         if tag in ('ul', 'ol'):
-            return ListBlock(ordered=(tag == 'ol'))
+            try:
+                start = int(attr_dict.get('start') or 1)
+            except ValueError:
+                start = 1
+            return ListBlock(ordered=(tag == 'ol'), start=start)
         if tag == 'li':
             return ListItem()
         if tag == 'table':
             self._rowspan_carry = []  # spans do not cross table boundaries
-            return Table()
+            return Table(label=attr_dict.get('data-label'))
+        if tag in ('caption', 'figcaption'):
+            return _CaptionHolder()
         if tag == 'thead':
             self.in_thead = True
             return None
         if tag == 'tr':
             return TableRow()
         if tag in ('td', 'th'):
+            if isinstance(self.stack[-1], Table):
+                self.stack.append(TableRow())  # a cell outside any row opens one, as in browsers
             cell = TableCell()
 
             def _span(name: str) -> int:
@@ -242,10 +306,16 @@ class ASTHTMLParser(HTMLParser):
                 return None
             return CodeInline(code="")
         if tag == 'a':
-            return Link(url=attr_dict.get('href') or '', title=attr_dict.get('title'))
+            href = attr_dict.get('href')
+            # An anchor without href (<a name="top">) is only a target: its text stays plain
+            return None if href is None else Link(url=href, title=attr_dict.get('title'))
         if tag == 'blockquote':
             alert_type = next((c[len('alert-'):].upper() for c in classes if c.startswith('alert-')), None)
             return BlockQuote(alert_type=alert_type)
+        if tag == 'span' and 'tc-ref' in classes:
+            return _RefHolder()
+        if tag == 'span' and 'tc-footnote' in classes:
+            return Footnote()
         return None
 
     def _image(self, attr_dict: dict[str, str | None], classes: list[str]) -> None:
@@ -257,8 +327,10 @@ class ASTHTMLParser(HTMLParser):
             inline = 'mwe-math-fallback-image-inline' in classes
             self._append_to_parent(Equation(code=strip_displaystyle(attr_dict.get('alt') or ''), inline=inline))
             return
-        self._append_to_parent(Image(src=_image_source(attr_dict), alt=attr_dict.get('alt') or '',
-                                     title=attr_dict.get('title')))
+        image = Image(src=_image_source(attr_dict), alt=attr_dict.get('alt') or '', title=attr_dict.get('title'))
+        if self._figures:
+            self._figures[-1]['target'] = image
+        self._append_to_parent(image)
 
     def _close_implied(self, tag: str) -> None:
         """Close the nodes a start tag ends implicitly (``<li>`` ends the open item, ...)."""
@@ -319,6 +391,19 @@ class ASTHTMLParser(HTMLParser):
             self.in_pre = False
         if tag == 'code' and self.in_pre:
             return
+        if tag == 'span':
+            opened = self._open_spans.pop() if self._open_spans else None
+            if opened is not None and any(n is opened for n in self.stack):
+                while self.stack[-1] is not opened:
+                    self._finish(self.stack.pop())
+                self._finish(self.stack.pop())
+            return
+        if tag == 'figure':
+            if self._figures:
+                figure = self._figures.pop()
+                if figure['target'] is not None and figure['label']:
+                    figure['target'].label = figure['label']
+            return
 
         types = _NODE_TAGS.get(tag)
         if types is None:
@@ -338,8 +423,12 @@ class ASTHTMLParser(HTMLParser):
                 return
             if tag != 'math':
                 return
-            code = strip_displaystyle(math.code)
+            # Without a TeX annotation, the formula's visible text stands in for it
+            code = strip_displaystyle(math.code) or _WHITESPACE.sub(' ', math.text).strip()
             self.just_parsed_math = True
+            if not code:
+                self._math = None
+                return
         elif math.kind == 'script':
             if tag != 'script':
                 return
@@ -372,8 +461,43 @@ class ASTHTMLParser(HTMLParser):
                 node = Abstract(children=node.children)
             else:
                 node = abstract_from(node.children) or node
+        elif isinstance(node, _CaptionHolder):
+            return self._finish_caption(node, parent)
+        elif isinstance(node, _RefHolder):
+            node = _reference_node(node.raw)
+        elif isinstance(node, Footnote):
+            _strip_footnote_frame(node.content)
+        elif isinstance(node, Table):
+            for block in self._fostered.pop(id(node), []):
+                self._append_to_parent(block, force_parent=parent)
+            if self._figures:
+                self._figures[-1]['target'] = node
+        if id(node) in self._meta:
+            self._trim_trailing_space(node.children)
+            setattr(self.doc, self._meta.pop(id(node)), node.children)
+            return node
         self._append_to_parent(node, force_parent=parent)
         return node
+
+    def _finish_caption(self, holder: _CaptionHolder, parent: Node) -> Node:
+        """Give a table or figure its caption; a caption with nothing to caption stays text."""
+        content: list[Node] = []
+        for block in holder.children:
+            inline = block.children if isinstance(block, (Paragraph, Heading)) else [
+                n for n in walk(block) if isinstance(n, Text)]
+            if content and inline:
+                content.append(Text(content=' '))
+            content.extend(inline)
+        self._trim_trailing_space(content)
+        figure = self._figures[-1] if self._figures else None
+        if isinstance(parent, Table):
+            parent.caption = content
+        elif figure is not None and figure['target'] is not None:
+            figure['target'].caption = content
+        else:
+            for block in holder.children:
+                self._append_to_parent(block, force_parent=parent)
+        return holder
 
     # ── Text ──────────────────────────────────────────────────────────────────
 
@@ -381,6 +505,8 @@ class ASTHTMLParser(HTMLParser):
         if self._math is not None:
             if self._math.kind != 'mathml' or self._math.in_annotation:
                 self._math.code += data
+            else:
+                self._math.text += data
             return
         if self._in_title:
             self._title += data
@@ -398,6 +524,9 @@ class ASTHTMLParser(HTMLParser):
         if self.in_pre and isinstance(parent, CodeBlock):
             parent.code += data
             return
+        if isinstance(parent, _RefHolder):
+            parent.raw += data
+            return
         if isinstance(parent, CodeInline):
             parent.code += data
             return
@@ -411,7 +540,8 @@ class ASTHTMLParser(HTMLParser):
                 return
         fmt = self.current_text_attrs
         self._append_to_parent(Text(content=data, bold=fmt['bold'], italic=fmt['italic'],
-                                    strikethrough=fmt.get('strikethrough', False)),
+                                    strikethrough=fmt.get('strikethrough', False),
+                                    script=fmt.get('script')),
                                force_parent=parent)
 
     def _inline_target(self) -> list[Node] | None:
@@ -496,8 +626,7 @@ class ASTHTMLParser(HTMLParser):
 
         # Wrap consecutive orphan inline elements in a Paragraph
         # when appending to block containers (Document, BlockQuote, ListItem)
-        if isinstance(parent, _BLOCK_CONTAINERS) and isinstance(
-                node, (Text, Link, Image, CodeInline, LineBreak, Equation)) and not (
+        if isinstance(parent, _BLOCK_CONTAINERS) and isinstance(node, _INLINE_NODES) and not (
                 isinstance(node, Equation) and not node.inline):
             anon = self._active_anon_paragraph
             if anon is None or not parent.children or parent.children[-1] is not anon:
@@ -513,10 +642,38 @@ class ASTHTMLParser(HTMLParser):
             parent.items.append(node)
         elif isinstance(parent, TableRow) and isinstance(node, TableCell):
             parent.cells.append(node)
+        elif isinstance(parent, ListBlock):
+            # Content directly inside a list belongs to its last item, as browsers show it
+            if not parent.items:
+                parent.items.append(ListItem())
+            self._append_to_parent(node, force_parent=parent.items[-1])
+        elif isinstance(parent, (Table, TableRow)):
+            self._foster(node, parent)
         else:
             lists = child_lists(parent)
             if lists:
                 lists[0].append(node)
+
+    def _foster(self, node: Node, parent: Table | TableRow) -> None:
+        """Keep content found directly in a table (not in a cell) for before the table, as browsers do."""
+        table = parent if isinstance(parent, Table) else next(
+            (n for n in reversed(self.stack) if isinstance(n, Table)), None)
+        if table is None:  # a row outside any table: the content gets a cell of its own
+            if isinstance(node, _INLINE_NODES):
+                parent.cells.append(TableCell(children=[node]))
+            elif isinstance(node, (Paragraph, Heading)):
+                parent.cells.append(TableCell(children=node.children))
+            return
+        blocks = self._fostered.setdefault(id(table), [])
+        if isinstance(node, _INLINE_NODES):
+            if not blocks or not isinstance(blocks[-1], Paragraph):
+                blocks.append(Paragraph())
+            previous = blocks[-1].children
+            if previous and isinstance(node, Text) and not self._ends_with_space(previous):
+                node.content = ' ' + node.content  # separate runs of text, not one word
+            previous.append(node)
+        else:
+            blocks.append(node)
 
     def parse_css(self, css_str: str) -> None:
         for match in re.finditer(r'\.([a-zA-Z0-9_-]+)\s*\{([^}]+)\}', css_str):
@@ -543,13 +700,115 @@ class ASTHTMLParser(HTMLParser):
         has_h1 = any(isinstance(n, Heading) and n.level == 1 for n in self.doc.children)
         if title and not has_h1 and not self._generated_by_us:
             self.doc.children.insert(0, Heading(level=1, children=[Text(content=title)]))
+        if self._generated_by_us:
+            # TextConverter 0.3.0 wrote reference macros as bare text
+            for node in list(walk(self.doc)):
+                for lst in child_lists(node):
+                    lst[:] = _lift_macros(lst)
+
+
+def _reference_node(raw: str) -> Node:
+    """The citation, reference or label a ``tc-ref`` span holds; its text when it is not one."""
+    raw = raw.strip()
+    m = _REFERENCE_MACRO.match(raw)
+    if m:
+        node, end = parse_reference_macro(raw, 0, m.group(0), lambda arg: [Text(content=arg)])
+        if node is not None and end == len(raw):
+            return node
+    return Text(content=raw)
+
+
+def _strip_footnote_frame(content: list[Node]) -> None:
+    """Drop the ``\\footnote{`` and ``}`` a ``tc-footnote`` span shows around its content."""
+    if content and isinstance(content[0], Text) and content[0].content.lstrip().startswith('\\footnote{'):
+        content[0].content = content[0].content.lstrip()[len('\\footnote{'):]
+    if content and isinstance(content[-1], Text) and content[-1].content.rstrip().endswith('}'):
+        content[-1].content = content[-1].content.rstrip()[:-1]
+    content[:] = [n for n in content if not (isinstance(n, Text) and not n.content)]
+
+
+def _lift_macros(nodes: list[Node]) -> list[Node]:
+    """Turn reference macros written as text (``\\cite{a}``, ``\\footnote{...}``) into nodes.
+
+    A footnote's content may span several formatted text nodes; a macro that
+    does not parse stays text.
+    """
+    out: list[Node] = []
+    i = 0
+    while i < len(nodes):
+        node = nodes[i]
+        m = _REFERENCE_MACRO.search(node.content) if isinstance(node, Text) else None
+        if m is None:
+            out.append(node)
+            i += 1
+            continue
+        if m.start():
+            out.append(replace(node, content=node.content[:m.start()]))
+        rest = node.content[m.start():]
+        name = m.group(0)
+        if name.rstrip('*') == '\\footnote':
+            lifted = _lift_footnote(nodes, i, replace(node, content=rest[len(name):]))
+            if lifted is not None:
+                footnote, i, tail = lifted
+                out.append(footnote)
+                if tail is not None:
+                    nodes = [*nodes[:i], tail, *nodes[i:]]
+                continue
+        else:
+            macro, end = parse_reference_macro(rest, 0, name, lambda arg: [Text(content=arg)])
+            if macro is not None:
+                out.append(macro)
+                nodes = [*nodes[:i], replace(node, content=rest[end:]), *nodes[i + 1:]]
+                if not rest[end:]:
+                    i += 1
+                continue
+        out.append(replace(node, content=name))
+        nodes = [*nodes[:i], replace(node, content=rest[len(name):]), *nodes[i + 1:]]
+        if not rest[len(name):]:
+            i += 1
+    return out
+
+
+def _lift_footnote(nodes: list[Node], i: int, first: Text) -> tuple[Footnote, int, Text | None] | None:
+    """Read ``{...}`` from ``first`` (the text after ``\\footnote``) and the nodes after ``nodes[i]``.
+
+    Returns ``(footnote, index of the next unread node, the text left after the
+    closing brace)``, or None when the braces are not balanced.
+    """
+    if not first.content.startswith('{'):
+        return None
+    content: list[Node] = []
+    depth = 0
+    current: Node = first
+    j = i
+    while True:
+        if isinstance(current, Text):
+            text = current.content
+            for k, ch in enumerate(text):
+                depth += {'{': 1, '}': -1}.get(ch, 0)
+                if depth == 0:
+                    inner = text[1:k] if current is first else text[:k]
+                    if inner:
+                        content.append(replace(current, content=inner))
+                    tail = text[k + 1:]
+                    return Footnote(content=_lift_macros(content)), j + 1, (
+                        replace(current, content=tail) if tail else None)
+            inner = text[1:] if current is first else text
+            if inner:
+                content.append(replace(current, content=inner))
+        else:
+            content.append(current)
+        j += 1
+        if j >= len(nodes):
+            return None
+        current = nodes[j]
 
 
 _NOISE = frozenset(['script', 'style', 'nav', 'footer', 'header',
                     'aside', 'noscript', 'iframe', 'form', 'head'])
 _SAFE_ATTRS = frozenset([
     'href', 'src', 'alt', 'title', 'class', 'id', 'role', 'encoding', 'display', 'colspan', 'rowspan',
-    'data-src', 'data-lazy-src', 'srcset', 'data-srcset',
+    'data-src', 'data-lazy-src', 'srcset', 'data-srcset', 'data-label', 'start', 'type', 'checked',
 ])
 # Opening tag -> (open tags it ends implicitly, tags that stop the search).
 _IMPLIED_END: dict[str, tuple[frozenset[str], frozenset[str]]] = {

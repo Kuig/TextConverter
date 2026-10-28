@@ -97,7 +97,10 @@ class WikipediaProfile(SiteProfile):
         for selector in cfg.extra_strip_selectors:
             if selector in classes or selector == node_id:
                 return True
-        if tag == "sup" and "reference" in classes and cfg.drop_citation_marks:
+        if cfg.drop_citation_marks and (
+                (tag == "sup" and "reference" in classes)
+                # The "^" back to a dropped marker would be a dead link
+                or "mw-cite-backlink" in classes):
             return True
         if not cfg.keep_reference_list and classes & _REFERENCE_LIST_CLASSES:
             return True

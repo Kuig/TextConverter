@@ -7,7 +7,7 @@ PLAIN_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="generator" content="TextConverter">
-<title>Document</title>
+<title>{{title}}</title>
 </head>
 <body>
 {{content}}
@@ -20,7 +20,7 @@ PRETTY_LIGHT_TEMPLATE = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="generator" content="TextConverter">
-<title>Document</title>
+<title>{{title}}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 body {

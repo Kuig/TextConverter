@@ -331,9 +331,9 @@ def lower_image_descriptions(doc: Node) -> None:
 
 
 def remove_images(node: Node) -> None:
-    """Recursively drop every Image node from the tree."""
+    """Recursively drop every Image node from the tree; a figure's caption stays as text."""
     for lst in child_lists(node):
-        lst[:] = [c for c in lst if not isinstance(c, Image)]
+        lst[:] = [k for c in lst for k in (c.caption if isinstance(c, Image) else [c])]
         for c in lst:
             remove_images(c)
 

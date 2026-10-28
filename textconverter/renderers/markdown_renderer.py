@@ -5,7 +5,7 @@ from ..ast import (
     HorizontalRule, Image, Label, LineBreak, Link, ListBlock, Node, Paragraph, Reference, Table,
     TableCell, Text,
 )
-from ._common import latex_reference_macro, table_grid
+from ._common import caption_paragraphs, latex_reference_macro, table_grid
 
 # Characters of literal text that Markdown would read as markup (see _escape).
 _MD_SPECIAL = re.compile(
@@ -77,7 +77,8 @@ def _heading(node: Heading) -> str:
 def _paragraph(node: Paragraph) -> str:
     # A line of the paragraph that starts like a block (heading, quote, item, rule) is escaped
     content = _LINE_START.sub(_escape_line_start, _inline(node.children).strip())
-    return re.sub(r'[ \t]*\n', '  \n', content)
+    blocks = [re.sub(r'[ \t]*\n', '  \n', content), *(_paragraph(p) for p in caption_paragraphs(node))]
+    return '\n\n'.join(filter(None, blocks))
 
 
 def _code_block(node: CodeBlock) -> str:
@@ -116,7 +117,7 @@ def _table(node: Table) -> str:
     lines = ["| " + " | ".join(header_cells) + " |", "|" + "|".join(["---"] * ncols) + "|"]
     for row in rows:
         lines.append("| " + " | ".join(_sanitize_table_cell(_render_node(c)) for c in row) + " |")
-    return '\n'.join(lines)
+    return '\n\n'.join([*(_paragraph(p) for p in caption_paragraphs(node)), '\n'.join(lines)])
 
 
 def _table_cell(node: TableCell) -> str:

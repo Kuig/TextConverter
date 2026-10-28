@@ -83,6 +83,18 @@ def extract_macro_args(text: str, macro_name: str, start_pos: int = 0) -> tuple[
     return args, pos, idx
 
 
+def _optional_args(text: str, idx: int) -> list[str]:
+    """The ``[...]`` arguments starting at ``idx``, as written."""
+    options = []
+    while idx < len(text) and text[idx] == '[':
+        close = text.find(']', idx)
+        if close == -1:
+            break
+        options.append(text[idx + 1:close])
+        idx = close + 1
+    return options
+
+
 def parse_reference_macro(
     text: str, pos: int, cmd_name: str, parse_inline: Callable[[str], list[Node]]
 ) -> tuple[Node | None, int]:
@@ -105,7 +117,8 @@ def parse_reference_macro(
     if base == "footnote":
         return Footnote(content=parse_inline(args[0])), end
     if base in ("cite", "citet", "citep"):
-        return Citation(keys=[k.strip() for k in args[0].split(",") if k.strip()], style=base), end
+        return Citation(keys=[k.strip() for k in args[0].split(",") if k.strip()], style=base,
+                        options=_optional_args(text, pos + len(cmd_name))), end
     if base == "ref":
         return Reference(label=args[0].strip()), end
     return Label(name=args[0].strip()), end

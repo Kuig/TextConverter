@@ -3,7 +3,24 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from ..ast import Citation, Footnote, Label, Node, Reference, Table, TableCell
+from ..ast import Citation, Footnote, Image, Label, Node, Paragraph, Reference, Table, TableCell, Text, walk
+
+
+def plain_text(nodes: list[Node]) -> str:
+    """The text of a list of nodes, descendants included, without formatting."""
+    return ''.join(n.content for node in nodes for n in walk(node) if isinstance(n, Text))
+
+
+def caption_paragraphs(node: Node) -> list[Paragraph]:
+    """A ``Table: ...`` / ``Figure: ...`` paragraph for the node's caption and its figures' captions.
+
+    For the renderers that have no caption construct of their own; a table's
+    caption comes first, the captions of the figures in a paragraph after it.
+    """
+    if isinstance(node, Table):
+        return [Paragraph(children=[Text(content="Table: "), *node.caption])] if node.caption else []
+    return [Paragraph(children=[Text(content="Figure: "), *n.caption])
+            for n in walk(node) if isinstance(n, Image) and n.caption]
 
 
 def table_grid(table: Table) -> tuple[list[TableCell], list[list[TableCell]], int]:
@@ -43,7 +60,8 @@ def latex_reference_macro(
     if isinstance(node, Footnote):
         return f"\\footnote{{{inline(node.content)}}}"
     if isinstance(node, Citation):
-        return f"\\{node.style}{{{escape(','.join(node.keys))}}}"
+        options = ''.join(f"[{escape(o)}]" for o in node.options)
+        return f"\\{node.style}{options}{{{escape(','.join(node.keys))}}}"
     if isinstance(node, Reference):
         return f"\\ref{{{escape(node.label)}}}"
     if isinstance(node, Label):

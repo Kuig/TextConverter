@@ -16,6 +16,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the start of the appendices (`Appendix`), the first number of an ordered list
   (`ListBlock.start`) and task list items (`ListItem.checked`). The JSON output carries the
   new fields; JSON written by 0.3.0 still loads.
+- HTML input reads table captions (`<caption>`), figures (`<figure>` with `<figcaption>`),
+  superscript and subscript, `<ol start>` and task list checkboxes; HTML output writes them
+  back. Markdown and LaTeX output show a caption as a `Table: ...` / `Figure: ...` paragraph.
+
+### Changed
+
+- HTML output marks the reference macros it writes (`\cite`, `\footnote`, `\ref`, `\label`,
+  still shown as LaTeX) with `tc-ref` / `tc-footnote` spans, and the document title block
+  with `tc-*` classes, so LaTeX → HTML → LaTeX keeps them; the macros of HTML written by
+  0.3.0 are read back too. Macros typed in any other page stay text.
+- The optional arguments of a citation (`\citep[e.g.][p.~3]{key}`) are kept in every format.
+- HTML output: the page `<title>` is the document title (or the first main heading) instead of
+  "Document"; a list item holding one paragraph is written without `<p>`; a display formula or
+  a figure is no longer nested inside a `<p>`.
+- With `--image-handling discard`, a figure's caption stays as text.
+- Wikipedia cleanup also drops the "^" back links of the reference list when the citation
+  markers they point to are dropped.
+
+### Fixed
+
+- HTML input with a table `<caption>`, or with text directly inside `<ul>`, `<ol>`, `<table>`
+  or `<tr>`, no longer crashes the HTML and Markdown output; such text is kept (in the list's
+  last item, or before the table as browsers show it), and a cell outside any row opens one.
+- An anchor without `href` (`<a name="top">`) is plain text instead of an empty link, and
+  MathML without a TeX annotation keeps its text instead of becoming an empty formula.
 
 ## [0.3.0] - 2026-10-26
 

@@ -205,7 +205,11 @@ class TestLatexFixes(BaseConverterTest):
     def test_citation_with_two_optional_arguments(self):
         from textconverter.ast import Citation
         (para,) = _blocks("as shown \\citep[e.g.][p. 3]{vanDijk1902}.")
-        self.assertIn(Citation(keys=["vanDijk1902"], style="citep"), para.children)
+        self.assertIn(Citation(keys=["vanDijk1902"], style="citep", options=["e.g.", "p. 3"]), para.children)
+        for to in ("latex", "markdown", "html"):
+            with self.subTest(to=to):
+                out = textconverter.convert_text("\\citep[e.g.][p. 3]{vanDijk1902}", "latex", to)
+                self.assertIn("\\citep[e.g.][p. 3]{vanDijk1902}", out)
 
     def test_literal_arguments_are_unescaped(self):
         from textconverter.ast import CodeInline, Link

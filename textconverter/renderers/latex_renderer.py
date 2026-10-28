@@ -5,7 +5,7 @@ from ..ast import (
     HorizontalRule, Image, Label, LineBreak, Link, ListBlock, Node, Paragraph, Reference, Table,
     TableCell, Text, walk,
 )
-from ._common import latex_reference_macro, table_grid
+from ._common import caption_paragraphs, latex_reference_macro, table_grid
 
 # A line break at the start or end of a paragraph is a LaTeX error ("There's no line here to end").
 _EDGE_BREAKS = re.compile(r'^(?:\s*\\\\)+\s*|\s*(?:\\\\\s*)+$')
@@ -85,7 +85,8 @@ def _heading(node: Heading) -> str:
 
 
 def _paragraph(node: Paragraph) -> str:
-    return _EDGE_BREAKS.sub('', _inline(node.children).strip())
+    content = _EDGE_BREAKS.sub('', _inline(node.children).strip())
+    return '\n\n'.join(filter(None, [content, *(_paragraph(p) for p in caption_paragraphs(node))]))
 
 
 def _code_block(node: CodeBlock) -> str:
@@ -112,7 +113,7 @@ def _table(node: Table) -> str:
         lines.append(" & ".join(_render_node(c) for c in row) + " \\\\")
         lines.append("\\hline")
     lines.append("\\end{tabular}")
-    return '\n'.join(lines)
+    return '\n\n'.join([*(_paragraph(p) for p in caption_paragraphs(node)), '\n'.join(lines)])
 
 
 def _text(node: Text) -> str:
