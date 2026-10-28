@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Figure: ...` paragraph after an image as their caption (a `\label{...}` in it is the label).
   Markdown output writes all of them, and a display equation's environment
   (`$$\begin{align}...\end{align}$$`), so LaTeX → Markdown → LaTeX keeps `align`.
+- Markdown input reads autolinks (`<https://...>`, `<user@host>`), bare URLs as GFM does
+  (`https://...`, `www....`, without trailing punctuation), and the inline HTML tags `<sup>`,
+  `<sub>`, `<kbd>`, `<strong>`/`<b>`, `<em>`/`<i>` and `<del>`/`<s>` (any other tag stays
+  text). Markdown output writes superscript and subscript as `<sup>`/`<sub>`, and a link
+  showing its own URL as a bare URL or an autolink.
 
 ### Changed
 
@@ -37,6 +42,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `\footnote{...}`, which Markdown input still reads; citations, references and labels stay
   LaTeX macros. Paragraphs of a block quote are separated by a blank `>` line, and a list item
   with several paragraphs makes the list loose (blank lines between items).
+- Markdown emphasis follows CommonMark's delimiter rules, in input and output. Input reads
+  `***x***`, nesting such as `***a** b*`, emphasis around code or links (`**a `c` b**`), and
+  leaves markers that cannot open or close as text: `**Keywords: **x` (a closer after a
+  space), as some 0.3.0 output wrote it, now shows its asterisks, as Markdown viewers do.
+  Output writes runs of formatting with shared markers (`_a **b** c_` instead of
+  `_a _**_b_**_ c_`, `**1. INTRODUCTION**` instead of `**1.** **INTRODUCTION**`), keeps
+  spaces outside them (`**Keywords:** x`), uses `*` for italic inside a word and falls back to
+  `<strong>`/`<em>`/`<del>` where no marker would work. Literal text escapes what would now
+  be markup: a `<` before a letter, a `~` at either end of a run, an underscore run that could
+  open or close emphasis, and the `:` of `https://` (or the `.` of `www.`), so a URL written as
+  text stays text.
 
 - HTML output marks the reference macros it writes (`\cite`, `\footnote`, `\ref`, `\label`,
   still shown as LaTeX) with `tc-ref` / `tc-footnote` spans, and the document title block
@@ -64,7 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     into its last item (and merging the following list into it); an indented fence, or one
     right below the item, still belongs to the item;
   - an indented paragraph after a blank line stays in its list item instead of leaving the
-    list and splitting it in two.
+    list and splitting it in two;
+  - `***x***` lost its formatting and `**a *b* c**`-like runs written by the renderer
+    (`**bold ****_it_**** bold**`) were not valid Markdown.
 
 ## [0.3.0] - 2026-10-26
 

@@ -82,7 +82,7 @@ class TestHtmlRobustness(BaseConverterTest):
         page = ('<html><body><main><p>a &lt;b&gt; c</p><pre><code>&lt;div&gt;</code></pre>'
                 '<img src="x.png" alt="say &quot;hi&quot; ok"></main></body></html>')
         md = _md(page, extract_html=True)
-        self.assertIn("a <b> c", md)
+        self.assertIn(r"a \<b> c", md)  # escaped: "<b>" would be read as bold
         self.assertIn("<div>", md)
         self.assertIn('say "hi" ok', md)
 
@@ -141,7 +141,7 @@ class TestHtmlRobustness(BaseConverterTest):
         self.assertIn("![b](small.png)", md)
 
     def test_strikethrough(self):
-        self.assertIn("~~gone~~", _md("<p>a <s>gone</s> <del>gone</del></p>"))
+        self.assertIn("~~gone gone~~", _md("<p>a <s>gone</s> <del>gone</del></p>"))
 
     def test_abstraction_is_not_an_abstract(self):
         self.assertNotIn("**Abstract**", _md("<blockquote><p>Abstraction is key</p></blockquote>"))

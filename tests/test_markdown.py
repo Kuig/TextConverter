@@ -174,6 +174,10 @@ class TestMarkdownEscaping(BaseConverterTest):
         "---",
         r"\footnote{x} typed literally",
         "two ~~tildes~~",
+        "~edge tildes~",
+        "2*3*4 and a_b_c and __init__ and ___",
+        "a <b>tag</b>, <https://x.org> and <me@x.org>",
+        "see https://x.org/a_b or www.x.org in plain text",
     ]
 
     def test_literal_text_round_trips(self):
@@ -327,6 +331,88 @@ class TestMarkdownBlocks(BaseConverterTest):
         self.assertEqual(_doc(md).children, [Equation(code="a&=b\\\\c&=d", env="align")])
         self.assertEqual(textconverter.convert_text(md, "markdown", "latex"),
                          textconverter.convert_text(tex, "latex", "latex"))
+
+
+class TestMarkdownInline(BaseConverterTest):
+    """Inline syntax: CommonMark emphasis, autolinks and bare URLs, inline HTML, sup/sub."""
+
+    @staticmethod
+    def _styles(md: str) -> list[tuple]:
+        from textconverter.ast import Text
+        return [(n.content, n.bold, n.italic) if isinstance(n, Text) else type(n).__name__
+                for n in _doc(md).children[0].children]
+
+    @staticmethod
+    def _render(*nodes) -> str:
+        from textconverter.ast import Document, Paragraph
+        from textconverter.renderers.markdown_renderer import render_markdown
+        return render_markdown(Document(children=[Paragraph(children=list(nodes))])).strip()
+
+    def test_emphasis_follows_commonmark(self):
+        self.assertEqual(self._styles("***x*** ___y___"), [("x", True, True), (" ", False, False), ("y", True, True)])
+        self.assertEqual(self._styles("*a **b** c*"), [("a ", False, True), ("b", True, True), (" c", False, True)])
+        self.assertEqual(self._styles("**bold *it* bold**"),
+                         [("bold ", True, False), ("it", True, True), (" bold", True, False)])
+        self.assertEqual(self._styles("***a** b*"), [("a", True, True), (" b", False, True)])
+        self.assertEqual(self._styles("2*3*4"), [("2", False, False), ("3", False, True), ("4", False, False)])
+        # A closer after a space closes nothing; emphasis may span other inline nodes
+        self.assertEqual(self._styles("**Keywords: **kw"), [("**Keywords: **kw", False, False)])
+        self.assertEqual(self._styles("**a `c` b**"), [("a ", True, False), "CodeInline", (" b", True, False)])
+
+    def test_markers_nest_and_keep_spaces_outside(self):
+        from textconverter.ast import Text
+        self.assertEqual(self._render(Text(content="Keywords: ", bold=True), Text(content="kw")), "**Keywords:** kw")
+        self.assertEqual(self._render(Text(content="a "), Text(content="b", bold=True), Text(content=" c")),
+                         "a **b** c")
+        nested = [Text(content="a ", italic=True), Text(content="b", bold=True, italic=True),
+                  Text(content=" c", italic=True)]
+        self.assertEqual(self._render(*nested), "_a **b** c_")
+        self.assertEqual(_doc(self._render(*nested)).children[0].children, nested)
+        # Inside a word italic needs "*"; where no marker can open or close, HTML does
+        self.assertEqual(self._render(Text(content="foo"), Text(content="bar", italic=True)), "foo*bar*")
+        self.assertEqual(self._render(Text(content="x"), Text(content="(a)", bold=True), Text(content="y")),
+                         "x<strong>(a)</strong>y")
+
+    def test_styled_text_round_trips(self):
+        """Random runs of styled text come back unchanged (whitespace may change style)."""
+        import random
+        from textconverter.ast import Text
+        rng = random.Random(4)
+        pieces = ["a", "bc", "1", "x_y", "*", "_", "~", "(", ")", ":", ".", "\\", "<", "[", "`", " "]
+        for _ in range(500):
+            nodes = [Text(content="".join(rng.choice(pieces) for _ in range(rng.randint(1, 4))).strip() or "z",
+                          bold=rng.random() < .4, italic=rng.random() < .4, strikethrough=rng.random() < .15,
+                          script=rng.choice([None] * 8 + ["sup", "sub"]))
+                     for _ in range(rng.randint(1, 5))]
+            md = self._render(*nodes)
+            flat = lambda ns: [(c, n.bold, n.italic, n.strikethrough, n.script) for n in ns
+                               for c in n.content if not c.isspace()]
+            with self.subTest(md=md):
+                self.assertEqual(flat(_doc(md).children[0].children), flat(nodes))
+
+    def test_autolinks_and_bare_urls(self):
+        from textconverter.ast import Link
+        links = lambda md: [(n.url, n.content[0].content) for n in _doc(md).children[0].children
+                            if isinstance(n, Link)]
+        self.assertEqual(links("<https://a.org/x> and <me@x.org>"),
+                         [("https://a.org/x", "https://a.org/x"), ("mailto:me@x.org", "me@x.org")])
+        self.assertEqual(links("(see https://x.org/a_(b)), www.y.org."),
+                         [("https://x.org/a_(b)", "https://x.org/a_(b)"), ("http://www.y.org", "www.y.org")])
+        self.assertEqual(links("[go to https://x.org](https://y.org)"), [("https://y.org", "go to https://x.org")])
+        # Written back bare when spaces surround it, else as an autolink
+        self.assertEqual(_md("see https://x.org/a now"), "see https://x.org/a now\n")
+        self.assertEqual(_md("see <https://x.org/a>."), "see <https://x.org/a>.\n")
+
+    def test_inline_html(self):
+        from textconverter.ast import CodeInline, LineBreak, Text
+        children = _doc("H<sub>2</sub>O x<sup>2</sup> <kbd>Ctrl</kbd> <em>e</em><br><span>s</span>").children[0].children
+        self.assertIn(Text(content="2", script="sub"), children)
+        self.assertIn(Text(content="2", script="sup"), children)
+        self.assertIn(CodeInline(code="Ctrl"), children)
+        self.assertIn(Text(content="e", italic=True), children)
+        self.assertIn(LineBreak(), children)
+        self.assertIn(Text(content="<span>s</span>"), children)  # any other tag stays text
+        self.assertEqual(self._render(Text(content="x"), Text(content="2", script="sup")), "x<sup>2</sup>")
 
 
 class TestCodeDetection(BaseConverterTest):

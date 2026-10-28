@@ -1,11 +1,13 @@
 from __future__ import annotations
 import re
 from contextvars import ContextVar
+from dataclasses import replace
 from ..ast import (
     METADATA_FIELDS, Abstract, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote,
     Heading, HorizontalRule, Image, Label, LineBreak, Link, ListBlock, Node, Paragraph, Reference, Table,
     TableCell, Text,
 )
+from ..parsers.markdown_parser import emphasis_flanking, trim_bare_url
 from ._common import caption_paragraphs, latex_reference_macro, table_grid
 
 # The footnotes met while rendering one document, numbered in order.
@@ -15,10 +17,17 @@ _FOOTNOTES: ContextVar[list[Footnote] | None] = ContextVar("markdown_footnotes",
 _MD_SPECIAL = re.compile(
     r'\\(?=[!-/:-@\[-`{-~]|(?:footnote|citet|citep|cite|ref|label)(?![a-zA-Z])|$)'
     r'|[*`\[\]$]'
-    r'|(?<!\w)_|_(?!\w)'
-    r'|~(?=~)|(?<=~)~'
-    r'|<(?=br\b)'
+    r'|_+'
+    r'|~(?=~)|(?<=~)~|^~|~$'
+    r'|<(?=[A-Za-z/!?])'
+    # What would start a bare URL (GFM) in text: "http://", "https://", "www."
+    r'|(?<=http):(?=//)|(?<=https):(?=//)|(?<=(?<![\w.-])www)\.'
 )
+# Links the renderer can write as a bare URL or an autolink (<...>).
+_BARE_URL = re.compile(r'(?:https?://|www\.)\w[^\s<>\\]*$')
+_AUTOLINK = re.compile(r'[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*$')
+_AUTOLINK_MAIL = re.compile(r"[\w.!#$%&'*+/=?^`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+                            r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*$")
 # A block marker at the start of a line: heading, quote, list item, rule or setext underline.
 _LINE_START = re.compile(
     r'^([ \t]*)(#{1,6}(?=[ \t]|$)|>|[-+](?=[ \t])|-(?=--|-*[ \t]*$)|=(?==*[ \t]*$)|\d+\.(?=[ \t]))',
@@ -92,18 +101,136 @@ def _render_node(node: Node) -> str:
     return render(node) if render else ""
 
 
+# Emphasis styles, outermost first when two start and end together, with their marker
+# forms in order of preference; the HTML form is valid wherever the others are not.
+_STYLES = ('strikethrough', 'bold', 'italic')
+_MARKERS = {
+    'strikethrough': (('~~', '~~'), ('<del>', '</del>')),
+    'bold': (('**', '**'), ('<strong>', '</strong>')),
+    'italic': (('_', '_'), ('*', '*'), ('<em>', '</em>')),
+}
+
+
+class _Marker:
+    """One end of an emphasis pair; the pair's form is chosen once the text around both ends is known."""
+    def __init__(self, style: str, opening: bool):
+        self.style = style
+        self.closing = _Marker(style, False) if opening else None  # an opening marker's partner
+
+
 def _inline(nodes: list[Node]) -> str:
-    # Adjacent texts with the same formatting are one run: "**a b**", not "**a ****b**"
-    merged: list[Node] = []
+    """Inline nodes as Markdown, emphasis opened and closed as formatting changes.
+
+    Consecutive texts share their markers (``*a **b** c*``), spaces stay outside
+    them, and any other node closes them.
+    """
+    pieces: list[str | _Marker] = []
+    stack: list[_Marker] = []  # the open markers, outermost first
+    spaces = ""  # trailing whitespace, written after the markers that close
+    runs = _text_runs(nodes)
+
+    def close(keep: int) -> None:
+        nonlocal spaces
+        for marker in reversed(stack[keep:]):
+            pieces.append(marker.closing)
+        del stack[keep:]
+        pieces.append(spaces)
+        spaces = ""
+
+    for k, node in enumerate(runs):
+        if not isinstance(node, Text):
+            close(0)
+            if isinstance(node, Link):
+                # A bare URL needs a space (or nothing) on both sides to end where it should
+                before = next((p for p in reversed(pieces) if p), ' ')
+                after = runs[k + 1] if k + 1 < len(runs) else Text(content=' ')
+                bare = (isinstance(before, str) and before[-1] in ' \t\n('
+                        and isinstance(after, Text) and after.content[:1].isspace())
+                pieces.append(_link(node, bare=bare))
+            else:
+                pieces.append(_render_node(node))
+            continue
+        lead, core, trail = re.match(r'(\s*)(.*?)(\s*)$', node.content, re.DOTALL).groups()
+        if not core:
+            spaces += node.content
+            continue
+        styles = [s for s in _STYLES if getattr(node, s)]
+        keep = 0
+        while keep < len(stack) and stack[keep].style in styles:
+            keep += 1
+        close(keep)
+        pieces.append(lead)
+        open_styles = {m.style for m in stack}
+        for style in sorted((s for s in styles if s not in open_styles), key=lambda s: -_extent(runs, k, s)):
+            marker = _Marker(style, opening=True)
+            stack.append(marker)
+            pieces.append(marker)
+        pieces.append(_text(node, core))
+        spaces = trail
+    close(0)
+    return _resolve_markers(pieces)
+
+
+def _text_runs(nodes: list[Node]) -> list[Node]:
+    """Adjacent texts with the same formatting merged into one."""
+    runs: list[Node] = []
     for node in nodes:
-        prev = merged[-1] if merged else None
-        if (isinstance(node, Text) and isinstance(prev, Text)
-                and (node.bold, node.italic, node.strikethrough) == (prev.bold, prev.italic, prev.strikethrough)):
-            merged[-1] = Text(content=prev.content + node.content, bold=node.bold, italic=node.italic,
-                              strikethrough=node.strikethrough)
+        prev = runs[-1] if runs else None
+        if isinstance(node, Text) and isinstance(prev, Text) and _text_style(node) == _text_style(prev):
+            runs[-1] = replace(prev, content=prev.content + node.content)
         else:
-            merged.append(node)
-    return ''.join(_render_node(c) for c in merged)
+            runs.append(node)
+    return runs
+
+
+def _text_style(node: Text) -> tuple:
+    return node.bold, node.italic, node.strikethrough, node.script
+
+
+def _extent(runs: list[Node], start: int, style: str) -> int:
+    """How many runs from ``start`` keep ``style`` (whitespace-only texts do not interrupt it)."""
+    count = 0
+    for node in runs[start:]:
+        if not isinstance(node, Text):
+            break
+        if node.content.strip():
+            if not getattr(node, style):
+                break
+            count += 1
+    return count
+
+
+def _resolve_markers(pieces: list[str | _Marker]) -> str:
+    """Join the pieces, each marker pair in the first form that opens and closes where it stands.
+
+    A single ``*`` is not used next to another marker, where it would join a
+    ``**`` into one longer run.
+    """
+    markers = {i for i, piece in enumerate(pieces) if isinstance(piece, _Marker)}
+
+    def neighbour(i: int, step: int) -> tuple[str, bool]:
+        """The character next to piece ``i`` and whether it belongs to a marker."""
+        i += step
+        while 0 <= i < len(pieces):
+            if i in markers:
+                return '*', True  # every marker form starts and ends with punctuation
+            if pieces[i]:
+                return pieces[i][-1 if step < 0 else 0], False
+            i += step
+        return ' ', False
+
+    def fits(form: str, i: int, side: int) -> bool:
+        (before, marker_before), (after, marker_after) = neighbour(i, -1), neighbour(i, 1)
+        if form == '*' and (marker_before or marker_after):
+            return False
+        return form.startswith('<') or emphasis_flanking(form[0], before, after)[side]
+
+    for i, piece in enumerate(pieces):
+        if isinstance(piece, _Marker) and piece.closing is not None:
+            j = pieces.index(piece.closing, i)
+            opening, closing = next(f for f in _MARKERS[piece.style] if fits(f[0], i, 0) and fits(f[1], j, 1))
+            pieces[i], pieces[j] = opening, closing
+    return ''.join(pieces)
 
 
 def _quote(lines: list[str]) -> str:
@@ -173,12 +300,21 @@ def _table_cell(node: TableCell) -> str:
 def _escape(text: str) -> str:
     """Backslash-escape what the Markdown parser would read as markup in literal text.
 
-    Escapes ``*``, `````, ``[``, ``]``, ``$``, an underscore at a word edge,
-    doubled ``~``, ``<br``, and a backslash that would start an escape or a
-    reference macro. Block markers at the start of a line are escaped per
-    paragraph (see ``_paragraph``).
+    Escapes ``*``, `````, ``[``, ``]``, ``$``, an underscore run that could
+    open or close emphasis (one inside a word cannot), doubled ``~`` and one at
+    either end, a ``<`` that would start a tag or an autolink, and a backslash
+    that would start an escape or a reference macro. Block markers at the start
+    of a line are escaped per paragraph (see ``_paragraph``).
     """
-    return _MD_SPECIAL.sub(lambda m: '\\' + m.group(0), text)
+    def escape(m: re.Match) -> str:
+        run = m.group(0)
+        if run[0] != '_':
+            return '\\' + run
+        # Past either end may come a marker: punctuation
+        before = text[m.start() - 1] if m.start() else '*'
+        after = text[m.end()] if m.end() < len(text) else '*'
+        return run if emphasis_flanking('_', before, after) == (False, False) else '\\_' * len(run)
+    return _MD_SPECIAL.sub(escape, text)
 
 
 def _escape_title(title: str | None) -> str:
@@ -197,15 +333,24 @@ def _destination(url: str) -> str:
     return url
 
 
-def _text(node: Text) -> str:
-    content = _escape(node.content)
-    if node.italic: content = f"_{content}_"
-    if node.bold: content = f"**{content}**"
-    if node.strikethrough: content = f"~~{content}~~"
+def _text(node: Text, core: str) -> str:
+    """The escaped text of a run, without its emphasis markers."""
+    content = _escape(core)
+    if node.script:
+        content = f"<{node.script}>{content}</{node.script}>"
     return content
 
 
-def _link(node: Link) -> str:
+def _link(node: Link, bare: bool = False) -> str:
+    """A link; one showing its own URL is an autolink, or a bare URL when ``bare`` allows it."""
+    shown = node.content[0].content if len(node.content) == 1 and isinstance(node.content[0], Text) else None
+    if shown is not None and not node.title and _text_style(node.content[0]) == (False, False, False, None):
+        if bare and node.url in (shown, 'http://' + shown) and _BARE_URL.match(shown) and trim_bare_url(shown) == shown:
+            return shown
+        if shown == node.url and _AUTOLINK.match(shown):
+            return f"<{shown}>"
+        if node.url == 'mailto:' + shown and _AUTOLINK_MAIL.match(shown):
+            return f"<{shown}>"
     return f"[{_inline(node.content)}]({_destination(node.url)}{_escape_title(node.title)})"
 
 
@@ -253,7 +398,7 @@ _RENDERERS = {
     ListBlock: _list,
     Table: _table,
     TableCell: _table_cell,
-    Text: _text,
+    Text: lambda node: _inline([node]),
     Link: _link,
     Image: _image,
     CodeInline: _code_inline,
