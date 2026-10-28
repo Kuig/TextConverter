@@ -57,7 +57,7 @@ A small set of `@dataclass` node types (`Document`, `Paragraph`, `Heading`, `Tex
 
 Passes over the tree never probe node types for their children themselves: `walk()` iterates every node, and `child_lists()` exposes each node's child lists for in-place edits. Both read a single list of child attribute names (the main list first, then captions and document metadata), so a new container node type is registered in one place.
 
-Footnotes, citations and cross-references (`\footnote`, `\cite`, `\ref`, `\label`) are kept as LaTeX macros in every text format, so they come back unchanged when converted to LaTeX again. The HTML output wraps them in `tc-ref` / `tc-footnote` spans (and the title block in `tc-*` classes, labels in `data-label`), which the HTML parser reads back; in HTML that TextConverter wrote, bare macros are read back too.
+Citations and cross-references (`\cite`, `\ref`, `\label`) are kept as LaTeX macros in every text format, and footnotes too except in Markdown, which has its own (GFM `[^1]`), so they come back unchanged when converted to LaTeX again. The HTML output wraps them in `tc-ref` / `tc-footnote` spans (and the title block in `tc-*` classes, labels in `data-label`), which the HTML parser reads back; in HTML that TextConverter wrote, bare macros are read back too.
 
 ## Interfaces
 

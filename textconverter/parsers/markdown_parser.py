@@ -2,24 +2,36 @@ from __future__ import annotations
 import base64
 import json
 import re
+from dataclasses import replace
 
 from ..ast import (
-    DESCRIPTION_END, DESCRIPTION_START, BlockQuote, CodeBlock, CodeInline, Document, Equation,
-    Heading, HorizontalRule, Image, InlineElement, LineBreak, Link, ListBlock, ListItem, Paragraph,
-    Table, TableCell, TableRow, Text, abstract_from,
+    DESCRIPTION_END, DESCRIPTION_START, METADATA_FIELDS, BlockQuote, CodeBlock, CodeInline, Document,
+    Equation, Footnote, Heading, HorizontalRule, Image, InlineElement, Label, LineBreak, Link, ListBlock,
+    ListItem, Node, Paragraph, Table, TableCell, TableRow, Text, abstract_from, walk,
 )
+from ..logger import log_warning
 from ._latex_macros import REFERENCE_MACROS, parse_reference_macro
+from ._math import split_math_env
 
 # List item markers: Markdown's own plus the bullets PDF text extraction produces.
 _BULLET = r'[-*+•●○■]'
 _LIST_ITEM = re.compile(rf'^\s*(?:{_BULLET}|\d+\.)\s+')
 # A table's delimiter row: | --- | :--: | ...
 TABLE_SEPARATOR = re.compile(r'^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$')
-# A fenced code block; the closing fence is at least as long as the opening one.
+# A fenced code block (``` or ~~~); the closing fence is the same character, at least as long.
 _FENCED_CODE = re.compile(
-    r'^[ \t]*(?P<fence>`{3,})[ \t]*(?P<lang>[^\n`]*)\n(?P<code>.*?)^[ \t]*(?P=fence)`*[ \t]*$',
+    r'^(?P<indent>[ \t]*)(?P<fence>(?P<fc>[`~])(?P=fc){2,})[ \t]*(?P<lang>[^\n`]*)\n'
+    r'(?P<code>.*?)^[ \t]*(?P=fence)(?P=fc)*[ \t]*$',
     re.MULTILINE | re.DOTALL,
 )
+_FENCE_LINE = re.compile(r'^(`{3,}|~{3,})')
+# A task list item's checkbox: "[ ] text" or "[x] text".
+_TASK = re.compile(r'^\[([ xX])\][ \t]+(.*)$', re.DOTALL)
+_SETEXT_UNDERLINE = re.compile(r'^(?:=+|-+)[ \t]*$')
+# YAML front matter at the very start: only "key: value" lines between "---" lines.
+_FRONT_MATTER = re.compile(r'\A---[ \t]*\n((?:[ \t]*(?:[A-Za-z_][\w-]*[ \t]*:.*)?\n)*?)(?:---|\.\.\.)[ \t]*(?:\n|\Z)')
+# A GFM footnote definition and its indented continuation lines.
+_FOOTNOTE_DEF = re.compile(r'^ {0,3}\[\^([^\]\s]+)\]:[ \t]*(.*(?:\n(?:[ \t]{2,}\S.*|[ \t]*$))*)', re.MULTILINE)
 _MATH_BLOCK = re.compile(r'(?<!\\)\$\$(.*?)(?<!\\)\$\$', re.MULTILINE | re.DOTALL)
 # Text extracted by pymupdf4llm from a vector image, written right after the image.
 _PICTURE_TEXT = re.compile(
@@ -48,6 +60,8 @@ _ESCAPE_RE = re.compile(r'\\([!-/:-@\[-`{-~])')
 _TO_SENTINEL = {c: chr(0xE000 + i) for i, c in enumerate(_PUNCTUATION)}
 _FROM_SENTINEL = {v: k for k, v in _TO_SENTINEL.items()}
 _SENTINEL_RE = re.compile('[' + ''.join(_FROM_SENTINEL) + ']')
+# Stands for a hard line break while soft ones become spaces.
+_HARD_BREAK = ''
 
 
 def _protect_escapes(text: str) -> str:
@@ -81,7 +95,8 @@ def _placeholder_node(kind: str, payload: dict):
     if kind == 'CODEBLOCK':
         return CodeBlock(code=payload['code'].strip(), language=payload['lang'] or None)
     if kind == 'MATHBLOCK':
-        return Equation(code=payload['code'], inline=False)
+        code, env = split_math_env(payload['code'])
+        return Equation(code=code, inline=False, env=env)
     image = Image(src=payload['src'], description=payload['desc'], category=payload['cat'])
     return Paragraph(children=[image])
 
@@ -100,10 +115,11 @@ def smart_preprocess_markdown(text: str) -> str:
 
     for line in text.split('\n'):
         stripped = line.strip()
-        fence_match = re.match(r'^(`{3,})', stripped)
+        fence_match = _FENCE_LINE.match(stripped)
         if fence is not None:
             new_lines.append(line)
-            if fence_match and len(fence_match.group(1)) >= len(fence) and not stripped.strip('`').strip():
+            closing = fence_match and fence_match.group(1)[0] == fence[0]
+            if closing and len(fence_match.group(1)) >= len(fence) and not stripped.strip(fence[0]).strip():
                 fence = None
             continue
         if fence_match:
@@ -113,9 +129,12 @@ def smart_preprocess_markdown(text: str) -> str:
         is_list_item = _LIST_ITEM.match(line)
         is_hr = re.match(r'^[-*_]{3,}\s*$', stripped)
         is_blockquote = stripped.startswith(">")
+        # "Title" over a line of "=" or "-" is a heading (setext), not a paragraph and a rule
+        is_setext = (bool(_SETEXT_UNDERLINE.match(stripped)) and not after_heading
+                     and bool(new_lines) and _is_text_line(new_lines[-1]))
 
         should_insert = False
-        if new_lines and new_lines[-1].strip():
+        if new_lines and new_lines[-1].strip() and not is_setext:
             prev_line = new_lines[-1]
             if after_heading or is_heading or is_hr:
                 should_insert = True
@@ -130,9 +149,18 @@ def smart_preprocess_markdown(text: str) -> str:
         if should_insert:
             new_lines.append("")
         new_lines.append(line)
-        after_heading = bool(is_heading)
+        after_heading = bool(is_heading or is_setext)
 
     return '\n'.join(new_lines)
+
+
+def _is_text_line(line: str) -> bool:
+    """A line of paragraph text (what a setext underline can turn into a heading)."""
+    stripped = line.strip()
+    return bool(stripped) and not (
+        re.match(r'^#{1,6}(\s|$)', stripped) or _LIST_ITEM.match(line) or stripped.startswith(('>', '|'))
+        or _FENCE_LINE.match(stripped) or re.match(r'^[-*_=]{3,}\s*$', stripped)
+        or line.startswith(('    ', '\t')))
 
 
 def _split_table_cells(line: str) -> list[str]:
@@ -191,17 +219,23 @@ def _parse_markdown_list(block_text: str, ref_map: dict | None = None) -> ListBl
         if m:
             indent = len(m.group(1).replace('\t', '    '))
             ordered = m.group(2)[0].isdigit()
-            new_item = ListItem(children=[Paragraph(children=parse_inline(m.group(3).strip(), ref_map=ref_map))])
+            start = int(m.group(2)[:-1]) if ordered else 1
+            text = m.group(3).strip()
+            task = _TASK.match(text)
+            if task:
+                text = task.group(2)
+            new_item = ListItem(children=[Paragraph(children=parse_inline(text, ref_map=ref_map))],
+                                checked=(task.group(1) != ' ') if task else None)
 
             # Pop stack while top has strictly greater indent
             while stack and stack[-1]["indent"] > indent:
                 stack.pop()
 
             if not stack:
-                root_list_block = ListBlock(ordered=ordered, items=[new_item])
+                root_list_block = ListBlock(ordered=ordered, items=[new_item], start=start)
                 stack.append({"indent": indent, "list_block": root_list_block, "list_item": new_item})
             elif stack[-1]["indent"] < indent:
-                new_list = ListBlock(ordered=ordered, items=[new_item])
+                new_list = ListBlock(ordered=ordered, items=[new_item], start=start)
                 stack[-1]["list_item"].children.append(new_list)
                 stack.append({"indent": indent, "list_block": new_list, "list_item": new_item})
             else:
@@ -238,10 +272,20 @@ def parse_markdown(
             blockquote still resolve correctly). Local definitions found in
             ``text`` take precedence over inherited ones with the same label.
     """
+    text = text.replace('\r\n', '\n').replace('\r', '\n')
+    metadata = {}
+    if parent_ref_map is None:  # front matter only opens a whole document
+        text, metadata = _front_matter(text)
     text = smart_preprocess_markdown(text)
 
-    # Collect and strip reference-style link/image definitions: [id]: <url> "title"
     ref_map: dict[str, tuple[str, str | None]] = dict(parent_ref_map or {})
+    # GFM footnote definitions ([^id]: text) come out first: they look like reference definitions.
+    # They share the reference map, under "^id", so nested parses inherit them too.
+    for fm in _FOOTNOTE_DEF.finditer(text):
+        ref_map['^' + fm.group(1).lower()] = (fm.group(2).strip(), None)
+    text = _FOOTNOTE_DEF.sub('', text)
+
+    # Collect and strip reference-style link/image definitions: [id]: <url> "title"
     for rm in _REF_DEF.finditer(text):
         label = rm.group(1).lower().strip()
         title = rm.group(3) or rm.group(4) or rm.group(5) or None
@@ -265,7 +309,8 @@ def parse_markdown(
         indent = next((line[:len(line) - len(line.lstrip())] for line in lines if line.strip()), "")
         if indent:
             lines = [line[len(indent):] if line.startswith(indent) else line for line in lines]
-        return _encode_placeholder('CODEBLOCK', {"lang": m.group('lang').strip(), "code": '\n'.join(lines)})
+        return _encode_placeholder('CODEBLOCK', {"lang": m.group('lang').strip(), "code": '\n'.join(lines),
+                                                 "attach": _continues_block(m)})
 
     text = _FENCED_CODE.sub(_encode_codeblock, text)
     if code_parsing:
@@ -273,7 +318,8 @@ def parse_markdown(
         # Encode the code blocks the detector fences
         text = _FENCED_CODE.sub(_encode_codeblock, pre_process_markdown_code(text))
 
-    text = _MATH_BLOCK.sub(lambda m: _encode_placeholder('MATHBLOCK', {"code": m.group(1).strip()}), text)
+    text = _MATH_BLOCK.sub(lambda m: _encode_placeholder(
+        'MATHBLOCK', {"code": m.group(1).strip(), "attach": _continues_block(m)}), text)
 
     def _encode_picture_text(m: re.Match) -> str:
         b64_ocr = base64.b64encode(m.group(2).strip().encode('utf-8')).decode('utf-8')
@@ -281,23 +327,30 @@ def parse_markdown(
 
     text = _PICTURE_TEXT.sub(_encode_picture_text, text)
 
-    doc = Document()
-    blocks = re.split(r'\n\s*\n', text.strip())
+    doc = Document(**metadata)
+    blocks = re.split(r'\n\s*\n', text.strip('\n'))
 
-    for block in blocks:
-        block = block.strip()
+    for raw in blocks:
+        block = raw.strip()
         if not block:
             continue
+        after_list = bool(doc.children) and isinstance(doc.children[-1], ListBlock)
 
         # 1. Code, math and described-image blocks
         placeholder = _decode_placeholder(block)
         if placeholder:
             node = _placeholder_node(*placeholder)
-            # A code or math block right after a list belongs to its last item
-            if placeholder[0] != 'DESCRIBED' and doc.children and isinstance(doc.children[-1], ListBlock):
+            # A code or math block indented under a list item, or right below it, belongs to it
+            if placeholder[0] != 'DESCRIBED' and after_list and placeholder[1].get('attach', True):
                 doc.children[-1].items[-1].children.append(node)
             else:
                 doc.children.append(node)
+            continue
+
+        # An indented block after a list continues its last item (a second paragraph, a nested list)
+        if after_list and _indent_width(raw) >= 2:
+            inner = parse_markdown(_dedent(raw), code_parsing=code_parsing, parent_ref_map=ref_map)
+            doc.children[-1].items[-1].children.extend(inner.children)
             continue
 
         # 2. Headings (the preprocess put any following text in a block of its own)
@@ -305,6 +358,11 @@ def parse_markdown(
         if m_heading:
             doc.children.append(Heading(level=len(m_heading.group(1)),
                                         children=parse_inline(m_heading.group(2).strip(), ref_map=ref_map)))
+            continue
+        lines = block.split('\n')
+        if len(lines) > 1 and _SETEXT_UNDERLINE.match(lines[-1].strip()) and _is_text_line(lines[-2]):
+            level = 1 if lines[-1].strip()[0] == '=' else 2
+            doc.children.append(Heading(level=level, children=parse_inline('\n'.join(lines[:-1]), ref_map=ref_map)))
             continue
 
         # 3. Horizontal Rule
@@ -337,7 +395,104 @@ def parse_markdown(
         # Fallback: Paragraph
         doc.children.append(Paragraph(children=parse_inline(block, ref_map=ref_map)))
 
+    _attach_captions(doc.children)
     return doc
+
+
+def _continues_block(m: re.Match) -> bool:
+    """Whether a fenced or math block matched at ``m`` is indented or right below a non-blank line."""
+    before = m.string[:m.start()]
+    line_start = before[before.rfind('\n') + 1:]
+    if line_start or m.groupdict().get('indent'):  # indentation (or text) before it on its line
+        return True
+    previous = before[:-1].rsplit('\n', 1)[-1] if before.endswith('\n') else ''
+    return bool(previous.strip())
+
+
+def _indent_width(block: str) -> int:
+    """The indentation of a block's first non-blank line (a tab counts as 4)."""
+    first = next((line for line in block.split('\n') if line.strip()), '')
+    return len(first.replace('\t', '    ')) - len(first.lstrip())
+
+
+def _dedent(block: str) -> str:
+    """The block without the indentation common to its non-blank lines."""
+    lines = [line.replace('\t', '    ') for line in block.split('\n')]
+    width = min((len(line) - len(line.lstrip()) for line in lines if line.strip()), default=0)
+    return '\n'.join(line[width:] for line in lines).strip('\n')
+
+
+def _yaml_scalar(value: str) -> str:
+    """A YAML scalar's text: quoted strings are unquoted and unescaped."""
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        return re.sub(r'\\(["\\n])', lambda m: '\n' if m.group(1) == 'n' else m.group(1), value[1:-1])
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1].replace("''", "'")
+    return value
+
+
+def _front_matter(text: str) -> tuple[str, dict[str, list[InlineElement]]]:
+    """Split a YAML front matter block off ``text``; return the rest and the metadata it sets.
+
+    Only ``title``, ``author`` and ``date`` are read (their values are inline
+    Markdown); other keys are reported and ignored.
+    """
+    m = _FRONT_MATTER.match(text)
+    if not m:
+        return text, {}
+    fields: dict[str, str] = {}
+    for line in m.group(1).split('\n'):
+        if line.strip():
+            key, _, value = line.partition(':')
+            fields[key.strip().lower()] = _yaml_scalar(value.strip())
+    unknown = sorted(set(fields) - set(METADATA_FIELDS))
+    if unknown:
+        log_warning(f"Ignoring unknown front matter keys: {', '.join(unknown)}")
+    return text[m.end():], {k: parse_inline(v) for k, v in fields.items() if k in METADATA_FIELDS and v}
+
+
+def _caption_text(block: Node, prefix: str) -> list[InlineElement] | None:
+    """The caption a ``Table: ...`` / ``Figure: ...`` paragraph holds, or None."""
+    if not isinstance(block, Paragraph) or not block.children:
+        return None
+    first = block.children[0]
+    if not (isinstance(first, Text) and first.content.startswith(prefix)
+            and not (first.bold or first.italic or first.strikethrough)):
+        return None
+    rest = first.content[len(prefix):]
+    return ([replace(first, content=rest)] if rest else []) + block.children[1:]
+
+
+def _set_caption(node: Table | Image, caption: list[InlineElement]) -> None:
+    """Give a table or image its caption; a ``\\label`` in it becomes the node's label."""
+    labels = [n for n in caption if isinstance(n, Label)]
+    node.caption = [n for n in caption if not isinstance(n, Label)]
+    while node.caption and isinstance(node.caption[-1], Text) and not node.caption[-1].content.strip():
+        node.caption.pop()
+    if node.caption and isinstance(node.caption[-1], Text):
+        node.caption[-1].content = node.caption[-1].content.rstrip()
+    if labels:
+        node.label = labels[-1].name
+
+
+def _attach_captions(blocks: list[Node]) -> None:
+    """Read ``Table: ...`` before a table and ``Figure: ...`` after an image's paragraph as captions."""
+    out: list[Node] = []
+    for block in blocks:
+        previous = out[-1] if out else None
+        figure_caption = _caption_text(block, "Figure: ")
+        if figure_caption is not None and isinstance(previous, Paragraph):
+            image = next((n for n in walk(previous) if isinstance(n, Image) and not n.caption and not n.label), None)
+            if image is not None:
+                _set_caption(image, figure_caption)
+                continue
+        if isinstance(block, Table) and not block.caption and previous is not None:
+            table_caption = _caption_text(previous, "Table: ")
+            if table_caption is not None:
+                out.pop()
+                _set_caption(block, table_caption)
+        out.append(block)
+    blocks[:] = out
 
 
 def _parse_blockquote(block: str, code_parsing: bool, ref_map: dict):
@@ -381,14 +536,16 @@ def _parse_table(block: str, ref_map: dict) -> Table | None:
 
     table = Table()
     if has_separator:
-        table.headers = cells(lines[0])
+        # An all-empty header row is how a table without header is written
+        if any(_row_cells(lines[0])):
+            table.headers = cells(lines[0])
         lines = lines[2:]
     table.rows = [TableRow(cells=cells(line)) for line in lines]
     return table
 
 
 _EMPHASIS = (
-    ('strike', re.compile(r'~~(?=\S)(.+?)(?<=\S)~~', re.DOTALL)),
+    ('strike', re.compile(r'(?<!~)~~(?=[^\s~])(.+?)(?<=[^\s~])~~(?!~)', re.DOTALL)),
     ('bold', re.compile(r'\*\*(.*?)\*\*|(?<!\w)__(.*?)__(?!\w)', re.DOTALL)),
     # An underscore inside a word (snake_case) is not emphasis
     ('italic', re.compile(r'\*(.*?)\*|(?<!\w)_(.+?)_(?!\w)', re.DOTALL)),
@@ -440,6 +597,8 @@ def _url_pattern(name: str) -> str:
 _INLINE = re.compile(
     # Footnotes, citations, cross-references (kept as LaTeX macros)
     rf'(?P<latexmacro>\\(?:{"|".join(REFERENCE_MACROS)})\*?(?![a-zA-Z]))|'
+    # GFM footnote reference: [^id]
+    r'(?P<fnref>\[\^(?P<fn_id>[^\]\s]+)\])|'
     # Reference-style image: ![alt][id] (must come before reflink and inline-image)
     r'(?P<refimg>!\[(?P<ri_alt>[^\]]*)\]\[(?P<ri_id>[^\]]*)\])|'
     # Reference-style link: [content][id]; content may include inline images
@@ -477,8 +636,9 @@ def parse_inline(text: str, ref_map: dict | None = None) -> list[InlineElement]:
         ref_map: Optional dict mapping lowercase reference labels to (url, title) tuples,
                  used to resolve reference-style links and images.
     """
-    # A hard break is just the line break: drop its trailing spaces (or backslash)
-    text = re.sub(r'(?:[ \t]{2,}|[ \t]*\\)\n', '\n', text)
+    # A hard break (two trailing spaces or a backslash) is a "\n"; any other line break is a space
+    text = re.sub(r'(?:[ \t]{2,}|[ \t]*\\)\n', _HARD_BREAK, text)
+    text = re.sub(r'[ \t]*\n[ \t]*', ' ', text).replace(_HARD_BREAK, '\n')
     text = _protect_escapes(text)
     ref_map = ref_map or {}
     elements: list[InlineElement] = []
@@ -499,7 +659,15 @@ def parse_inline(text: str, ref_map: dict | None = None) -> list[InlineElement]:
             elements.append(node or Text(content=g['latexmacro']))
             continue
 
-        if g['refimg'] is not None:
+        if g['fnref'] is not None:
+            key = '^' + _unescape(g['fn_id']).lower()
+            if key in ref_map:
+                # The note's own definition is out of reach inside it, so a self-reference stays text
+                inner_map = {k: v for k, v in ref_map.items() if k != key}
+                elements.append(Footnote(content=parse_inline(ref_map[key][0], ref_map=inner_map)))
+            else:
+                elements.extend(_parse_formatting(g['fnref']))
+        elif g['refimg'] is not None:
             label = _unescape(g['ri_id'] or g['ri_alt']).lower().strip()
             if label in ref_map:
                 url, title = ref_map[label]

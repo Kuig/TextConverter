@@ -221,6 +221,114 @@ class TestMarkdownEscaping(BaseConverterTest):
         self.assertIn("| 1 | 2 |", img.description)
 
 
+class TestMarkdownBlocks(BaseConverterTest):
+    """Block syntax: fences, lists, setext headings, captions, front matter, footnotes, line breaks."""
+
+    def assertStable(self, md: str):
+        """Markdown → Markdown is a fixed point after one pass."""
+        once = _md(md)
+        self.assertEqual(_md(once), once)
+
+    def test_tilde_fence_is_code_not_strikethrough(self):
+        from textconverter.ast import CodeBlock
+        self.assertEqual(_doc("~~~python\nprint(1)\n~~~").children, [CodeBlock(code="print(1)", language="python")])
+        self.assertIn("<s>a</s>", _md("~~a~~ and ~~~b~~~", to="html"))
+        self.assertNotIn("<s>b", _md("~~a~~ and ~~~b~~~", to="html"))
+
+    def test_fence_at_column_zero_ends_the_list(self):
+        from textconverter.ast import CodeBlock, ListBlock
+        doc = _doc("1. a\n2. b\n\n```\ncode\n```\n\n1. c\n2. d\n")
+        self.assertEqual([type(n) for n in doc.children], [ListBlock, CodeBlock, ListBlock])
+        self.assertEqual(len(doc.children[0].items), 2)
+        doc = _doc("- a\n\n    ```\n    code\n    ```\n")
+        self.assertIsInstance(doc.children[0].items[0].children[-1], CodeBlock)
+
+    def test_second_paragraph_stays_in_its_item(self):
+        from textconverter.ast import ListBlock, Paragraph
+        md = "- item\n\n  second para\n\n- item2\n"
+        (lst,) = _doc(md).children
+        self.assertIsInstance(lst, ListBlock)
+        self.assertEqual([len(i.children) for i in lst.items], [2, 1])
+        self.assertIsInstance(lst.items[0].children[1], Paragraph)
+        self.assertStable(md)
+        self.assertEqual(_doc(_md(md)), _doc(md))
+
+    def test_setext_headings(self):
+        from textconverter.ast import Heading, Paragraph
+        doc = _doc("Title\n=====\n\nSub\n---\n\ntext\n\n---\n")
+        self.assertEqual([(type(n).__name__, getattr(n, "level", None)) for n in doc.children],
+                         [("Heading", 1), ("Heading", 2), ("Paragraph", None), ("HorizontalRule", None)])
+        # Literal lines that look like underlines are escaped, so they stay text
+        from textconverter.ast import Document, Text
+        from textconverter.renderers.markdown_renderer import render_markdown
+        doc = Document(children=[Paragraph(children=[Text(content="a\n---\nb\n===")])])
+        self.assertEqual(_doc(render_markdown(doc)), doc)
+
+    def test_list_start_and_task_items(self):
+        doc = _doc("3. three\n4. four\n\n- [ ] todo\n- [x] done\n")
+        self.assertEqual(doc.children[0].start, 3)
+        self.assertEqual([i.checked for i in doc.children[1].items], [False, True])
+        out = _md("3. three\n4. four\n\n- [ ] todo\n- [x] done\n")
+        self.assertIn("3. three\n4. four", out)
+        self.assertIn("- [ ] todo\n- [x] done", out)
+
+    def test_headerless_table_round_trips(self):
+        from textconverter.ast import Document, Table, TableCell, TableRow, Text
+        from textconverter.renderers.markdown_renderer import render_markdown
+        doc = Document(children=[Table(rows=[TableRow(cells=[TableCell(children=[Text(content="A")])])])])
+        self.assertEqual(_doc(render_markdown(doc)), doc)
+
+    def test_captions_and_labels(self):
+        md = "Table: The *caption* \\label{tab:a}\n\n| A |\n|---|\n| 1 |\n\n![x](f.png)\n\nFigure: Fig \\label{fig:a}\n"
+        table, para = _doc(md).children
+        self.assertEqual((table.label, table.caption[-1].content), ("tab:a", "caption"))
+        (image,) = para.children
+        self.assertEqual((image.label, image.caption[0].content), ("fig:a", "Fig"))
+        self.assertStable(md)
+        self.assertIn("<caption>The <i>caption</i></caption>", _md(md, to="html"))
+
+    def test_front_matter(self):
+        md = '---\ntitle: "The **title**"\nauthor: \'A. B.\'\ndate: 2026\nlayout: post\n---\n\ntext\n'
+        doc = _doc(md)
+        self.assertEqual([t.content for t in doc.title], ["The ", "title"])
+        self.assertEqual(doc.author[0].content, "A. B.")
+        self.assertEqual(doc.date[0].content, "2026")
+        self.assertEqual(_md(md).splitlines()[:5], ['---', 'title: "The **title**"', 'author: "A. B."',
+                                                    'date: "2026"', '---'])
+        self.assertStable(md)
+        self.assertEqual(_doc("---\nnot front matter\n---\n").title, [])
+
+    def test_gfm_footnotes(self):
+        from textconverter.ast import Footnote, Text
+        doc = _doc("A[^n] and B[^2].\n\n[^n]: First *note*.\n[^2]: Second\n    continued.\n")
+        notes = [n for n in doc.children[0].children if isinstance(n, Footnote)]
+        self.assertEqual(notes[0].content[1], Text(content="note", italic=True))
+        self.assertEqual(notes[1].content, [Text(content="Second continued.")])
+        out = _md("A\\footnote{x} B[^9].\n\n[^9]: y\n")
+        self.assertEqual(out, "A[^1] B[^2].\n\n[^1]: x\n[^2]: y\n")
+        # An undefined note stays text (escaped, so it cannot become one)
+        self.assertEqual(_md("[^1] undefined"), "\\[^1\\] undefined\n")
+
+    def test_soft_line_breaks_are_spaces(self):
+        from textconverter.ast import Text
+        self.assertEqual(_doc("a\nb").children[0].children, [Text(content="a b")])
+        self.assertEqual(_doc("a  \nb").children[0].children, [Text(content="a\nb")])
+        self.assertEqual(_doc("a\\\nb").children[0].children, [Text(content="a\nb")])
+
+    def test_quote_paragraphs_stay_apart(self):
+        md = "> first\n>\n> second\n"
+        self.assertEqual(len(_doc(md).children[0].children), 2)
+        self.assertStable(md)
+
+    def test_math_environment_round_trip(self):
+        from textconverter.ast import Equation
+        tex = "\\begin{align}a&=b\\\\c&=d\\end{align}"
+        md = textconverter.convert_text(tex, "latex", "markdown")
+        self.assertEqual(_doc(md).children, [Equation(code="a&=b\\\\c&=d", env="align")])
+        self.assertEqual(textconverter.convert_text(md, "markdown", "latex"),
+                         textconverter.convert_text(tex, "latex", "latex"))
+
+
 class TestCodeDetection(BaseConverterTest):
 
     def test_detected_code_is_not_altered(self):

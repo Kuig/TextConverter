@@ -19,8 +19,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HTML input reads table captions (`<caption>`), figures (`<figure>` with `<figcaption>`),
   superscript and subscript, `<ol start>` and task list checkboxes; HTML output writes them
   back. Markdown and LaTeX output show a caption as a `Table: ...` / `Figure: ...` paragraph.
+- Markdown input reads more syntax: `~~~` code fences, setext headings (`Title` over `===` or
+  `---`), the first number of an ordered list (`3.`), task lists (`- [ ]`, `- [x]`), GFM
+  footnotes (`[^1]` with `[^1]: text`), YAML front matter (`title`, `author`, `date`), a table
+  without header (an empty header row), and a `Table: ...` paragraph before a table or a
+  `Figure: ...` paragraph after an image as their caption (a `\label{...}` in it is the label).
+  Markdown output writes all of them, and a display equation's environment
+  (`$$\begin{align}...\end{align}$$`), so LaTeX → Markdown → LaTeX keeps `align`.
 
 ### Changed
+
+- Markdown line breaks follow CommonMark: a single line break inside a paragraph is a space,
+  and only two trailing spaces, a trailing backslash or `<br>` make a hard break (the form
+  Markdown output already wrote). Text extracted from PDFs no longer keeps every visual line
+  as a hard break; hand-written Markdown that relied on single line breaks is reflowed.
+- Markdown output writes footnotes as GFM footnotes (`[^1]`, defined at the end) instead of
+  `\footnote{...}`, which Markdown input still reads; citations, references and labels stay
+  LaTeX macros. Paragraphs of a block quote are separated by a blank `>` line, and a list item
+  with several paragraphs makes the list loose (blank lines between items).
 
 - HTML output marks the reference macros it writes (`\cite`, `\footnote`, `\ref`, `\label`,
   still shown as LaTeX) with `tc-ref` / `tc-footnote` spans, and the document title block
@@ -41,6 +57,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last item, or before the table as browsers show it), and a cell outside any row opens one.
 - An anchor without `href` (`<a name="top">`) is plain text instead of an empty link, and
   MathML without a TeX annotation keeps its text instead of becoming an empty formula.
+- Markdown parsing:
+  - a `~~~` code fence was read as strikethrough spanning the whole block, and
+    strikethrough no longer starts or ends on `~~~`;
+  - a code fence at the start of a line after a list ends the list instead of being pulled
+    into its last item (and merging the following list into it); an indented fence, or one
+    right below the item, still belongs to the item;
+  - an indented paragraph after a blank line stays in its list item instead of leaving the
+    list and splitting it in two.
 
 ## [0.3.0] - 2026-10-26
 

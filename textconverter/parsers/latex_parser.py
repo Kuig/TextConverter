@@ -8,13 +8,8 @@ from ..ast import (
     LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Table, TableCell, TableRow, Text,
 )
 from ._latex_macros import REFERENCE_MACROS, extract_macro_args, find_balanced_braces, parse_reference_macro
+from ._math import MATH_ENVS as _MATH_ENVS
 
-# Display math environments, with the env kept on the Equation (None: a plain display).
-_MATH_ENVS: dict[str, str | None] = {
-    'equation': None, 'equation*': None, 'displaymath': None,
-    **{name: name for base in ('align', 'gather', 'multline', 'flalign', 'eqnarray')
-       for name in (base, base + '*')},
-}
 _SECTION_LEVELS = {'section': 1, 'subsection': 2, 'subsubsection': 3, 'paragraph': 4}
 # A section command or the start of an environment.
 _BLOCK_START = re.compile(r'\\(?:(?P<sec>section|subsection|subsubsection|paragraph)(?![a-zA-Z])|begin\{(?P<env>[^}]+)\})')

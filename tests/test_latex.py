@@ -94,13 +94,15 @@ class TestLatexParser(BaseConverterTest):
         self.assertIn("\\cite{somekey}", result)
         self.assertIn("\\label{lbl}", result)
         self.assertIn("\\ref{lbl}", result)
-        self.assertIn("\\footnote{This is a footnote}", result)
+        # Markdown has its own footnote syntax (GFM)
+        self.assertIn("a footnote [^1].", result)
+        self.assertIn("[^1]: This is a footnote", result)
 
     def test_latex_to_md_to_latex_safeguards(self):
         """Verify that latex macros are preserved through a latex -> md -> latex roundtrip and inner formats are parsed."""
         tex_content = "Some text with \\footnote{inner \\textbf{bold} text} and \\cite{abc}."
         md_result = textconverter.convert_text(tex_content, "latex", "markdown")
-        self.assertIn("\\footnote{inner **bold** text}", md_result)
+        self.assertIn("[^1]: inner **bold** text", md_result)
         self.assertIn("\\cite{abc}", md_result)
         
         # Now convert back to latex

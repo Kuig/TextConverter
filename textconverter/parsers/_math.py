@@ -1,5 +1,26 @@
-"""Math delimiters shared by the HTML parser and the transcription parser."""
+"""Math delimiters and environments shared by the parsers."""
 from __future__ import annotations
+
+import re
+
+# Display math environments, with the env kept on the Equation (None: a plain display).
+MATH_ENVS: dict[str, str | None] = {
+    'equation': None, 'equation*': None, 'displaymath': None,
+    **{name: name for base in ('align', 'gather', 'multline', 'flalign', 'eqnarray')
+       for name in (base, base + '*')},
+}
+_ENV_BODY = re.compile(r'\A\\begin\{([a-z]+\*?)\}(.*)\\end\{\1\}\Z', re.DOTALL)
+
+
+def split_math_env(code: str) -> tuple[str, str | None]:
+    """``(body, env)`` for a display formula written as one kept environment (``\\begin{align}...``).
+
+    Any other formula comes back unchanged with ``env`` None.
+    """
+    m = _ENV_BODY.match(code.strip())
+    if m and MATH_ENVS.get(m.group(1)):
+        return m.group(2).strip('\n'), m.group(1)
+    return code, None
 
 # (opening, closing, display) for every delimiter a formula may arrive in.
 MATH_DELIMITERS = (

@@ -16,11 +16,16 @@ def caption_paragraphs(node: Node) -> list[Paragraph]:
 
     For the renderers that have no caption construct of their own; a table's
     caption comes first, the captions of the figures in a paragraph after it.
+    A label follows its caption as ``\\label{...}``, which the Markdown parser
+    reads back.
     """
+    def caption(prefix: str, target: Table | Image) -> Paragraph:
+        label = ([Text(content=" ")] if target.caption else []) + [Label(name=target.label)] if target.label else []
+        return Paragraph(children=[Text(content=prefix + " "), *target.caption, *label])
+
     if isinstance(node, Table):
-        return [Paragraph(children=[Text(content="Table: "), *node.caption])] if node.caption else []
-    return [Paragraph(children=[Text(content="Figure: "), *n.caption])
-            for n in walk(node) if isinstance(n, Image) and n.caption]
+        return [caption("Table:", node)] if node.caption or node.label else []
+    return [caption("Figure:", n) for n in walk(node) if isinstance(n, Image) and (n.caption or n.label)]
 
 
 def table_grid(table: Table) -> tuple[list[TableCell], list[list[TableCell]], int]:

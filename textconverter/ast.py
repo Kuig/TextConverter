@@ -177,6 +177,9 @@ class Document(Node):
     date: list[InlineElement] = field(default_factory=list)
 
 
+# The Document metadata fields, in the order the renderers write them.
+METADATA_FIELDS = ("title", "author", "date")
+
 # Every concrete node type by class name: the "type" key of the JSON form.
 NODE_TYPES: dict[str, type[Node]] = {
     cls.__name__: cls

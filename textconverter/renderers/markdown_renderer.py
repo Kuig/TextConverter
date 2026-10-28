@@ -1,11 +1,15 @@
 from __future__ import annotations
 import re
+from contextvars import ContextVar
 from ..ast import (
-    Abstract, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote, Heading,
-    HorizontalRule, Image, Label, LineBreak, Link, ListBlock, Node, Paragraph, Reference, Table,
+    METADATA_FIELDS, Abstract, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote,
+    Heading, HorizontalRule, Image, Label, LineBreak, Link, ListBlock, Node, Paragraph, Reference, Table,
     TableCell, Text,
 )
 from ._common import caption_paragraphs, latex_reference_macro, table_grid
+
+# The footnotes met while rendering one document, numbered in order.
+_FOOTNOTES: ContextVar[list[Footnote] | None] = ContextVar("markdown_footnotes", default=None)
 
 # Characters of literal text that Markdown would read as markup (see _escape).
 _MD_SPECIAL = re.compile(
@@ -15,9 +19,10 @@ _MD_SPECIAL = re.compile(
     r'|~(?=~)|(?<=~)~'
     r'|<(?=br\b)'
 )
-# A block marker at the start of a line: heading, quote, list item or rule.
-_LINE_START = re.compile(r'^([ \t]*)(#{1,6}(?=[ \t]|$)|>|[-+](?=[ \t])|-(?=--)|\d+\.(?=[ \t]))',
-                         re.MULTILINE)
+# A block marker at the start of a line: heading, quote, list item, rule or setext underline.
+_LINE_START = re.compile(
+    r'^([ \t]*)(#{1,6}(?=[ \t]|$)|>|[-+](?=[ \t])|-(?=--|-*[ \t]*$)|=(?==*[ \t]*$)|\d+\.(?=[ \t]))',
+    re.MULTILINE)
 
 
 def _escape_line_start(m: re.Match) -> str:
@@ -41,9 +46,45 @@ def _sanitize_table_cell(text: str) -> str:
 
 
 def render_markdown(doc: Document) -> str:
-    """Renders an AST Document to a Markdown string."""
-    lines = [_render_node(child) for child in doc.children]
-    return '\n\n'.join(filter(bool, lines)) + '\n'
+    """Renders an AST Document to a Markdown string.
+
+    Metadata becomes a YAML front matter block, footnotes GFM ``[^n]``
+    references with their definitions at the end.
+    """
+    footnotes: list[Footnote] = []
+    token = _FOOTNOTES.set(footnotes)
+    try:
+        blocks = [_front_matter(doc), *(_render_node(child) for child in doc.children)]
+        definitions = []
+        # A note's content may hold another note, numbered after it
+        while len(definitions) < len(footnotes):
+            n = len(definitions) + 1
+            body = _paragraph(Paragraph(children=footnotes[n - 1].content))
+            definitions.append(f"[^{n}]: " + body.replace('\n', '\n    '))
+        blocks.append('\n'.join(definitions))
+    finally:
+        _FOOTNOTES.reset(token)
+    return '\n\n'.join(filter(bool, blocks)) + '\n'
+
+
+def _front_matter(doc: Document) -> str:
+    """The document metadata as YAML front matter; values are double-quoted inline Markdown."""
+    lines = []
+    for name in METADATA_FIELDS:
+        nodes = getattr(doc, name)
+        if nodes:
+            value = re.sub(r'[ \t]*\n', '  \n', _inline(nodes).strip())
+            value = value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+            lines.append(f'{name}: "{value}"')
+    return '---\n' + '\n'.join(lines) + '\n---' if lines else ""
+
+
+def _footnote(node: Footnote) -> str:
+    footnotes = _FOOTNOTES.get(None)
+    if footnotes is None:  # rendered outside render_markdown: keep the LaTeX form
+        return latex_reference_macro(node, _inline)
+    footnotes.append(node)
+    return f"[^{len(footnotes)}]"
 
 
 def _render_node(node: Node) -> str:
@@ -90,8 +131,12 @@ def _code_block(node: CodeBlock) -> str:
 
 def _list(node: ListBlock) -> str:
     items = []
+    # An item with a second paragraph makes the list loose: items apart by a blank line
+    loose = any(isinstance(c, Paragraph) for item in node.items for c in item.children[1:])
     for i, item in enumerate(node.items):
-        prefix = f"{i+1}." if node.ordered else "-"
+        prefix = f"{node.start + i}." if node.ordered else "-"
+        if item.checked is not None:
+            prefix += " [x]" if item.checked else " [ ]"
         rendered_parts = []
         for j, child in enumerate(item.children):
             rendered_child = _render_node(child)
@@ -101,12 +146,13 @@ def _list(node: ListBlock) -> str:
                 # The first paragraph goes on the bullet/number line
                 rendered_parts.append(rendered_child)
             else:
-                # Other blocks go on their own lines, indented by 4 spaces
+                # Other blocks go on their own lines, indented by 4 spaces; a paragraph after a blank line
                 lines = rendered_child.split('\n')
-                rendered_parts.append('\n'.join(f"    {line}" if line.strip() else "" for line in lines))
+                indented = '\n'.join(f"    {line}" if line.strip() else "" for line in lines)
+                rendered_parts.append(('\n' + indented) if isinstance(child, Paragraph) and j else indented)
         body = '\n'.join(rendered_parts).strip()
         items.append(f"{prefix} {body}")
-    return '\n'.join(items)
+    return ('\n\n' if loose else '\n').join(items)
 
 
 def _table(node: Table) -> str:
@@ -176,20 +222,28 @@ def _code_inline(node: CodeInline) -> str:
     return f"{fence}{pad}{node.code}{pad}{fence}"
 
 
+def _quoted_blocks(children: list[Node]) -> list[str]:
+    """The lines of a quote's blocks, a blank line between blocks (a line break alone would join them)."""
+    return '\n\n'.join(filter(None, (_render_node(c) for c in children))).split('\n')
+
+
 def _block_quote(node: BlockQuote) -> str:
-    lines = '\n'.join(_render_node(c) for c in node.children).split('\n')
+    lines = _quoted_blocks(node.children)
     if node.alert_type:
         lines.insert(0, f"[!{node.alert_type}]")
     return _quote(lines)
 
 
 def _abstract(node: Abstract) -> str:
-    lines = '\n'.join(_render_node(c) for c in node.children).split('\n')
-    return _quote(["[!IMPORTANT]", "**Abstract**", *lines])
+    return _quote(["[!IMPORTANT]", "**Abstract**  ", *_quoted_blocks(node.children)])
 
 
 def _equation(node: Equation) -> str:
-    return f"${node.code}$" if node.inline else f"$$\n{node.code}\n$$"
+    if node.inline:
+        return f"${node.code}$"
+    if node.env:  # the environment travels inside the formula, where MathJax/KaTeX read it too
+        return f"$$\n\\begin{{{node.env}}}\n{node.code}\n\\end{{{node.env}}}\n$$"
+    return f"$$\n{node.code}\n$$"
 
 
 _RENDERERS = {
@@ -209,5 +263,6 @@ _RENDERERS = {
     HorizontalRule: lambda node: "---",
     Equation: _equation,
     Abstract: _abstract,
-    **{cls: lambda node: latex_reference_macro(node, _inline) for cls in (Footnote, Citation, Reference, Label)},
+    Footnote: _footnote,
+    **{cls: lambda node: latex_reference_macro(node, _inline) for cls in (Citation, Reference, Label)},
 }
