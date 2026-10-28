@@ -1,14 +1,16 @@
 from __future__ import annotations
 import re
 from contextvars import ContextVar
-from dataclasses import replace
 from ..ast import (
     METADATA_FIELDS, Abstract, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote,
     Heading, HorizontalRule, Image, Label, LineBreak, Link, ListBlock, Node, Paragraph, Reference, Table,
     TableCell, Text,
 )
 from ..parsers.markdown_parser import emphasis_flanking, trim_bare_url
-from ._common import caption_paragraphs, latex_reference_macro, table_grid
+from ._common import (
+    EMPHASIS_STYLES, caption_paragraphs, latex_reference_macro, split_spaces, style_extent, table_grid,
+    text_runs, text_style,
+)
 
 # The footnotes met while rendering one document, numbered in order.
 _FOOTNOTES: ContextVar[list[Footnote] | None] = ContextVar("markdown_footnotes", default=None)
@@ -101,9 +103,8 @@ def _render_node(node: Node) -> str:
     return render(node) if render else ""
 
 
-# Emphasis styles, outermost first when two start and end together, with their marker
-# forms in order of preference; the HTML form is valid wherever the others are not.
-_STYLES = ('strikethrough', 'bold', 'italic')
+# Each emphasis style's marker forms in order of preference; the HTML form is valid
+# wherever the others are not.
 _MARKERS = {
     'strikethrough': (('~~', '~~'), ('<del>', '</del>')),
     'bold': (('**', '**'), ('<strong>', '</strong>')),
@@ -127,7 +128,7 @@ def _inline(nodes: list[Node]) -> str:
     pieces: list[str | _Marker] = []
     stack: list[_Marker] = []  # the open markers, outermost first
     spaces = ""  # trailing whitespace, written after the markers that close
-    runs = _text_runs(nodes)
+    runs = text_runs(nodes)
 
     def close(keep: int) -> None:
         nonlocal spaces
@@ -150,18 +151,18 @@ def _inline(nodes: list[Node]) -> str:
             else:
                 pieces.append(_render_node(node))
             continue
-        lead, core, trail = re.match(r'(\s*)(.*?)(\s*)$', node.content, re.DOTALL).groups()
+        lead, core, trail = split_spaces(node.content)
         if not core:
             spaces += node.content
             continue
-        styles = [s for s in _STYLES if getattr(node, s)]
+        styles = [s for s in EMPHASIS_STYLES if getattr(node, s)]
         keep = 0
         while keep < len(stack) and stack[keep].style in styles:
             keep += 1
         close(keep)
         pieces.append(lead)
         open_styles = {m.style for m in stack}
-        for style in sorted((s for s in styles if s not in open_styles), key=lambda s: -_extent(runs, k, s)):
+        for style in sorted((s for s in styles if s not in open_styles), key=lambda s: -style_extent(runs, k, s)):
             marker = _Marker(style, opening=True)
             stack.append(marker)
             pieces.append(marker)
@@ -169,35 +170,6 @@ def _inline(nodes: list[Node]) -> str:
         spaces = trail
     close(0)
     return _resolve_markers(pieces)
-
-
-def _text_runs(nodes: list[Node]) -> list[Node]:
-    """Adjacent texts with the same formatting merged into one."""
-    runs: list[Node] = []
-    for node in nodes:
-        prev = runs[-1] if runs else None
-        if isinstance(node, Text) and isinstance(prev, Text) and _text_style(node) == _text_style(prev):
-            runs[-1] = replace(prev, content=prev.content + node.content)
-        else:
-            runs.append(node)
-    return runs
-
-
-def _text_style(node: Text) -> tuple:
-    return node.bold, node.italic, node.strikethrough, node.script
-
-
-def _extent(runs: list[Node], start: int, style: str) -> int:
-    """How many runs from ``start`` keep ``style`` (whitespace-only texts do not interrupt it)."""
-    count = 0
-    for node in runs[start:]:
-        if not isinstance(node, Text):
-            break
-        if node.content.strip():
-            if not getattr(node, style):
-                break
-            count += 1
-    return count
 
 
 def _resolve_markers(pieces: list[str | _Marker]) -> str:
@@ -344,7 +316,7 @@ def _text(node: Text, core: str) -> str:
 def _link(node: Link, bare: bool = False) -> str:
     """A link; one showing its own URL is an autolink, or a bare URL when ``bare`` allows it."""
     shown = node.content[0].content if len(node.content) == 1 and isinstance(node.content[0], Text) else None
-    if shown is not None and not node.title and _text_style(node.content[0]) == (False, False, False, None):
+    if shown is not None and not node.title and text_style(node.content[0]) == (False, False, False, None):
         if bare and node.url in (shown, 'http://' + shown) and _BARE_URL.match(shown) and trim_bare_url(shown) == shown:
             return shown
         if shown == node.url and _AUTOLINK.match(shown):

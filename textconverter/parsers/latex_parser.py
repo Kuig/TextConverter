@@ -4,15 +4,24 @@ import unicodedata
 from collections.abc import Callable
 
 from ..ast import (
-    Abstract, BlockQuote, CodeBlock, CodeInline, Document, Equation, Heading, HorizontalRule, Image, InlineElement,
-    LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Table, TableCell, TableRow, Text,
+    METADATA_FIELDS, Abstract, Appendix, BlockQuote, CodeBlock, CodeInline, Document, Equation, Heading, HorizontalRule, Image,
+    InlineElement, Label, LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Table, TableCell, TableRow, Text,
 )
 from ._latex_macros import REFERENCE_MACROS, extract_macro_args, find_balanced_braces, parse_reference_macro
 from ._math import MATH_ENVS as _MATH_ENVS
 
-_SECTION_LEVELS = {'section': 1, 'subsection': 2, 'subsubsection': 3, 'paragraph': 4}
-# A section command or the start of an environment.
-_BLOCK_START = re.compile(r'\\(?:(?P<sec>section|subsection|subsubsection|paragraph)(?![a-zA-Z])|begin\{(?P<env>[^}]+)\})')
+_SECTION_LEVELS = {'section': 1, 'subsection': 2, 'subsubsection': 3, 'paragraph': 4, 'subparagraph': 5}
+# A section command, \appendix, or the start of an environment.
+_BLOCK_START = re.compile(r'\\(?:(?P<sec>section|subsection|subsubsection|paragraph|subparagraph)(?![a-zA-Z])'
+                          r'|(?P<appendix>appendix)(?![a-zA-Z])|begin\{(?P<env>[^}]+)\})')
+# An enumerate counter set before the first item: \setcounter{enumi}{2} starts the list at 3.
+_SET_COUNTER = re.compile(r'\\setcounter\{enum(?:i|ii|iii|iv)\}\{\s*(-?\d+)\s*\}')
+# The \item labels that mark a task list item, unchecked and checked.
+_TASK_LABELS = {'$\\square$': False, '$\\Box$': False, '$\\boxtimes$': True, '$\\checkmark$': True}
+# The URL argument of \url and \href, where "%" is literal rather than a comment: it
+# stands in a private-use character until the link is built.
+_URL_ARG = re.compile(r'\\(?:url|href)\{[^{}]*\}')
+_URL_PERCENT = '\ue000'
 _ITEM = re.compile(r'\\item(?![a-zA-Z])')
 # A paragraph that is only a full-width rule (as the renderer writes a HorizontalRule).
 _RULE = re.compile(r'^(?:\\rule\{\\(?:text|line)width\}\{[^}]*\}|\\hrule|\\hrulefill)$')
@@ -32,7 +41,15 @@ _SYMBOLS = {
     'l': 'ł', 'L': 'Ł', 'i': 'ı', 'j': 'ȷ', 'ldots': '…', 'dots': '…', 'textendash': '–',
     'textemdash': '—', 'S': '§', 'P': '¶', 'copyright': '©', 'pounds': '£', 'euro': '€',
     'textasciitilde': '~', 'textasciicircum': '^', 'textbackslash': '\\',
+    'textless': '<', 'textgreater': '>', 'textbar': '|', 'textcopyright': '©',
     'TeX': 'TeX', 'LaTeX': 'LaTeX', 'LaTeXe': 'LaTeX2ε', 'quad': '\u2003', 'qquad': '\u2003\u2003',
+}
+# Font declarations: the formatting they switch on or off for the rest of their group.
+_DECLARATIONS = {
+    **dict.fromkeys(('bfseries', 'bf'), {'is_bold': True}),
+    **dict.fromkeys(('itshape', 'it', 'slshape', 'sl', 'em'), {'is_italic': True}),
+    'mdseries': {'is_bold': False}, 'upshape': {'is_italic': False},
+    'normalfont': {'is_bold': False, 'is_italic': False},
 }
 # Control symbols: "\," and the like, as the space they make.
 _CONTROL_SPACES = {',': '\u2009', ';': ' ', ':': ' ', ' ': ' ', '!': '', '@': '', '/': '', '-': ''}
@@ -142,6 +159,7 @@ def parse_latex(text: str) -> Document:
         return f"{m.group('begin')}{m.group('options') or ''}\x00{len(verbatim) - 1}\x00{m.group('end')}"
 
     text = _VERBATIM.sub(_hide, text)
+    text = _URL_ARG.sub(lambda m: m.group(0).replace('%', _URL_PERCENT), text)
     text = re.sub(r'(?<!\\)%.*$', '', text, flags=re.MULTILINE)
 
     # Strip custom two-column layouts and wrappers
@@ -156,16 +174,18 @@ def parse_latex(text: str) -> Document:
                 "\\markright"]:
         text = _strip_macro(text, cmd)
     for cmd in ["\\selectfont", "\\balance", "\\noindent", "\\raggedright", "\\justifying", "\\centering",
-                "\\hfill", "\\maketitle", "\\printbibliography", "\\appendix"]:
+                "\\hfill", "\\maketitle", "\\printbibliography"]:
         text = re.sub(re.escape(cmd) + r'(?![a-zA-Z])', '', text)
 
     doc = Document()
-    for macro, make in (("\\title", lambda arg: Heading(level=1, children=_one_line(parse_inline_latex(arg, is_bold=True)))),
-                        ("\\author", lambda arg: Paragraph(children=parse_inline_latex(arg))),
-                        ("\\date", lambda arg: Paragraph(children=parse_inline_latex(arg)))):
-        args, _, _ = extract_macro_args(text, macro)
-        if args and args[0].strip():
-            doc.children.append(make(args[0].strip()))
+    for name in METADATA_FIELDS:
+        args, start, end = extract_macro_args(text, f"\\{name}")
+        # \title, not \titleformat
+        while start != -1 and text[start + len(name) + 1:start + len(name) + 2].isalpha():
+            args, start, end = extract_macro_args(text, f"\\{name}", start + 1)
+        if args:
+            setattr(doc, name, _clean_breaks(parse_inline_latex(args[0].strip())))
+            text = text[:start] + text[end:]  # also when it stands in the body
 
     # Strip out preamble if document environment exists
     m_doc = re.search(r'\\begin\{document\}(.*?)\\end\{document\}', text, re.DOTALL)
@@ -207,9 +227,17 @@ def _paragraphs(chunk: str) -> list[Node]:
         if _RULE.match(p_text.strip()):
             nodes.append(HorizontalRule())
             continue
-        children = _clean_breaks(parse_inline_latex(p_text.strip()))
-        if children:
-            nodes.append(Paragraph(children=children))
+        # A display formula ($$...$$, \[...\]) inside the text splits its paragraph
+        run: list[InlineElement] = []
+        for child in [*parse_inline_latex(p_text.strip()), None]:
+            if child is None or (isinstance(child, Equation) and not child.inline):
+                if _clean_breaks(run):
+                    nodes.append(Paragraph(children=_clean_breaks(run)))
+                if child is not None:
+                    nodes.append(child)
+                run = []
+            else:
+                run.append(child)
     return nodes
 
 
@@ -224,11 +252,16 @@ def _parse_blocks(text: str, verbatim: list[str]) -> list[Node]:
             return nodes
         nodes.extend(_paragraphs(text[pos:m.start()]))
 
+        if m.group('appendix'):
+            nodes.append(Appendix())
+            pos = m.end()
+            continue
+
         if m.group('sec'):
-            cmd_name = m.group(0) + ('*' if text.startswith('*', m.end()) else '')
-            args, start, end = extract_macro_args(text, cmd_name, m.start())
+            starred = text.startswith('*', m.end())
+            args, start, end = extract_macro_args(text, m.group(0) + ('*' if starred else ''), m.start())
             if start == m.start() and args:
-                nodes.append(Heading(level=_SECTION_LEVELS[m.group('sec')],
+                nodes.append(Heading(level=_SECTION_LEVELS[m.group('sec')], numbered=not starred,
                                      children=_one_line(parse_inline_latex(args[0]))))
                 pos = end
             else:
@@ -257,23 +290,29 @@ def _environment(env: str, content: str, verbatim: list[str]) -> list[Node]:
         code = verbatim[int(m.group(1))] if m else content
         return [CodeBlock(code=code.strip('\n').rstrip(), language=lang.group(1).lower() if lang else None)]
     if env in ('itemize', 'enumerate', 'description'):
-        return [ListBlock(ordered=env == 'enumerate',
-                          items=[ListItem(children=_parse_blocks(item, verbatim)) for item in _items(content)])]
+        return [_list(env, content, verbatim)]
     if env == 'tabular':
         return [_parse_latex_table(content.strip())]
     if env in ('figure', 'figure*'):
-        nodes: list[Node] = []
-        img_args, _, _ = extract_macro_args(content, "\\includegraphics")
-        if img_args:
-            nodes.append(Image(src=img_args[0].strip(), alt="image"))
-        nodes.extend(_caption(content, "Figure"))
-        return nodes
+        images = []
+        pos = 0
+        while True:
+            img_args, start, pos = extract_macro_args(content, "\\includegraphics", pos)
+            if start == -1:
+                break
+            if img_args:
+                images.append(Image(src=img_args[0].strip(), alt="image"))
+        if not images:
+            return _caption_paragraph(content, "Figure")
+        _float_caption(content, images[0])
+        return [Paragraph(children=images)]
     if env in ('table', 'table*'):
-        nodes = _caption(content, "Table")
         tab_content, tab_start, _ = _extract_environment(content, "tabular")
-        if tab_start != -1:
-            nodes.append(_parse_latex_table(tab_content.strip()))
-        return nodes
+        if tab_start == -1:
+            return _caption_paragraph(content, "Table")
+        table = _parse_latex_table(tab_content.strip())
+        _float_caption(content, table)
+        return [table]
     if env == 'abstract':
         return [Abstract(children=_parse_blocks(content, verbatim))]
     if env == 'keywords':
@@ -284,15 +323,39 @@ def _environment(env: str, content: str, verbatim: list[str]) -> list[Node]:
     return _parse_blocks(content, verbatim)
 
 
-def _caption(content: str, kind: str) -> list[Node]:
+def _float_caption(content: str, target: Table | Image) -> None:
+    """Give a figure's image or a table the float's ``\\caption`` and ``\\label`` (also one inside the caption)."""
+    cap_args, _, _ = extract_macro_args(content, "\\caption")
+    caption = parse_inline_latex(cap_args[0].strip()) if cap_args else []
+    labels = [n.name for n in caption if isinstance(n, Label)]
+    target.caption = _clean_breaks([n for n in caption if not isinstance(n, Label)])
+    label_args, _, _ = extract_macro_args(_strip_macro(content, "\\caption"), "\\label")
+    target.label = label_args[0].strip() if label_args else (labels[-1] if labels else None)
+
+
+def _caption_paragraph(content: str, kind: str) -> list[Node]:
+    """A float's caption as a ``Figure: ...`` / ``Table: ...`` paragraph, when it has nothing to attach to."""
     cap_args, _, _ = extract_macro_args(content, "\\caption")
     if not cap_args or not cap_args[0].strip():
         return []
     return [Paragraph(children=parse_inline_latex(f"{kind}: {cap_args[0].strip()}"))]
 
 
-def _items(content: str) -> list[str]:
-    """The text of each top-level ``\\item`` (an item's nested lists stay inside it)."""
+def _list(env: str, content: str, verbatim: list[str]) -> ListBlock:
+    """An itemize, enumerate or description list; ``\\setcounter`` sets the start, box labels mark tasks."""
+    first_item = _ITEM.search(content)
+    counter = _SET_COUNTER.search(content, 0, first_item.start() if first_item else len(content))
+    lst = ListBlock(ordered=env == 'enumerate', start=int(counter.group(1)) + 1 if counter else 1)
+    for label, body in _items(content):
+        checked = _TASK_LABELS.get(label.strip()) if label is not None and env != 'description' else None
+        if label is not None and checked is None:  # \item[label]: the label leads the item, in bold
+            body = f"\\textbf{{{label}}} {body}"
+        lst.items.append(ListItem(children=_parse_blocks(body, verbatim), checked=checked))
+    return lst
+
+
+def _items(content: str) -> list[tuple[str | None, str]]:
+    """The ``[label]`` (or None) and text of each top-level ``\\item`` (nested lists stay inside it)."""
     starts: list[int] = []
     depth = 0
     pos = 0
@@ -309,9 +372,7 @@ def _items(content: str) -> list[str]:
     for i, start in enumerate(starts):
         body = content[start + len('\\item'):starts[i + 1] if i + 1 < len(starts) else len(content)]
         label = re.match(r'\s*\[([^\]]*)\]', body)
-        if label:  # \item[label]: the label leads the item, in bold
-            body = f"\\textbf{{{label.group(1)}}} {body[label.end():]}"
-        items.append(body.strip())
+        items.append((label.group(1), body[label.end():].strip()) if label else (None, body.strip()))
     return items
 
 
@@ -338,23 +399,30 @@ def _accented(letter: str, accent: str) -> str:
 
 
 def parse_inline_latex(
-    text: str, is_bold: bool = False, is_italic: bool = False, is_strike: bool = False
+    text: str, is_bold: bool = False, is_italic: bool = False, is_strike: bool = False, script: str | None = None
 ) -> list[InlineElement]:
-    """Parse inline LaTeX into inline AST nodes, with the given formatting in force."""
+    """Parse inline LaTeX into inline AST nodes, with the given formatting in force.
+
+    A ``{...}`` group is parsed with the same formatting, and a font
+    declaration (``\\bfseries``, ``\\em``, ...) changes it up to the end of the
+    group it stands in.
+    """
     elements: list[InlineElement] = []
 
     def add_text(content: str) -> None:
         if elements and isinstance(elements[-1], LineBreak):
             content = content.lstrip()
         if content:
-            elements.append(Text(content=content, bold=is_bold, italic=is_italic, strikethrough=is_strike))
+            elements.append(Text(content=content, bold=is_bold, italic=is_italic, strikethrough=is_strike,
+                                 script=script))
 
-    def inline(arg: str, **fmt: bool) -> list[InlineElement]:
-        return parse_inline_latex(arg, **{'is_bold': is_bold, 'is_italic': is_italic, 'is_strike': is_strike, **fmt})
+    def inline(arg: str, **fmt) -> list[InlineElement]:
+        return parse_inline_latex(arg, **{'is_bold': is_bold, 'is_italic': is_italic, 'is_strike': is_strike,
+                                          'script': script, **fmt})
 
     pos = 0
     while pos < len(text):
-        m = re.search(r'[\\$]', text[pos:])
+        m = re.search(r'[\\${}]', text[pos:])
         idx = len(text) if m is None else pos + m.start()
         if idx > pos:
             add_text(_plain_text(text[pos:idx]))
@@ -364,6 +432,13 @@ def parse_inline_latex(
 
         if text[pos] == '$':
             pos = _math(text, pos, elements, add_text)
+            continue
+        if text[pos] == '{':
+            group, pos = find_balanced_braces(text, pos)
+            elements.extend(inline(group))
+            continue
+        if text[pos] == '}':  # unbalanced: dropped, as the group it closes is already open
+            pos += 1
             continue
 
         # text[pos] is a backslash
@@ -417,14 +492,13 @@ def parse_inline_latex(
             continue
         if cmd_base in _SYMBOLS:
             add_text(_SYMBOLS[cmd_base])
-            pos += len(cmd_name)
-            # Like LaTeX, a command named with letters eats the spaces after it ("\ss e"),
-            # unless followed by {} ("\LaTeX{} is")
-            if text.startswith('{}', pos):
-                pos += 2
-            else:
-                while pos < len(text) and text[pos] in ' \t':
-                    pos += 1
+            pos = _skip_spaces(text, pos + len(cmd_name))
+            continue
+        if cmd_base in _DECLARATIONS:
+            fmt = _DECLARATIONS[cmd_base]
+            is_bold = fmt.get('is_bold', is_bold)
+            is_italic = fmt.get('is_italic', is_italic)
+            pos = _skip_spaces(text, pos + len(cmd_name))
             continue
 
         # Footnotes, citations and cross-references stay AST nodes
@@ -438,7 +512,7 @@ def parse_inline_latex(
 
         args, start, end = extract_macro_args(text, cmd_name, pos)
         if start != pos or not args:
-            pos += len(cmd_name)  # argument-less command: dropped
+            pos = _skip_spaces(text, pos + len(cmd_name))  # argument-less command: dropped
             continue
         pos = end
         handler = _INLINE_COMMANDS.get(cmd_base)
@@ -451,7 +525,34 @@ def parse_inline_latex(
             # Any other command: its first argument's content
             elements.extend(inline(args[0]))
 
-    return elements
+    return _collapse_spaces(elements)
+
+
+def _collapse_spaces(nodes: list[InlineElement]) -> list[InlineElement]:
+    """Adjacent texts of the same formatting as one, and spaces that meet across texts as one, as in LaTeX."""
+    out: list[InlineElement] = []
+    for node in nodes:
+        prev = out[-1] if out else None
+        if isinstance(node, Text) and isinstance(prev, Text):
+            if prev.content.endswith(' '):
+                node.content = node.content.lstrip(' ')
+            if not node.content:
+                continue
+            if (node.bold, node.italic, node.strikethrough, node.script) == \
+                    (prev.bold, prev.italic, prev.strikethrough, prev.script):
+                prev.content += node.content
+                continue
+        out.append(node)
+    return out
+
+
+def _skip_spaces(text: str, pos: int) -> int:
+    """The position after the spaces a command named with letters eats ("\\ss e"); ``{}`` ends it ("\\LaTeX{} is")."""
+    if text.startswith('{}', pos):
+        return pos + 2
+    while pos < len(text) and text[pos] in ' \t':
+        pos += 1
+    return pos
 
 
 def _math(text: str, pos: int, elements: list, add_text: Callable[[str], None]) -> int:
@@ -491,8 +592,9 @@ def _accent(text: str, pos: int, accent: str, add_text: Callable[[str], None]) -
     return pos
 
 
-_LITERAL_ESCAPES = re.compile(r'\\(?:([%&$_#{}~^])|textbackslash|textasciitilde|textasciicircum)(?:\{\})?')
-_LITERAL_NAMES = {'textbackslash': '\\', 'textasciitilde': '~', 'textasciicircum': '^'}
+_LITERAL_NAMES = {'textbackslash': '\\', 'textasciitilde': '~', 'textasciicircum': '^', 'textless': '<',
+                  'textgreater': '>', 'textbar': '|'}
+_LITERAL_ESCAPES = re.compile(rf'\\(?:([%&$_#{{}}~^])|{"|".join(_LITERAL_NAMES)})(?:\{{\}})?')
 
 
 def _unescape_latex(text: str) -> str:
@@ -505,7 +607,7 @@ def _unescape_latex(text: str) -> str:
 
 
 def _link(args, inline, *fmt) -> list[InlineElement]:
-    url = _unescape_latex(args[0])
+    url = _unescape_latex(args[0].replace(_URL_PERCENT, '%'))
     text = inline(args[1]) if len(args) >= 2 else [Text(content=url, bold=fmt[0], italic=fmt[1], strikethrough=fmt[2])]
     return [Link(url=url, title=None, content=text)]
 
@@ -517,6 +619,8 @@ _INLINE_COMMANDS: dict[str, Callable[..., list[InlineElement]]] = {
     'textsl': lambda args, inline, *fmt: inline(args[0], is_italic=True),
     'sout': lambda args, inline, *fmt: inline(args[0], is_strike=True),
     'st': lambda args, inline, *fmt: inline(args[0], is_strike=True),
+    'textsuperscript': lambda args, inline, *fmt: inline(args[0], script='sup'),
+    'textsubscript': lambda args, inline, *fmt: inline(args[0], script='sub'),
     'texttt': lambda args, inline, *fmt: [CodeInline(code=_unescape_latex(args[0]))],
     'href': _link,
     'url': lambda args, inline, *fmt: _link(args[:1], inline, *fmt),

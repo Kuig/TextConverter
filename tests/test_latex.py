@@ -13,8 +13,8 @@ class TestLatexParser(BaseConverterTest):
     def test_simple_latex_to_markdown(self):
         """SampleLatex.tex → MD: title, abstract blockquote, quotes, code preserved."""
         content = self.convert_fixture("SampleLatex.tex", "SampleLatex.md")
-        # Title extracted from \title{} preamble
-        self.assertIn("# **Il Teorema di Pitagora**", content, "Missing extracted title")
+        # Title, author and date from the preamble, as front matter
+        self.assertTrue(content.startswith('---\ntitle: "Il Teorema di Pitagora"\nauthor: "Mario Rossi"\n'), content)
         # Abstract rendered as blockquote
         self.assertIn("> [!IMPORTANT]", content, "Missing abstract callout")
         self.assertIn("> **Abstract**", content, "Missing abstract title")
@@ -74,7 +74,8 @@ class TestLatexParser(BaseConverterTest):
         content = self.convert_fixture("SampleLatex.tex", "SampleLatex_out.tex")
         self.assertIn("\\documentclass{article}", content)
         self.assertIn("\\begin{document}", content)
-        self.assertIn("Il Teorema di Pitagora", content)
+        self.assertIn("\\title{Il Teorema di Pitagora}", content)
+        self.assertIn("\\maketitle", content)
         self.assertIn("\\begin{verbatim}", content)
         self.assertIn("\\end{document}", content)
 
@@ -232,3 +233,94 @@ class TestLatexFixes(BaseConverterTest):
     def test_hard_break_in_text_is_a_latex_line_break(self):
         tex = textconverter.convert_text("one  \ntwo", "markdown", "latex")
         self.assertIn("one\\\\\ntwo", tex)
+
+
+def _convert(text: str, frm: str, to: str) -> str:
+    return textconverter.convert_text(text, frm, to, textconverter.ConvertOptions(image_handling="link"))
+
+
+class TestLatexStructure(BaseConverterTest):
+    """Title block, floats, numbering, groups and the other constructs LaTeX output writes back."""
+
+    SAMPLE = "\n".join([
+        "\\title{The \\textbf{Title}}", "\\author{A. Author\\textsuperscript{1}\\\\Dept}", "\\date{2026}",
+        "\\begin{document}", "\\maketitle",
+        "\\section*{Preface}", "Text\\footnote{A \\textbf{note}.} with \\cite{a,b}, \\citep[e.g.][p.~3]{d},",
+        "\\ref{fig:x} and H\\textsubscript{2}O \\textless{}x\\textgreater{} a\\textbar{}b.",
+        "\\begin{figure}[h]", "\\centering", "\\includegraphics{pic.png}", "\\caption{A \\textit{figure}}",
+        "\\label{fig:x}", "\\end{figure}",
+        "\\begin{table}[h]", "\\centering", "\\caption{A table}", "\\label{tab:x}",
+        "\\begin{tabular}{|c|c|}", "\\hline", "a & b \\\\", "\\hline", "1 & 2 \\\\", "\\hline", "\\end{tabular}",
+        "\\end{table}",
+        "\\begin{enumerate}", "    \\setcounter{enumi}{2}", "    \\item three", "    \\item four", "\\end{enumerate}",
+        "\\begin{itemize}", "    \\item[$\\square$] todo", "    \\item[$\\boxtimes$] done", "\\end{itemize}",
+        "\\subparagraph{Deep}", "\\textbf{Keywords:} x", "\\appendix", "\\section{Extra}", "\\end{document}",
+    ])
+
+    def test_parsed_structure(self):
+        from textconverter.ast import Appendix, Heading, Image, ListBlock, Table, Text
+        from textconverter.parsers.latex_parser import parse_latex
+        doc = parse_latex(self.SAMPLE)
+        self.assertEqual(doc.title, [Text(content="The "), Text(content="Title", bold=True)])
+        self.assertEqual(doc.date, [Text(content="2026")])
+        self.assertIn(Text(content="1", script="sup"), doc.author)
+        heading = next(n for n in doc.children if isinstance(n, Heading))
+        self.assertEqual((heading.numbered, heading.children), (False, [Text(content="Preface")]))
+        image = next(n for p in doc.children for n in getattr(p, "children", []) if isinstance(n, Image))
+        self.assertEqual((image.src, image.label), ("pic.png", "fig:x"))
+        self.assertEqual(image.caption, [Text(content="A "), Text(content="figure", italic=True)])
+        table = next(n for n in doc.children if isinstance(n, Table))
+        self.assertEqual((table.label, table.caption), ("tab:x", [Text(content="A table")]))
+        enum, tasks = [n for n in doc.children if isinstance(n, ListBlock)]
+        self.assertEqual((enum.start, [i.checked for i in tasks.items]), (3, [False, True]))
+        self.assertIn(Heading(level=5, children=[Text(content="Deep")]), doc.children)
+        self.assertIn(Appendix(), doc.children)
+
+    def test_round_trips_are_identical(self):
+        tex = _convert(self.SAMPLE, "latex", "latex")
+        self.assertIn("\\title{The \\textbf{Title}}\n\\author{A. Author\\textsuperscript{1}\\\\\nDept}\n"
+                      "\\date{2026}\n\\begin{document}\n\n\\maketitle", tex)
+        for snippet in ("\\section*{Preface}", "\\citep[e.g.][p.~3]{d}", "\\textless{}x\\textgreater{} a\\textbar{}b",
+                        "\\caption{A \\textit{figure}}\n\\label{fig:x}", "\\caption{A table}\n\\label{tab:x}",
+                        "\\setcounter{enumi}{2}", "\\item[$\\square$] todo", "\\subparagraph{Deep}", "\\appendix"):
+            self.assertIn(snippet, tex)
+        self.assertEqual(_convert(tex, "latex", "latex"), tex)
+        # Numbering and \appendix exist only in LaTeX; everything else survives the other formats
+        expected = tex.replace("\\section*", "\\section").replace("\\appendix\n\n", "")
+        for via in ("markdown", "html", "json"):
+            with self.subTest(via=via):
+                back = _convert(_convert(tex, "latex", via), via, "latex")
+                self.assertEqual(back, tex if via == "json" else expected)
+
+    def test_font_groups_and_declarations(self):
+        from textconverter.ast import Text
+        (para,) = _blocks("{\\bfseries bold {\\itshape both}} {\\em it} {\\small plain} \\{braces\\}")
+        self.assertEqual(para.children, [Text(content="bold ", bold=True), Text(content="both", bold=True, italic=True),
+                                         Text(content=" "), Text(content="it", italic=True),
+                                         Text(content=" plain {braces}")])
+
+    def test_escaped_braces_inside_an_argument(self):
+        from textconverter.ast import Text
+        (para,) = _blocks("\\textbf{a\\}b\\{c} d")
+        self.assertEqual(para.children, [Text(content="a}b{c", bold=True), Text(content=" d")])
+
+    def test_percent_in_a_url_is_not_a_comment(self):
+        from textconverter.ast import Link
+        (para,) = _blocks("\\url{http://a.org/x%20y} and \\href{http://b.org/?q=1\\%2}{b} % a comment")
+        self.assertEqual([n.url for n in para.children if isinstance(n, Link)],
+                         ["http://a.org/x%20y", "http://b.org/?q=1%2"])
+        self.assertNotIn("comment", _md("\\url{http://a.org/x%20y} % a comment"))
+
+    def test_display_math_splits_its_paragraph(self):
+        from textconverter.ast import Equation, Paragraph
+        blocks = _blocks("before \\[ x = 1 \\] after")
+        self.assertEqual([type(b) for b in blocks], [Paragraph, Equation, Paragraph])
+
+    def test_formatting_spaces_and_runs(self):
+        from textconverter.ast import Document, LineBreak, Paragraph, Text
+        from textconverter.renderers.latex_renderer import render_latex
+        doc = Document(children=[Paragraph(children=[
+            Text(content="Keywords: ", bold=True), Text(content="a "), Text(content="b", bold=True),
+            Text(content=" c", bold=True, italic=True), Text(content="end "), LineBreak(), Text(content="[1] ref")])])
+        body = render_latex(doc).split("\\begin{document}\n\n")[1]
+        self.assertTrue(body.startswith("\\textbf{Keywords:} a \\textbf{b \\textit{c}}end\\\\\n{}[1] ref"), body)

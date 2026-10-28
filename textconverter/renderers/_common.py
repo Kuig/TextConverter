@@ -1,14 +1,66 @@
 """Helpers shared by the Markdown, HTML and LaTeX renderers."""
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
+from dataclasses import replace
 
-from ..ast import Citation, Footnote, Image, Label, Node, Paragraph, Reference, Table, TableCell, Text, walk
+from ..ast import Citation, Footnote, Image, Label, Link, Node, Paragraph, Reference, Table, TableCell, Text, walk
 
 
 def plain_text(nodes: list[Node]) -> str:
     """The text of a list of nodes, descendants included, without formatting."""
     return ''.join(n.content for node in nodes for n in walk(node) if isinstance(n, Text))
+
+
+# Text formatting that the renderers open and close around runs of text,
+# outermost first when two start and end together.
+EMPHASIS_STYLES = ('strikethrough', 'bold', 'italic')
+
+
+def text_style(node: Text) -> tuple:
+    """Everything about a Text's formatting: equal styles make one run."""
+    return node.bold, node.italic, node.strikethrough, node.script
+
+
+def text_runs(nodes: list[Node]) -> list[Node]:
+    """The nodes with adjacent texts of the same formatting merged into one."""
+    runs: list[Node] = []
+    for node in nodes:
+        prev = runs[-1] if runs else None
+        if isinstance(node, Text) and isinstance(prev, Text) and text_style(node) == text_style(prev):
+            runs[-1] = replace(prev, content=prev.content + node.content)
+        else:
+            runs.append(node)
+    return runs
+
+
+def style_extent(runs: list[Node], start: int, style: str) -> int:
+    """How many runs from ``start`` keep ``style`` (whitespace-only texts do not interrupt it).
+
+    A renderer opens the longest-lasting style first, so the shorter ones nest inside it.
+    """
+    count = 0
+    for node in runs[start:]:
+        if not isinstance(node, Text):
+            break
+        if node.content.strip():
+            if not getattr(node, style):
+                break
+            count += 1
+    return count
+
+
+def split_spaces(content: str) -> tuple[str, str, str]:
+    """``(leading whitespace, the rest, trailing whitespace)``: formatting goes around the middle only."""
+    return re.match(r'(\s*)(.*?)(\s*)$', content, re.DOTALL).groups()
+
+
+def figure_image(node: Node) -> Image | None:
+    """The captioned or labelled image a paragraph child shows as a figure (alone or as a link's content)."""
+    if isinstance(node, Link) and len(node.content) == 1:
+        node = node.content[0]
+    return node if isinstance(node, Image) and (node.caption or node.label) else None
 
 
 def caption_paragraphs(node: Node) -> list[Paragraph]:

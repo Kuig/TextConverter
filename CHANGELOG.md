@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<sub>`, `<kbd>`, `<strong>`/`<b>`, `<em>`/`<i>` and `<del>`/`<s>` (any other tag stays
   text). Markdown output writes superscript and subscript as `<sup>`/`<sub>`, and a link
   showing its own URL as a bare URL or an autolink.
+- LaTeX input reads `\subparagraph`, `\textsuperscript`/`\textsubscript`, the start of an
+  enumerate (`\setcounter{enumi}{2}` before the first item), task items
+  (`\item[$\square$]`, `\item[$\boxtimes$]`), and `\textless`, `\textgreater`, `\textbar`,
+  `\textcopyright`; LaTeX output writes all of them.
 
 ### Changed
 
@@ -53,7 +57,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   be markup: a `<` before a letter, a `~` at either end of a run, an underscore run that could
   open or close emphasis, and the `:` of `https://` (or the `.` of `www.`), so a URL written as
   text stays text.
-
+- LaTeX input puts `\title`, `\author` and `\date` in the document metadata instead of a first
+  section and plain paragraphs, and LaTeX output writes them back with `\maketitle`. The
+  caption and label of a `figure` or `table` belong to its image or table (instead of a
+  `Figure: ...` paragraph and a lost `\label`), and LaTeX output writes real `figure` and
+  `table` floats. `\section*` stays unnumbered and `\appendix` is kept in LaTeX output (the
+  other formats have no numbering).
+- LaTeX output writes formatting per run of text, like Markdown output: `\textit{a \textbf{b}}`
+  instead of `\textit{a }\textbf{\textit{b}}`, `\textbf{Keywords:} x` with the space outside,
+  no space before `\\`, and `{}` after `\\` when the next line starts with `[` (which would be
+  read as the break's argument). `<`, `>` and `|` are written `\textless{}`, `\textgreater{}`
+  and `\textbar{}`, which the default font encoding needs. LaTeX → Markdown, HTML or JSON →
+  LaTeX gives back the same LaTeX, save `\section*` and `\appendix` through Markdown or HTML.
 - HTML output marks the reference macros it writes (`\cite`, `\footnote`, `\ref`, `\label`,
   still shown as LaTeX) with `tc-ref` / `tc-footnote` spans, and the document title block
   with `tc-*` classes, so LaTeX → HTML → LaTeX keeps them; the macros of HTML written by
@@ -83,6 +98,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     list and splitting it in two;
   - `***x***` lost its formatting and `**a *b* c**`-like runs written by the renderer
     (`**bold ****_it_**** bold**`) were not valid Markdown.
+- LaTeX parsing:
+  - a `{...}` group printed its braces (`{\small Original Article}` gave
+    `{ Original Article}`); groups now apply font declarations (`{\bfseries ...}`,
+    `{\itshape ...}`, `{\em ...}`, `\bf`, `\it`, ...) up to their end, and spaces meeting
+    across a group's edge or a dropped command collapse into one;
+  - a `%` inside `\url{...}` or the URL of `\href` cut the rest of the line as a comment;
+  - an escaped brace (`\{`, `\}`) inside a command's argument ended or extended the
+    argument (`\textbf{a\}b}`);
+  - a display formula (`\[...\]`, `$$...$$`) inside a paragraph is a block of its own
+    between the text before and after it.
 
 ## [0.3.0] - 2026-10-26
 

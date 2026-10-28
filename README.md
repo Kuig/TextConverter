@@ -10,7 +10,7 @@ TextConverter converts between PDF, HTML, Markdown, LaTeX, and JSON formats (PDF
 - **Remote Image Downloading**: Automatically downloads and cleans remote images referenced in webpages, applying OS-safe filename sanitization and exact binary content-based deduplication to prevent duplicate copies on disk.
 - **Image Description**: AI-powered classification and description of embedded images via a configurable provider (Ollama by default).
 - **Code Detection**: Fast deterministic local heuristic analysis to detect and fence code blocks.
-- **LaTeX Parsing**: Extracts document title, abstract, and typographic quotes from LaTeX source, rendering them semantically in all output formats.
+- **LaTeX Parsing**: Extracts the title block, abstract, figure and table captions and labels, and typographic quotes from LaTeX source, rendering them semantically in all output formats.
 
 ## Installation
 

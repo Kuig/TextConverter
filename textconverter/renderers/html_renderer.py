@@ -7,7 +7,7 @@ from ..ast import (
     HorizontalRule, Image, Label, LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Reference,
     Table, TableCell, Text,
 )
-from ._common import latex_reference_macro, plain_text, table_grid
+from ._common import figure_image, latex_reference_macro, plain_text, table_grid
 from .templates import get_template
 
 # Link schemes that run code when clicked; such links are rendered inert.
@@ -61,20 +61,13 @@ def _heading(node: Heading) -> str:
     return f"<h{node.level}>{_inline(node.children)}</h{node.level}>"
 
 
-def _figure_image(node: Node) -> Image | None:
-    """The captioned image a paragraph child shows as a figure (alone or as a link's content)."""
-    if isinstance(node, Link) and len(node.content) == 1:
-        node = node.content[0]
-    return node if isinstance(node, Image) and (node.caption or node.label) else None
-
-
 def _is_block(node: Node) -> bool:
     """A paragraph child that HTML only allows outside ``<p>``: a display formula or a figure."""
-    return (isinstance(node, Equation) and not node.inline) or _figure_image(node) is not None
+    return (isinstance(node, Equation) and not node.inline) or figure_image(node) is not None
 
 
 def _figure(node: Node) -> str:
-    image = _figure_image(node)
+    image = figure_image(node)
     label = f' data-label="{html.escape(image.label)}"' if image.label else ''
     caption = f'\n<figcaption>{_text_lines(image.caption)}</figcaption>' if image.caption else ''
     return f'<figure{label}>\n{_render_node(node)}{caption}\n</figure>'
@@ -94,7 +87,7 @@ def _paragraph(node: Paragraph) -> str:
     for child in node.children:
         if _is_block(child):
             flush()
-            out.append(_figure(child) if _figure_image(child) else _render_node(child))
+            out.append(_figure(child) if figure_image(child) else _render_node(child))
         else:
             run.append(child)
     flush()

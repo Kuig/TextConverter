@@ -15,19 +15,25 @@ REFERENCE_MACROS = ("footnote", "cite", "citet", "citep", "ref", "label")
 
 def find_balanced_braces(text: str, start_pos: int) -> tuple[str, int]:
     """Finds the content enclosed in balanced curly braces starting from start_pos.
-    
+
+    An escaped brace (``\\{``, ``\\}``) is content, not a delimiter.
+
     Returns a tuple of (content_inside, index_after_closing_brace).
     If braces are not balanced or not found, returns ("", start_pos).
     """
     brace_start = text.find('{', start_pos)
     if brace_start == -1:
         return "", start_pos
-        
+
     depth = 0
     content_chars = []
     i = brace_start
     while i < len(text):
         char = text[i]
+        if char == '\\' and depth > 0:
+            content_chars.append(text[i:i + 2])
+            i += 2
+            continue
         if char == '{':
             if depth > 0:
                 content_chars.append(char)
