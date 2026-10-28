@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The AST can hold more of a document: `Document` metadata (`title`, `author`, `date`), table
+  and figure captions and labels (`Table.caption`/`label`, `Image.caption`/`label`), the
+  optional arguments of a citation (`Citation.options`, as in `\citep[e.g.][p.~3]{key}`),
+  superscript and subscript text (`Text.script`), unnumbered headings (`Heading.numbered`),
+  the start of the appendices (`Appendix`), the first number of an ordered list
+  (`ListBlock.start`) and task list items (`ListItem.checked`). The JSON output carries the
+  new fields; JSON written by 0.3.0 still loads.
+
 ## [0.3.0] - 2026-10-26
 
 ### Breaking changes

@@ -13,12 +13,14 @@ class Text(Node):
     """A plain text node with optional formatting.
 
     ``content`` is literal text. A ``\\n`` inside it is a hard line break;
-    parsers turn soft line breaks of their source into spaces.
+    parsers turn soft line breaks of their source into spaces. ``script`` is
+    ``"sup"`` or ``"sub"`` for superscript or subscript text.
     """
     content: str
     bold: bool = False
     italic: bool = False
     strikethrough: bool = False
+    script: str | None = None
 
 @dataclass
 class Link(Node):
@@ -30,7 +32,11 @@ class Link(Node):
 
 @dataclass
 class Image(Node):
-    """An image node."""
+    """An image node.
+
+    ``caption`` and ``label`` make the image a figure (LaTeX ``figure``,
+    HTML ``<figure>``).
+    """
     src: str
     alt: str = ""
     title: str | None = None
@@ -38,6 +44,8 @@ class Image(Node):
     category: str | None = None
     extracted_text: str | None = None
     render_metadata: bool = True
+    caption: list['InlineElement'] = field(default_factory=list)
+    label: str | None = None
 
 @dataclass
 class CodeInline(Node):
@@ -56,9 +64,14 @@ class Footnote(Node):
 
 @dataclass
 class Citation(Node):
-    """A citation reference."""
+    """A citation reference.
+
+    ``options`` holds the optional arguments as written in LaTeX
+    (``\\citep[e.g.][p.~3]{key}`` gives ``["e.g.", "p.~3"]``).
+    """
     keys: list[str]
     style: str = "cite" # cite, citet, citep
+    options: list[str] = field(default_factory=list)
 
 @dataclass
 class Reference(Node):
@@ -80,9 +93,10 @@ class Paragraph(Node):
 
 @dataclass
 class Heading(Node):
-    """A heading node."""
+    """A heading node; ``numbered`` is False for an unnumbered section (``\\section*``)."""
     level: int  # 1 to 6
     children: list[InlineElement] = field(default_factory=list)
+    numbered: bool = True
 
 @dataclass
 class CodeBlock(Node):
@@ -107,15 +121,22 @@ class HorizontalRule(Node):
     pass
 
 @dataclass
+class Appendix(Node):
+    """The start of the appendices (LaTeX ``\\appendix``); invisible in the other formats."""
+    pass
+
+@dataclass
 class ListItem(Node):
-    """An item within a list."""
+    """An item within a list; ``checked`` is True or False for a task list item."""
     children: list[Node] = field(default_factory=list)
+    checked: bool | None = None
 
 @dataclass
 class ListBlock(Node):
-    """An ordered or unordered list."""
+    """An ordered or unordered list; ``start`` numbers an ordered list's first item."""
     ordered: bool
     items: list[ListItem] = field(default_factory=list)
+    start: int = 1
 
 @dataclass
 class TableCell(Node):
@@ -129,9 +150,11 @@ class TableRow(Node):
 
 @dataclass
 class Table(Node):
-    """A basic table."""
+    """A basic table, with an optional caption and label."""
     headers: list[TableCell] = field(default_factory=list)
     rows: list[TableRow] = field(default_factory=list)
+    caption: list[InlineElement] = field(default_factory=list)
+    label: str | None = None
 
 @dataclass
 class Equation(Node):
@@ -147,8 +170,11 @@ class Equation(Node):
 
 @dataclass
 class Document(Node):
-    """The root of the AST."""
+    """The root of the AST; ``title``, ``author`` and ``date`` are its metadata (empty when absent)."""
     children: list[Node] = field(default_factory=list)
+    title: list[InlineElement] = field(default_factory=list)
+    author: list[InlineElement] = field(default_factory=list)
+    date: list[InlineElement] = field(default_factory=list)
 
 
 # Every concrete node type by class name: the "type" key of the JSON form.
@@ -156,7 +182,7 @@ NODE_TYPES: dict[str, type[Node]] = {
     cls.__name__: cls
     for cls in (
         Text, Link, Image, CodeInline, LineBreak, Footnote, Citation, Reference, Label,
-        Paragraph, Heading, CodeBlock, BlockQuote, Abstract, HorizontalRule,
+        Paragraph, Heading, CodeBlock, BlockQuote, Abstract, HorizontalRule, Appendix,
         ListItem, ListBlock, TableCell, TableRow, Table, Equation, Document,
     )
 }
@@ -168,23 +194,25 @@ DESCRIPTION_END = "----- End of picture description -----"
 
 
 # Every attribute through which a node can hold child nodes. A new container
-# node type only needs its child attribute listed here.
-_CHILD_ATTRS = ("children", "content", "items", "headers", "rows", "cells")
+# node type only needs its child attribute listed here. The main list comes
+# first; captions and document metadata follow it.
+_CHILD_ATTRS = ("children", "content", "items", "headers", "rows", "cells",
+                "caption", "title", "author", "date")
 
 
 def child_lists(node: Node) -> list[list[Node]]:
-    """Return the node's lists of child nodes, in document order.
+    """Return the node's lists of child nodes: the main list first, then captions and metadata.
 
     The lists are the node's own attributes, so callers may filter or replace
-    their items in place (``lst[:] = ...``). ``Text.content`` is a string and
-    is not included.
+    their items in place (``lst[:] = ...``). String attributes (``Text.content``,
+    ``Link.title``) are not included.
     """
     lists = (getattr(node, attr, None) for attr in _CHILD_ATTRS)
     return [lst for lst in lists if isinstance(lst, list)]
 
 
 def walk(node: Node) -> Iterator[Node]:
-    """Yield the node and all its descendants, depth-first in document order."""
+    """Yield the node and all its descendants, depth-first (in ``child_lists`` order)."""
     yield node
     for lst in child_lists(node):
         for child in lst:

@@ -58,6 +58,43 @@ class TestJsonForm(BaseConverterTest):
         doc = Document(children=[Equation(code="a &= b", env="align*")])
         self.assertEqual(parse_json(render_json(doc)), doc)
 
+    def test_new_fields_round_trip(self):
+        """Captions, labels, metadata, citation options, scripts, list start and task items survive JSON."""
+        from textconverter.ast import (
+            Appendix, Citation, Heading, ListBlock, ListItem,
+        )
+        from textconverter.parsers.json_parser import parse_json
+        from textconverter.renderers.json_renderer import render_json
+        doc = Document(
+            title=[Text(content="T", bold=True)], author=[Text(content="A")], date=[Text(content="2026")],
+            children=[
+                Heading(level=1, children=[Text(content="Ack")], numbered=False),
+                Appendix(),
+                Paragraph(children=[
+                    Text(content="1", script="sup"),
+                    Citation(keys=["k"], style="citep", options=["e.g.", "p.~3"]),
+                    Image(src="f.png", caption=[Text(content="Fig")], label="fig:a"),
+                ]),
+                Table(rows=[TableRow(cells=[TableCell(children=[Text(content="x")])])],
+                      caption=[Text(content="Cap")], label="tab:a"),
+                ListBlock(ordered=True, start=3, items=[ListItem(children=[Paragraph()], checked=True)]),
+            ])
+        self.assertEqual(parse_json(render_json(doc)), doc)
+
+    def test_json_without_new_fields_still_loads(self):
+        """A 0.3.0 JSON (no caption, options, script, ... keys) gets the defaults."""
+        from textconverter.ast import Citation
+        from textconverter.parsers.json_parser import parse_json
+        doc = parse_json('{"type": "Document", "children": [{"type": "Paragraph", "children": ['
+                         '{"type": "Citation", "keys": ["k"], "style": "cite"}]}]}')
+        self.assertEqual(doc, Document(children=[Paragraph(children=[Citation(keys=["k"])])]))
+
+    def test_walk_reaches_captions_and_metadata(self):
+        """Images inside a caption or the document title are visited too."""
+        doc = Document(title=[Image(src="t.png")],
+                       children=[Table(caption=[Image(src="c.png")])])
+        self.assertEqual([n.src for n in walk(doc) if isinstance(n, Image)], ["c.png", "t.png"])
+
     def test_unknown_node_type_is_an_error(self):
         """A misspelled type no longer vanishes from the output."""
         from textconverter.parsers.json_parser import parse_json
