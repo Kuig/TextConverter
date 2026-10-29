@@ -1,8 +1,24 @@
 from __future__ import annotations
 import re
+import string
 
+from textconverter.ast import CodeInline, Equation, Text, walk
 from textconverter.logger import log_info, log_action, log_warning
-from textconverter.parsers.markdown_parser import TABLE_SEPARATOR
+from textconverter.parsers.markdown_parser import TABLE_SEPARATOR, parse_inline
+
+# Characters that code is made of: ASCII punctuation only (accented letters, "★" or
+# typographic quotes in prose are not code).
+_SPECIAL = re.compile('[' + re.escape(string.punctuation) + ']')
+# Punctuation that prose uses as much as code, left out of the strong-signal override.
+_PROSE_PUNCTUATION = set('.,?!-_*"\':')
+# Markdown that only prose holds: a link [text](url) or [text][ref] (not an index as in a[i](x)).
+_MD_LINK = re.compile(r'(?<![\w\]])\[[^\]\n]+\](?:\([^)\s]+\)|\[[^\]\n]*\])')
+# A bibliography entry or a citation marker leading the block: "[12] A. Author, ...".
+_REFERENCE_ENTRY = re.compile(r'^\[\d+\]')
+# Short bracketed markers inside prose: citation numbers and the superscripts of PDF text ("[1]", "[★]").
+_MARKERS = re.compile(r'(?<!\S)\[[^\]\s]{1,4}\](?!\S)')
+_URL_OR_EMAIL = re.compile(r'https?://\S+|\S+@\S+\.\w+')
+_CODE_INDICATORS = ("=", "(", ")", "[", "]", "{", "}", ";", "import", "print", "def", "return")
 
 
 KEYWORDS = {
@@ -40,7 +56,7 @@ def is_code(text: str, threshold: float = 0.25) -> tuple[bool, float, dict]:
     tot_lines = max(len(lines), 1)
 
     # s1: special characters
-    special = re.sub(r'[a-zA-Z0-9\s]', '', text)
+    special = ''.join(_SPECIAL.findall(text))
     s1 = min(len(special) / tot_words, 1.0)
 
     # s2: keyword density
@@ -48,12 +64,12 @@ def is_code(text: str, threshold: float = 0.25) -> tuple[bool, float, dict]:
     kw_count = sum(1 for w in lower_words if w in KEYWORDS)
     s2 = kw_count / tot_words
 
-    # s3: anomalous case (camelCase, snake_case, kebab-case)
+    # s3: anomalous case (camelCase, snake_case, kebab-case; "E-mail" and "ApJ" are prose)
     weird = sum(
         1 for w in words
-        if re.search(r'[a-z][A-Z]', w)        # camelCase
+        if (re.search(r'[a-z][A-Z]', w) and len(w.strip(string.punctuation)) >= 4)  # camelCase
         or ('_' in w and re.search(r'[a-z]', w))  # snake_case
-        or ('-' in w and re.search(r'[a-z]', w))  # kebab-case
+        or re.search(r'[a-z]-[a-z]', w)  # kebab-case
     )
     s3 = weird / tot_words
 
@@ -69,7 +85,7 @@ def is_code(text: str, threshold: float = 0.25) -> tuple[bool, float, dict]:
     score = sum(w * s for w, s in zip(weights, (s1, s2, s3, s4)))
 
     # Exclude common natural language punctuation from s1 for the override check
-    special_for_override = re.sub(r'[.,°?!\-_*"\']', '', special)
+    special_for_override = [c for c in special if c not in _PROSE_PUNCTUATION]
     s1_override = min(len(special_for_override) / tot_words, 1.0)
 
     # override strong signals
@@ -155,6 +171,50 @@ def detect_code(block_text: str) -> tuple[bool, str | None]:
     return is_code_val, lang
 
 
+def _is_candidate(stripped: str) -> bool:
+    """Whether a block may be unfenced code: not a structure Markdown already reads, and not plain prose."""
+    lines = stripped.split("\n")
+    if stripped.startswith(("<!--CODEBLOCK:", "```", "~~~")):
+        return False
+    if re.match(r"^(#{1,6})\s+", stripped) and "\n" not in stripped:
+        return False
+    if re.match(r"^[-*+•●○■]\s+", stripped) or re.match(r"^[_*]*\d+(\.\d+)*\.?\s+", stripped):
+        return False
+    if all(line.lstrip().startswith(">") for line in lines):  # a quote
+        return False
+    if _REFERENCE_ENTRY.match(stripped) or _MD_LINK.search(stripped):
+        return False
+    if "|" in stripped and "\n" in stripped:
+        has_separator = len(lines) >= 2 and "|" in lines[0] and bool(TABLE_SEPARATOR.match(lines[1]))
+        is_strict_table = all(line.strip().startswith("|") and line.strip().endswith("|") for line in lines)
+        if has_separator or is_strict_table:
+            return False
+    # A short line, or one line that introduces what follows ("List:"), needs a code indicator
+    # outside its code spans
+    if len(stripped.split()) < 3 or (len(lines) == 1 and stripped.endswith(":")):
+        outside_spans = re.sub(r'`+[^`]*`+', '', stripped)
+        if not any(indicator in outside_spans for indicator in _CODE_INDICATORS):
+            return False
+    return True
+
+
+def _prose_copy(block: str) -> str:
+    """The block as a reader of the Markdown sees it, line by line, for the second detection check.
+
+    Emphasis markers, link syntax, code spans, inline math, URLs, e-mail
+    addresses and short bracketed markers (``[1]``) are left out, since their
+    characters look like code in prose; indentation is kept.
+    """
+    lines = []
+    for line in block.split("\n"):
+        nodes = parse_inline(line.strip())
+        shown = ''.join(n.content for node in nodes for n in walk(node)
+                        if isinstance(n, Text) and not isinstance(node, (CodeInline, Equation)))
+        shown = _MARKERS.sub('', _URL_OR_EMAIL.sub('', shown))
+        lines.append(line[:len(line) - len(line.lstrip())] + shown.strip())
+    return "\n".join(lines)
+
+
 def pre_process_markdown_code(text: str) -> str:
     """Detect and wrap code blocks in a Markdown text using a heuristic algorithm.
 
@@ -179,47 +239,12 @@ def pre_process_markdown_code(text: str) -> str:
             classified_blocks.append((False, None, block))
             continue
 
-        # Heuristic filter: skip blocks that are clearly not plain paragraphs
-        is_candidate = True
-        if stripped.startswith("<!--CODEBLOCK:"):
-            is_candidate = False
-        elif len(stripped.split()) < 3:
-            code_indicators = ["=", "(", ")", "[", "]", "{", "}", ":", ";", "import", "print", "def", "return"]
-            if not any(indicator in stripped for indicator in code_indicators):
-                is_candidate = False
-        elif stripped.startswith("```"):
-            is_candidate = False
-        elif re.match(r"^(#{1,6})\s+", stripped) and "\n" not in stripped:
-            is_candidate = False
-        elif re.match(r"^[-*+•●○■]\s+", stripped) or re.match(r"^[_*]*\d+(\.\d+)*\.?\s+", stripped):
-            is_candidate = False
-        elif "|" in stripped and "\n" in stripped:
-            lines = stripped.split("\n")
-            has_separator = len(lines) >= 2 and "|" in lines[0] and bool(TABLE_SEPARATOR.match(lines[1]))
-            is_strict_table = len(lines) >= 1 and all(
-                line.strip().startswith("|") and line.strip().endswith("|") for line in lines
-            )
-            if has_separator or is_strict_table:
-                is_candidate = False
-
-        # Exclude blocks consisting entirely of markdown images or links
-        if is_candidate:
-            temp_stripped = re.sub(r'!\[.*?\]\(.*?\)', '', stripped, flags=re.DOTALL).strip()
-            temp_stripped = re.sub(r'\[.*?\]\(.*?\)', '', temp_stripped, flags=re.DOTALL).strip()
-            if not temp_stripped:
-                is_candidate = False
-
-        if is_candidate:
+        if _is_candidate(stripped):
             is_code, lang = detect_code(block)
             if is_code:
-                # Second check on a copy without Markdown emphasis and URLs, whose
-                # characters can look like code; the block itself is kept as is
-                # (removing "emphasis" from real code turned __init__ into init).
-                detection_copy = re.sub(r'\*\*(.*?)\*\*|__(.*?)__', lambda m: m.group(1) or m.group(2) or '', block)
-                detection_copy = re.sub(r'\*(.*?)\*|_(.*?)_', lambda m: m.group(1) or m.group(2) or '', detection_copy)
-                detection_copy = re.sub(r'https?://\S+', '', detection_copy)
-
-                still_code, still_lang = detect_code(detection_copy)
+                # Second check on the text a reader would see (the block itself is kept
+                # as is: removing "emphasis" from real code turned __init__ into init)
+                still_code, still_lang = detect_code(_prose_copy(block))
                 if still_code:
                     log_action(f"Detected code block (language: {still_lang or lang or 'unknown'}) for: {block[:60]}...")
                     classified_blocks.append((True, still_lang or lang, block))

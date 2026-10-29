@@ -422,3 +422,26 @@ class TestCodeDetection(BaseConverterTest):
         code = "def __init__(self, my_var):\n    self.my_var = a * b * c\n    return self.my_var"
         md = _md("Some intro text here.\n\n" + code, code_parsing=True)
         self.assertIn(code, md)
+
+    def test_prose_is_not_fenced(self):
+        """Labels, quotes, references, links and emphasis used to be fenced as code."""
+        prose = [
+            "List:",
+            "Reference in `requirements.txt`:",
+            "> - [![T](Foto.jpg)](https://e.org/a_b) and a [hobbit-hole][1].\n\n[1]: https://x.org",
+            "Formatting **bold** *italic **both*** ~~struck~~, [link](https://www.google.it/?&hl=it)",
+            "[4] E. Akartuna, “Ai-based detection,” _Computational_ _Economics_, vol. 59, pp. 987–1005.",
+            "Keith T. Smith, [1] _[★]_ A. N. Other, [2] Third Author [2] _[,]_ [3]",
+            "_★_ E-mail: publications@ras.ac.uk (KTS)",
+            "van Dijk T., 1902, QJRAS, 2, 202\nFournier P., 1901, ApJ, 1, 101",
+            "MNRAS **000**, 1–2 (2026)",
+            "``Use `code` in your Markdown file.``",
+        ]
+        for text in prose:
+            with self.subTest(text=text):
+                self.assertNotIn("```", _md("Intro text.\n\n" + text, code_parsing=True))
+
+    def test_unfenced_code_is_still_fenced(self):
+        md = textconverter.convert(str(INPUT_DIR / "CodeTest.md"), "markdown",
+                                   textconverter.ConvertOptions(code_parsing=True))
+        self.assertIn('```python\ndef fibonacci(n):\n    """Calcola', md.split("# Unfenced")[1])

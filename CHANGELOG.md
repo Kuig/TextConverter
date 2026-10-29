@@ -98,6 +98,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     list and splitting it in two;
   - `***x***` lost its formatting and `**a *b* c**`-like runs written by the renderer
     (`**bold ****_it_**** bold**`) were not valid Markdown.
+- `--code-parsing` no longer fences prose as code: a one-line label ending with `:` ("List:",
+  "Reference in `requirements.txt`:"), a quote, a bibliography entry (`[4] A. Author, ...`),
+  a paragraph with Markdown links, emphasis or citation markers, PDF affiliation and e-mail
+  lines, a paragraph that is only a code span. The second check now runs on the text a reader
+  sees (what the Markdown parser reads, line by line, without code spans, URLs and short
+  `[n]` markers), and only ASCII punctuation counts as code characters (not accented letters,
+  `★` or typographic quotes). Unfenced code is still detected.
 - LaTeX parsing:
   - a `{...}` group printed its braces (`{\small Original Article}` gave
     `{ Original Article}`); groups now apply font declarations (`{\bfseries ...}`,
