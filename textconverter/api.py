@@ -1,4 +1,5 @@
 from __future__ import annotations
+import contextlib
 import os
 import pathlib
 import re
@@ -86,6 +87,27 @@ _RENDERERS = {
 }
 
 
+def _image_handling(options: ConvertOptions, to_format: str) -> str:
+    """The image handling a conversion uses: ``auto`` resolved by the target format."""
+    if options.image_handling == "auto":
+        return OUTPUT_FORMATS[to_format].auto_images
+    return options.image_handling
+
+
+@contextlib.contextmanager
+def _image_folder(handling: str, output_dir: str | None, image_dir_name: str | None):
+    """Yield ``(parent, name)`` of the folder the conversion writes its images to.
+
+    Embedded images only pass through a temporary folder, so no image folder
+    is left next to the output.
+    """
+    if handling != "embed":
+        yield output_dir, image_dir_name
+        return
+    with tempfile.TemporaryDirectory(prefix="textconverter_images_") as tmp:
+        yield tmp, "images"
+
+
 def _doc_dir(from_format: str, output_dir: str | None, source_path: str | None) -> str:
     """Directory the parsed document's relative image paths resolve against.
 
@@ -109,6 +131,7 @@ def _transform_and_render(
     config: AppConfig,
     *,
     output_dir: str | None,
+    image_parent: str | None,
     image_dir_name: str | None,
     source_url: str | None,
     source_path: str | None,
@@ -118,20 +141,20 @@ def _transform_and_render(
     Local image paths are absolute while the passes run, so the download
     folder, the embedder and the AI describer agree on every file; the paths
     are made relative to the output directory again before rendering.
+    Images are written to ``image_dir_name`` under ``image_parent`` (see
+    ``_image_folder``), else under the output directory.
     """
-    handling = options.image_handling
-    if handling == "auto":
-        handling = OUTPUT_FORMATS[to_format].auto_images
+    handling = _image_handling(options, to_format)
 
     if from_format != "json":
         if handling == "discard":
             remove_images(doc)
         else:
-            doc_dir = _doc_dir(from_format, output_dir, source_path)
-            out_dir = output_dir or doc_dir
+            doc_dir = _doc_dir(from_format, image_parent, source_path)
+            out_dir = output_dir or _doc_dir(from_format, None, source_path)
             paths = ImagePaths(doc_dir)
             # Download first: on a web page, relative sources are remote.
-            paths.download(doc, os.path.join(out_dir, image_dir_name or ""), source_url)
+            paths.download(doc, os.path.join(image_parent or out_dir, image_dir_name or ""), source_url)
             paths.absolutize(doc)
             # Image sources and raster PDF pages have been through the AI already.
             transcribed = from_format == "image" or (from_format == "pdf" and options.pdf_mode == "raster")
@@ -194,9 +217,10 @@ def convert_text(
     options = options or ConvertOptions()
     config = config or load_config()
     doc = _parse(from_format, options, config, text=text)
-    return _transform_and_render(doc, from_format, to_format, options, config,
-                                 output_dir=output_dir, image_dir_name=image_dir_name,
-                                 source_url=None, source_path=None)
+    with _image_folder(_image_handling(options, to_format), output_dir, image_dir_name) as (parent, name):
+        return _transform_and_render(doc, from_format, to_format, options, config,
+                                     output_dir=output_dir, image_parent=parent, image_dir_name=name,
+                                     source_url=None, source_path=None)
 
 
 def convert(
@@ -248,14 +272,14 @@ def convert(
         from_format = infer_input_format(source)
         if from_format is None:
             raise ValueError(f"Could not infer the input format from the extension of {source}; pass from_format.")
-    if INPUT_FORMATS[from_format].binary:
-        doc = _parse(from_format, options, config, path=source,
-                     output_dir=output_dir, image_dir_name=image_dir_name)
-    else:
-        doc = _parse(from_format, options, config, text=_read_text(source))
-    return _transform_and_render(doc, from_format, to_format, options, config,
-                                 output_dir=output_dir, image_dir_name=image_dir_name,
-                                 source_url=None, source_path=source)
+    with _image_folder(_image_handling(options, to_format), output_dir, image_dir_name) as (parent, name):
+        if INPUT_FORMATS[from_format].binary:
+            doc = _parse(from_format, options, config, path=source, output_dir=parent, image_dir_name=name)
+        else:
+            doc = _parse(from_format, options, config, text=_read_text(source))
+        return _transform_and_render(doc, from_format, to_format, options, config,
+                                     output_dir=output_dir, image_parent=parent, image_dir_name=name,
+                                     source_url=None, source_path=source)
 
 
 _META_CHARSET = re.compile(rb'<meta[^>]+charset\s*=\s*["\']?([\w.:-]+)', re.IGNORECASE)
@@ -300,22 +324,25 @@ def _convert_url(
                        or infer_input_format(url_path) or "html")
 
     fmt = INPUT_FORMATS[from_format]
+    folder = _image_folder(_image_handling(options, to_format), output_dir, image_dir_name)
     if not fmt.binary:
         doc = _parse(from_format, options, config, text=_decode(download), source_url=url)
-        return _transform_and_render(doc, from_format, to_format, options, config,
-                                     output_dir=output_dir, image_dir_name=image_dir_name,
-                                     source_url=url, source_path=None)
+        with folder as (parent, name):
+            return _transform_and_render(doc, from_format, to_format, options, config,
+                                         output_dir=output_dir, image_parent=parent, image_dir_name=name,
+                                         source_url=url, source_path=None)
 
     ext = os.path.splitext(url_path)[1].lower()
     fd, temp_path = tempfile.mkstemp(suffix=ext if ext in fmt.extensions else fmt.extensions[0])
     try:
         with os.fdopen(fd, "wb") as f:
             f.write(download.data)
-        doc = _parse(from_format, options, config, path=temp_path,
-                     output_dir=output_dir, image_dir_name=image_dir_name, source_url=url)
-        return _transform_and_render(doc, from_format, to_format, options, config,
-                                     output_dir=output_dir, image_dir_name=image_dir_name,
-                                     source_url=url, source_path=temp_path)
+        with folder as (parent, name):
+            doc = _parse(from_format, options, config, path=temp_path,
+                         output_dir=parent, image_dir_name=name, source_url=url)
+            return _transform_and_render(doc, from_format, to_format, options, config,
+                                         output_dir=output_dir, image_parent=parent, image_dir_name=name,
+                                         source_url=url, source_path=temp_path)
     finally:
         try:
             os.remove(temp_path)
@@ -334,7 +361,8 @@ def save_to_file(
     """Convert a file or a remote URL and write the result to ``output_path``.
 
     The output format comes from the extension of ``output_path``; images are
-    written to a ``<output stem>_images`` folder next to it. A ``.pdf`` output
+    written to a ``<output stem>_images`` folder next to it, unless they are
+    embedded (``embed``, or ``auto`` for HTML), which leaves no folder. A ``.pdf`` output
     is the HTML rendering with the light template, printed by
     ``renderers.pdf_renderer.render_pdf``: ``options.template`` is ignored and
     images are embedded (``auto`` and ``link`` both act as ``embed``), so the

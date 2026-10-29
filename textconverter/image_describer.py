@@ -5,7 +5,7 @@ from textconverter.logger import log_action, log_info, log_success, log_warning
 from collections.abc import Callable
 from .ast import Document, Image, Node, Paragraph, walk
 from .config import AppConfig
-from .images import expand_images, resolve_local
+from .images import Expansion, expand_images, resolve_local
 from .parsers.transcription_parser import normalize_transcription, transcription_nodes
 
 # Categories that ``auto_latex`` transcribes; every other image keeps a plain reference.
@@ -138,7 +138,8 @@ def describe_images(images: list[Image], base_dir: str, *, config: AppConfig, la
     the description model) transcribes the rest. Grouping the calls by model
     means each model is loaded at most once per run. Sets ``category`` and
     ``description`` on each Image in place; a missing file gets category
-    ``"error"`` and a failed call leaves ``description`` unset.
+    ``"error"`` and a failed call leaves ``description`` unset. A file used by
+    several images is processed once, and its result is given to all of them.
 
     Args:
         images: Image nodes to process.
@@ -146,20 +147,36 @@ def describe_images(images: list[Image], base_dir: str, *, config: AppConfig, la
         config: The application configuration.
         latex_auto: Only transcribe ``LATEX_AUTO_CATEGORIES``; describe nothing.
     """
-    ai = config.ai
     jobs: list[tuple[Image, str]] = []
+    copies: dict[str, list[Image]] = {}  # file -> the other images showing it
     for img in images:
         img_path = resolve_local(img.src, base_dir)
         if img_path is None:
             img.category = "error"
             log_warning(f"Not a local image file, skipping description: {img.src[:80]}")
-        elif os.path.exists(img_path):
-            jobs.append((img, img_path))
-        else:
+        elif not os.path.exists(img_path):
             img.category = "error"
             log_warning(f"Image file not found, skipping description: {img_path}")
+        else:
+            key = os.path.normcase(os.path.abspath(img_path))
+            if key in copies:
+                copies[key].append(img)
+            else:
+                copies[key] = []
+                jobs.append((img, img_path))
     if not jobs:
         return
+    try:
+        _run_phases(jobs, config, latex_auto)
+    finally:
+        for img, img_path in jobs:
+            for copy in copies[os.path.normcase(os.path.abspath(img_path))]:
+                copy.category, copy.description = img.category, img.description
+
+
+def _run_phases(jobs: list[tuple[Image, str]], config: AppConfig, latex_auto: bool) -> None:
+    """The three phases of ``describe_images`` on ``(image, file)`` jobs of distinct files."""
+    ai = config.ai
 
     init_ai(config)
     total = len(jobs)
@@ -218,10 +235,10 @@ def _apply_latex_auto(node: Node) -> None:
     ``transcription_nodes``); an image alone in its paragraph replaces the
     whole paragraph. Images that were not transcribed stay as references.
     """
-    def blocks(img: Image) -> list[Node] | None:
+    def blocks(img: Image) -> Expansion | None:
         if img.category not in LATEX_AUTO_CATEGORIES or not img.description:
             return None
-        return transcription_nodes(img.description, img.category)
+        return Expansion(transcription_nodes(img.description, img.category))
 
     expand_images(node, blocks)
 

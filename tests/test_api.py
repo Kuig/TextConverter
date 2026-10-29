@@ -93,6 +93,26 @@ class TestTextAndFiles(BaseConverterTest):
             self.assertEqual(Path(src).read_text(encoding="utf-8"), "# a")
 
 
+class TestEmbeddedImages(BaseConverterTest):
+
+    def test_embedding_leaves_no_image_folder(self):
+        """Images extracted from a PDF, then embedded, used to leave an <stem>_images folder."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "vector.html"
+            textconverter.save_to_file(str(INPUT_DIR / "Vector Image PDF.pdf"), str(out))
+            self.assertIn("data:image/", out.read_text(encoding="utf-8"))
+            self.assertEqual(os.listdir(tmp), ["vector.html"])
+            # With link, the folder is the output's
+            textconverter.save_to_file(str(INPUT_DIR / "Vector Image PDF.pdf"), str(out.with_suffix(".md")))
+            self.assertIn("vector_images", os.listdir(tmp))
+
+    def test_root_relative_path_is_explained(self):
+        from unittest.mock import patch
+        with patch("textconverter.images.log_warning") as warn:
+            textconverter.convert_text('<p><img src="/media/x.png"></p>', "html", "html")
+        self.assertIn("relative to the root of the site", warn.call_args.args[0])
+
+
 class TestWindowsIntegration(BaseConverterTest):
 
     def test_context_menu_covers_every_input_format(self):

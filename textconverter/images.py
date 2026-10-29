@@ -16,6 +16,7 @@ import re
 import urllib.parse
 
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 
 from . import _net
 from .ast import (
@@ -23,6 +24,7 @@ from .ast import (
     LineBreak, Link, ListItem, Node, Paragraph, Text, child_lists, walk,
 )
 from .logger import log_action, log_warning
+from .renderers._common import caption_paragraphs
 
 
 # Content types that say nothing about the payload: a download with one of
@@ -214,7 +216,11 @@ def embed_images(doc: Node) -> None:
         if path is None:
             continue
         if not os.path.exists(path):
-            log_warning(f"Image file not found, not embedded: {path}")
+            if node.src.startswith(("/", "\\")) and not os.path.splitdrive(node.src)[0]:
+                log_warning(f"Image not embedded: {node.src} is relative to the root of the site the page "
+                            "came from; convert the page from its URL to download its images.")
+            else:
+                log_warning(f"Image file not found, not embedded: {path}")
             continue
         try:
             with open(path, "rb") as f:
@@ -229,8 +235,22 @@ def embed_images(doc: Node) -> None:
 # Nodes whose children are blocks: a paragraph in them can be split in two.
 _BLOCK_CONTAINERS = (Document, BlockQuote, Abstract, ListItem)
 
-# Returns the blocks that replace an image, or None to keep the image.
-Expander = Callable[[Image], "list[Node] | None"]
+
+@dataclass
+class Expansion:
+    """What replaces an image: blocks, and what stays in its place where blocks cannot go.
+
+    An image in a paragraph splits it around ``blocks``. Inside a link, a
+    table cell or a heading, ``inline`` takes its place and ``blocks`` follow
+    the paragraph, table or heading; with ``inline`` None, an inline form of
+    the blocks takes its place instead (see ``_as_inline``) and nothing follows.
+    """
+    blocks: list[Node]
+    inline: list[Node] | None = None
+
+
+# Returns what replaces an image, or None to keep the image.
+Expander = Callable[[Image], "Expansion | None"]
 
 
 def _has_content(inlines: list[Node]) -> bool:
@@ -248,74 +268,100 @@ def _as_inline(blocks: list[Node]) -> list[Node]:
     return [Text(content=text)] if text else []
 
 
+def _expand(img: Image, expand: Expander) -> Expansion | None:
+    """The image's expansion; a figure's caption follows its blocks as a ``Figure: ...`` paragraph."""
+    expansion = expand(img)
+    if expansion is not None and (img.caption or img.label):
+        caption = caption_paragraphs(Paragraph(children=[img]))
+        expansion = replace(expansion, blocks=[*expansion.blocks, *caption])
+    return expansion
+
+
 def _split_paragraph(par: Paragraph, expand: Expander) -> list[Node]:
-    """The paragraph, split around each image that ``expand`` turns into blocks."""
+    """The paragraph, split around each image that ``expand`` turns into blocks.
+
+    The blocks of images nested deeper (in a link) follow the part of the
+    paragraph they were in.
+    """
     result: list[Node] = []
     current: list[Node] = []
-    changed = False
+    deferred: list[Node] = []
+    split = False
+
+    def flush() -> None:
+        if _has_content(current):
+            result.append(Paragraph(children=list(current)))
+        current.clear()
+        result.extend(deferred)
+        deferred.clear()
+
     for child in par.children:
-        blocks = expand(child) if isinstance(child, Image) else None
-        if blocks is None:
+        expansion = _expand(child, expand) if isinstance(child, Image) else None
+        if expansion is None:
             if not isinstance(child, Image):
-                expand_images(child, expand)
+                _expand_within(child, expand, deferred)
             current.append(child)
             continue
-        changed = True
-        if _has_content(current):
-            result.append(Paragraph(children=current))
-        current = []
-        result.extend(blocks)
-    if not changed:
-        return [par]
-    if _has_content(current):
-        result.append(Paragraph(children=current))
+        split = True
+        flush()
+        result.extend(expansion.blocks)
+    if not split:
+        return [par, *deferred]
+    flush()
     return result
 
 
 def expand_images(node: Node, expand: Expander) -> None:
-    """Replace images with the blocks ``expand`` returns for them, in place.
+    """Replace images with what ``expand`` returns for them, in place (see ``Expansion``).
 
     An image in a paragraph splits it: the text before and after the image
-    stays in paragraphs of its own around the blocks. Where blocks cannot go
-    (a table cell, a heading, a link), the image is replaced inline by the
-    content of a one-paragraph result, an inline formula, or else the text.
+    stays in paragraphs of its own around the blocks.
     """
+    _expand_within(node, expand, [])
+
+
+def _expand_within(node: Node, expand: Expander, pending: list[Node]) -> None:
+    """``expand_images`` below ``node``; blocks that cannot stay where their image was go to ``pending``."""
     if isinstance(node, _BLOCK_CONTAINERS):
         out: list[Node] = []
         for child in node.children:
             if isinstance(child, Paragraph):
                 out.extend(_split_paragraph(child, expand))
-            else:
-                expand_images(child, expand)
-                out.append(child)
+                continue
+            deferred: list[Node] = []
+            _expand_within(child, expand, deferred)
+            out.extend([child, *deferred])
         node.children[:] = out
         return
     for lst in child_lists(node):
         out = []
         for child in lst:
-            blocks = expand(child) if isinstance(child, Image) else None
-            if blocks is None:
+            expansion = _expand(child, expand) if isinstance(child, Image) else None
+            if expansion is None:
                 if not isinstance(child, Image):
-                    expand_images(child, expand)
+                    _expand_within(child, expand, pending)
                 out.append(child)
+            elif expansion.inline is None:
+                out.extend(_as_inline(expansion.blocks))
             else:
-                out.extend(_as_inline(blocks))
+                out.extend(expansion.inline)
+                pending.extend(expansion.blocks)
         lst[:] = out
 
 
-def _description_blocks(img: Image) -> list[Node] | None:
+def _description_blocks(img: Image) -> Expansion | None:
+    """A described image as its reference line and description; in a link the reference stays there."""
     from .parsers.transcription_parser import transcription_nodes
     if not img.description:
         return None
     body = transcription_nodes(img.description, img.category)
     if not img.render_metadata:
-        return body
+        return Expansion(body, inline=[replace(img, description=None)])
     category = f" - Class: {img.category}" if img.category else ""
-    header = Paragraph(children=[
-        Text(content=f"[Image Reference: {img.src}{category}]", bold=True), LineBreak(),
-        Text(content=DESCRIPTION_START, bold=True),
-    ])
-    return [header, *body, Paragraph(children=[Text(content=DESCRIPTION_END, bold=True)])]
+    reference = Text(content=f"[Image Reference: {img.src}{category}]", bold=True)
+    header = Paragraph(children=[replace(reference), LineBreak(), Text(content=DESCRIPTION_START, bold=True)])
+    return Expansion([header, *body, Paragraph(children=[Text(content=DESCRIPTION_END, bold=True)])],
+                     inline=[reference])
 
 
 def lower_image_descriptions(doc: Node) -> None:
@@ -324,8 +370,11 @@ def lower_image_descriptions(doc: Node) -> None:
     An image with a ``description`` becomes a reference line and the
     description between ``DESCRIPTION_START`` / ``DESCRIPTION_END`` markers,
     parsed like a transcription (tables, formulas and formatting become real
-    nodes); with ``render_metadata`` off, only the parsed description. Run
-    before rendering text formats; the JSON output keeps the images as they are.
+    nodes); with ``render_metadata`` off, only the parsed description. In a
+    link, a table cell or a heading the reference line (or the image) stays in
+    place and the description follows the paragraph, table or heading. A
+    figure's caption follows the description. Run before rendering text
+    formats; the JSON output keeps the images as they are.
     """
     expand_images(doc, _description_blocks)
 

@@ -80,8 +80,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With `--image-handling discard`, a figure's caption stays as text.
 - Wikipedia cleanup also drops the "^" back links of the reference list when the citation
   markers they point to are dropped.
+- AI image description processes an image file once, however many times the document shows
+  it (by its absolute path), and gives the result to every occurrence: one classification
+  and one description instead of one per occurrence.
+- Embedded images (`embed`, and `auto` for HTML) only pass through a temporary folder:
+  downloaded and PDF-extracted images no longer leave an `<output>_images` folder that the
+  output does not use. An image with a root-relative path (`/media/x.png`, as in a saved web
+  page) that cannot be embedded gets a warning saying why.
 
 ### Fixed
+
+- A described image inside a link, a table cell or a heading had its whole description
+  crammed into the link text, cell or heading. The reference line now stays there and the
+  description follows the paragraph, table or heading; the caption of a described or
+  transcribed figure is kept, after its content.
+- A table transcribed by GLM-OCR, which writes every row with `<td>`, takes its first row as
+  the header again, instead of an empty header row.
 
 - HTML input with a table `<caption>`, or with text directly inside `<ul>`, `<ol>`, `<table>`
   or `<tr>`, no longer crashes the HTML and Markdown output; such text is kept (in the list's

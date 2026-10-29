@@ -3,9 +3,10 @@
 Usage: python -m unittest discover -s tests -p "test_image_describer.py"
 """
 from __future__ import annotations
+import shutil
 from unittest.mock import MagicMock, patch
 
-from _support import BaseConverterTest, FakeAi, setUpModule, tearDownModule, INPUT_DIR
+from _support import BaseConverterTest, FakeAi, setUpModule, tearDownModule, INPUT_DIR, OUTPUT_DIR
 
 
 class TestImageDescriber(BaseConverterTest):
@@ -42,9 +43,21 @@ def _config(ocr_model: str = "ocr"):
     return cfg
 
 
+def _copies(n: int) -> list[str]:
+    """Paths of ``n`` distinct image files (a file shown twice is processed once)."""
+    paths = []
+    for i in range(n):
+        path = OUTPUT_DIR / f"describer_{i}.jpg"
+        OUTPUT_DIR.mkdir(exist_ok=True)
+        shutil.copyfile(FOTO, path)
+        paths.append(str(path))
+    return paths
+
+
 def _doc_with_images(n: int):
     from textconverter.ast import Document, Image, Paragraph
-    return Document(children=[Paragraph(children=[Image(src=FOTO, alt=f"img{i}")]) for i in range(n)])
+    return Document(children=[Paragraph(children=[Image(src=path, alt=f"img{i}")])
+                              for i, path in enumerate(_copies(n))])
 
 
 class TestPhasedProcessing(BaseConverterTest):
@@ -79,7 +92,8 @@ class TestPhasedProcessing(BaseConverterTest):
         doc = _doc_with_images(1)
         self._run(fake, doc)
         (img,) = [n for n in walk(doc) if isinstance(n, Image)]
-        self.assertIn("| a | b |", img.description)
+        # GLM-OCR writes every row with <td>: the first row is the header
+        self.assertIn("| a | b |\n|---|---|\n| 1 | 2 |", img.description)
         self.assertNotIn("<table", img.description)
 
     def test_without_ocr_model_description_model_transcribes(self):
@@ -121,6 +135,21 @@ class TestPhasedProcessing(BaseConverterTest):
         self._run(fake, doc, latex_auto=True)
         self.assertEqual(cell.children, [Equation(code="a+b", inline=True)])
 
+    def test_one_file_is_processed_once(self):
+        """Four images of one file (relative and absolute paths): one call per phase, shared result."""
+        import os
+        from textconverter.ast import Document, Image, Paragraph, walk
+        path = _copies(1)[0]
+        relative = os.path.relpath(path, str(OUTPUT_DIR.parent))
+        doc = Document(children=[Paragraph(children=[Image(src=src) for src in (path, path, relative, path)])])
+        fake = FakeAi(["photo_drawing_or_comic"], {"desc": "A description."})
+        from textconverter.image_describer import process_images
+        with patch("unified_ai_client.call_ai", side_effect=fake), patch("unified_ai_client.preload_model"):
+            process_images(doc, str(OUTPUT_DIR.parent), config=_config())
+        self.assertEqual([m for m, _ in fake.calls], ["cls", "desc"])
+        self.assertEqual({(n.category, n.description) for n in walk(doc) if isinstance(n, Image)},
+                         {("photo_drawing_or_comic", "A description.")})
+
     def test_latex_auto_without_client_keeps_images(self):
         """Without unified_ai_client, auto_latex degrades to plain references; describe raises."""
         from textconverter.image_describer import process_images
@@ -132,11 +161,15 @@ class TestPhasedProcessing(BaseConverterTest):
 
 class TestTranscribeImages(BaseConverterTest):
 
+    def setUp(self):
+        super().setUp()
+        self.paths = _copies(3)
+
     def _transcribe(self, fake):
         from textconverter.image_describer import transcribe_images
         with patch("unified_ai_client.call_ai", side_effect=fake), \
              patch("unified_ai_client.preload_model"):
-            return transcribe_images([FOTO, FOTO, FOTO], config=_config())
+            return transcribe_images(self.paths, config=_config())
 
     def test_answers_become_ast_nodes_in_order(self):
         """HTML table → Table, formula → Equation, failed call → image reference."""
@@ -147,7 +180,7 @@ class TestTranscribeImages(BaseConverterTest):
         self.assertIsInstance(doc.children[0], Table)
         self.assertEqual(doc.children[1], Equation(code="a+b", inline=False))
         self.assertIsInstance(doc.children[2], Paragraph)
-        self.assertEqual(doc.children[2].children[0].src, FOTO)
+        self.assertEqual(doc.children[2].children[0].src, self.paths[2])
 
 
 class TestDescribedImagesInOutput(BaseConverterTest):
@@ -173,6 +206,41 @@ class TestDescribedImagesInOutput(BaseConverterTest):
         """The described table used to be escaped text in HTML and LaTeX."""
         self.assertIn("<table>", self._convert("html"))
         self.assertIn(r"\begin{tabular}", self._convert("latex"))
+
+    def _lowered(self, *blocks):
+        from textconverter.ast import Document
+        from textconverter.images import lower_image_descriptions
+        doc = Document(children=list(blocks))
+        lower_image_descriptions(doc)
+        return doc
+
+    @staticmethod
+    def _described():
+        from textconverter.ast import Image, Text
+        return Image(src="pic.png", description="A *red* car.", category="photo_drawing_or_comic",
+                     caption=[Text(content="The car")], label="fig:car")
+
+    def test_described_image_in_a_link_keeps_its_place(self):
+        """The whole description used to be crammed into the link text."""
+        from textconverter.ast import Link, Paragraph, Text
+        link = Link(url="https://e.org", content=[self._described()])
+        doc = self._lowered(Paragraph(children=[Text(content="See "), link, Text(content=" here.")]))
+        first, header = doc.children[:2]
+        self.assertEqual(first.children[1].content,
+                         [Text(content="[Image Reference: pic.png - Class: photo_drawing_or_comic]", bold=True)])
+        self.assertEqual(first.children[2], Text(content=" here."))
+        self.assertIn("Start of picture description", header.children[-1].content)
+        self.assertEqual(doc.children[-1].children[:2], [Text(content="Figure: "), Text(content="The car")])
+
+    def test_described_image_in_a_table_cell_follows_the_table(self):
+        from textconverter.ast import Paragraph, Table, TableCell, TableRow, Text
+        cell = TableCell(children=[self._described()])
+        doc = self._lowered(Table(rows=[TableRow(cells=[cell])]), Paragraph(children=[Text(content="After.")]))
+        self.assertIsInstance(doc.children[0], Table)
+        self.assertEqual(cell.children[0].content[:16], "[Image Reference")
+        self.assertEqual(doc.children[-1].children, [Text(content="After.")])
+        self.assertIn("red", "".join(n.content for p in doc.children[1:-1] for n in getattr(p, "children", [])
+                                     if isinstance(n, Text)))
 
     def test_json_keeps_the_described_image(self):
         import json
