@@ -7,23 +7,20 @@ footnotes, written to their own part.
 """
 from __future__ import annotations
 
-import base64
-import datetime
 import io
 import os
-import urllib.parse
 from dataclasses import dataclass
 
 from ..ast import (
     Abstract, Appendix, BlockQuote, CodeBlock, CodeInline, Document, Equation, Footnote, Heading, HorizontalRule,
     Image, LineBreak, Link, ListBlock, Node, Paragraph, Table, Text,
 )
-from ..images import is_remote, resolve_local
 from ..logger import log_warning
 from lxml import etree
 
 from ..parsers._omml import M_NS
 from ._common import figure_image, latex_reference_macro, plain_text, safe_href, table_grid, text_runs
+from ._office import image_bytes, write_properties
 from ._omml import UnsupportedMath, latex_to_omml
 
 _CODE_FONT = "Consolas"
@@ -100,22 +97,7 @@ class _Writer:
         self.document.save(output_path)
 
     def _metadata(self, doc: Document) -> None:
-        props = self.document.core_properties
-        props.title = plain_text(doc.title).strip()
-        props.author = plain_text(doc.author).strip()
-        props.last_modified_by = props.comments = props.subject = props.keywords = ""
-        try:
-            day = datetime.date.fromisoformat(plain_text(doc.date).strip())
-        except ValueError:
-            day = None
-        if day is None:
-            # The template's own dates would be read back as the document's date.
-            for name in ("created", "modified"):
-                for el in props._element.findall(f"{{http://purl.org/dc/terms/}}{name}"):
-                    props._element.remove(el)
-        else:
-            props.created = props.modified = datetime.datetime(day.year, day.month, day.day,
-                                                               tzinfo=datetime.timezone.utc)
+        write_properties(self.document.core_properties, doc)
 
     def _add_styles(self) -> None:
         from docx.enum.style import WD_STYLE_TYPE as T
@@ -434,19 +416,6 @@ class _Writer:
 
     # ---- images ---------------------------------------------------------
 
-    def _image_bytes(self, src: str) -> bytes | None:
-        if src.startswith("data:"):
-            header, _, data = src.partition(",")
-            return base64.b64decode(data) if header.endswith(";base64") else urllib.parse.unquote_to_bytes(data)
-        if not src or is_remote(src):
-            return None
-        for base in (self.base_dir, os.getcwd()):
-            path = resolve_local(src, base)
-            if path and os.path.isfile(path):
-                with open(path, "rb") as f:
-                    return f.read()
-        return None
-
     @staticmethod
     def _picture_info(blob: bytes):
         """The blob and python-docx's view of it; formats it cannot embed (WebP) are converted to PNG."""
@@ -461,7 +430,7 @@ class _Writer:
             return out.getvalue(), DocxImage.from_blob(out.getvalue())
 
     def _picture(self, paragraph, node: Image, container) -> None:
-        blob = self._image_bytes(node.src)
+        blob = image_bytes(node.src, self.base_dir)
         run = None
         if blob is not None and hasattr(paragraph.part, "new_pic_inline"):
             try:

@@ -24,9 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handling resolves to `embed`. Reading the written file gives back the same AST.
 - The Windows context menu offers the conversions of a `.docx` file, and "to Word" for the
   other sources.
+- PowerPoint input: `.pptx` files, local or downloaded, are read into the AST (`python-pptx` is now a
+  dependency). A section is a level 1 heading, a slide a level 2 heading (a title starting with `#` is a
+  deeper slide). The main text box is the slide's body, other text boxes are quotes headed by their frame
+  as percentages of the slide, speaker notes are a footnote on the heading, monospaced text is code.
+  Tables, native charts (as their data), SmartArt (as a list), pictures, links and equations are read.
+  Animations, transitions and the theme are ignored; what the AST cannot hold (video, shapes without
+  text) is dropped with a single warning.
+- PowerPoint output: a `.pptx` target writes sections, slides, lists, code, tables, pictures, native equations
+  and speaker notes onto a neutral 16:9 template, shrinking the text of a crowded slide. A quote headed by
+  `Text box (x .., y .., w .., h ..)` is placed at that frame. `auto` image handling resolves to `embed`.
+- The Windows context menu offers the conversions of a `.pptx` file, and "to PowerPoint" for the other
+  sources.
 
 ### Changed
 
+- Word and PowerPoint parsers share image storage (`ImageStore`) and monospace detection, and the renderers
+  share how images are read and file properties are written.
 - `lift_macros` (reading reference macros written as text) moved from the HTML parser to the
   shared `parsers/_latex_macros.py`; `images.store_image` and `renderers/_common.safe_href` are
   now public helpers.

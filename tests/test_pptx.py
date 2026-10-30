@@ -6,6 +6,7 @@ from __future__ import annotations
 import io
 import os
 import tempfile
+import zipfile
 from unittest.mock import patch
 
 from lxml import etree
@@ -16,9 +17,11 @@ from pptx.opc.package import Part
 from pptx.opc.packuri import PackURI
 from pptx.util import Inches
 
+import textconverter
 from textconverter.api import convert
 from textconverter.ast import (
-    BlockQuote, CodeBlock, Equation, Footnote, Heading, Image, Link, ListBlock, Paragraph, Table, Text, walk,
+    BlockQuote, CodeBlock, CodeInline, Document, Equation, Footnote, Heading, Image, LineBreak, Link, ListBlock,
+    Paragraph, Table, Text, walk,
 )
 from textconverter.formats import infer_input_format, infer_input_format_from_media_type
 from textconverter.parsers._pptx_xml import box_preamble, parse_box_preamble, Rect
@@ -286,3 +289,174 @@ class TestPptxThroughTheApi(BaseConverterTest):
         self.assertEqual(infer_input_format("a.PPTX"), "pptx")
         self.assertEqual(infer_input_format_from_media_type(
             "application/vnd.openxmlformats-officedocument.presentationml.presentation"), "pptx")
+
+
+class PptxOutputTest(BaseConverterTest):
+    """Helpers for tests that write a PowerPoint file."""
+
+    def _save(self, source: str, **options) -> str:
+        """Convert Markdown ``source`` to a .pptx in a temporary folder; return the .pptx path."""
+        from textconverter import ConvertOptions, save_to_file
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        src = os.path.join(tmp.name, "in.md")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write(source)
+        out = os.path.join(tmp.name, "out.pptx")
+        save_to_file(src, out, ConvertOptions(**options))
+        self.assertEqual(sorted(os.listdir(tmp.name)), ["in.md", "out.pptx"], "no image folder or temp file left")
+        return out
+
+    def _read(self, path: str):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return parse_pptx(path, output_dir=tmp.name, image_dir_name="img")
+
+    def _roundtrip(self, source: str):
+        return self._read(self._save(source))
+
+    def _render(self, doc: Document) -> str:
+        """Render ``doc`` straight to a .pptx under tests/Output and return its path."""
+        from textconverter.renderers.pptx_renderer import render_pptx
+        path = str(self._out("render_test.pptx"))
+        render_pptx(doc, path)
+        return path
+
+
+class TestPptxRenderer(PptxOutputTest):
+
+    def test_headings_sections_lists_and_text_survive(self):
+        source = ("# Part A\n\n## One\n\nSome text\n\n- a\n    - b\n- c\n\n### Sub\n\n3. x\n4. y\n\n"
+                  "# Part B\n\n## Two\n\n```\ncode line\n\nlast\n```\n")
+        doc = self._roundtrip(source)
+        self.assertEqual(_headings(doc), [(1, "Part A"), (2, "One"), (3, "Sub"), (1, "Part B"), (2, "Two")])
+        lists = _of(doc, ListBlock)
+        self.assertEqual([plain_text(i.children[0].children) for i in lists[0].items], ["a", "c"])
+        self.assertEqual(len(_of(lists[0].items[0], ListBlock)), 1)
+        self.assertEqual((lists[-1].ordered, lists[-1].start, len(lists[-1].items)), (True, 3, 2))
+        self.assertEqual(_of(doc, CodeBlock)[0].code, "code line\n\nlast")
+
+    def test_inline_formatting_and_links_survive(self):
+        doc = self._roundtrip("## S\n\nplain **bold** _it_ ~~gone~~ `code` [site](https://example.com)\n")
+        texts = _of(doc, Text)
+        self.assertTrue(any(t.bold and t.content == "bold" for t in texts))
+        self.assertTrue(any(t.italic and t.content == "it" for t in texts))
+        self.assertTrue(any(t.strikethrough for t in texts))
+        self.assertEqual(_of(doc, CodeInline)[0].code, "code")
+        self.assertEqual(_of(doc, Link)[0].url, "https://example.com")
+
+    def test_table_survives(self):
+        doc = self._roundtrip("## S\n\n| a | b |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n")
+        table = _of(doc, Table)[0]
+        self.assertEqual([plain_text(c.children) for c in table.headers], ["a", "b"])
+        self.assertEqual([[plain_text(c.children) for c in r.cells] for r in table.rows], [["1", "2"], ["3", "4"]])
+
+    def test_a_framed_quote_returns_to_its_frame(self):
+        doc = self._roundtrip("## S\n\nbody\n\n> Text box (x 10%, y 50%, w 30%, h 20%)\n>\n> on the side\n")
+        quote = _of(doc, BlockQuote)[0]
+        self.assertEqual(parse_box_preamble(plain_text(quote.children[0].children)), (10, 50, 30, 20))
+        self.assertEqual(plain_text(quote.children[1].children), "on the side")
+
+    def test_a_plain_quote_becomes_a_box_with_a_frame(self):
+        doc = self._roundtrip("## S\n\nbody\n\n> remark\n")
+        quote = _of(doc, BlockQuote)[0]
+        self.assertIsNotNone(parse_box_preamble(plain_text(quote.children[0].children)))
+
+    def test_the_first_slide_uses_the_title_layout_only_when_it_holds_little_text(self):
+        path = self._save("## Opening\n\nA subtitle\n\n## List\n\n- a\n- b\n")
+        names = [s.slide_layout.name for s in Presentation(path).slides]
+        self.assertEqual(names, ["Title Slide", "Title and Content"])
+        self.assertEqual(_headings(self._read(path)), [(2, "Opening"), (2, "List")])
+
+    def test_sections_default_section_and_the_sections_own_slide(self):
+        doc = self._roundtrip("## Before\n\n- x\n\n# A\n\nintro\n\n## In A\n\n# B\n\n## In B\n")
+        self.assertEqual(_headings(doc), [(1, "Default Section"), (2, "Before"), (1, "A"), (2, "In A"),
+                                          (1, "B"), (2, "In B")])
+        a = next(i for i, n in enumerate(doc.children) if isinstance(n, Heading) and plain_text(n.children) == "A")
+        self.assertEqual(plain_text(doc.children[a + 1].children), "intro")
+
+    def test_footnotes_are_speaker_notes(self):
+        doc = Document(children=[
+            Heading(level=2, children=[Text(content="S"), Footnote(content=[Text(content="first"), LineBreak(),
+                                                                                Text(content="second")])]),
+            Paragraph(children=[Text(content="body"), Footnote(content=[Text(content="aside")])]),
+        ])
+        path = self._render(doc)
+        self.assertEqual(Presentation(path).slides[0].notes_slide.notes_text_frame.text, "first\nsecond\naside")
+        self.assertEqual(len(_of(self._read(path), Footnote)), 1)
+
+    def test_equations_are_native(self):
+        doc = Document(children=[Heading(level=2, children=[Text(content="S")]),
+                                 Paragraph(children=[Text(content="so "), Equation(code="x^2", inline=True)]),
+                                 Equation(code=r"\frac{a}{b}", inline=False)])
+        equations = _of(self._read(self._render(doc)), Equation)
+        self.assertEqual([(e.code, e.inline) for e in equations], [("x^2", True), (r"\frac{a}{b}", False)])
+
+    def test_pictures_are_embedded_and_keep_their_alt(self):
+        import base64
+        url = "data:image/png;base64," + base64.b64encode(_png().getvalue()).decode()
+        path = self._save(f"## S\n\ntext\n\n![a red box]({url})\n")
+        with zipfile.ZipFile(path) as z:
+            self.assertEqual(len([n for n in z.namelist() if n.startswith("ppt/media/")]), 1)
+        self.assertEqual(_of(self._read(path), Image)[0].alt, "a red box")
+        path = self._save(f"## S\n\ntext\n\n![a red box]({url})\n", image_handling="discard")
+        with zipfile.ZipFile(path) as z:
+            self.assertFalse([n for n in z.namelist() if n.startswith("ppt/media/")])
+
+    def test_a_missing_picture_becomes_its_alt_text(self):
+        doc = self._read(self._save("## S\n\n![gone](nowhere.png)\n"))
+        self.assertIn("[gone]", plain_text(_of(doc, Paragraph)[0].children))
+
+    def test_a_crowded_slide_shrinks_its_text(self):
+        body = "\n\n".join(f"Paragraph number {i} with a fair amount of words to fill the line" for i in range(30))
+        path = self._save(f"## S\n\n{body}\n")
+        sizes = {int(r.get("sz")) for r in Presentation(path).slides[0].element.iter(
+            "{http://schemas.openxmlformats.org/drawingml/2006/main}rPr")}
+        body = sizes - {3200}  # the title keeps its size
+        self.assertTrue(body and max(body) < 2000 and min(body) >= 1000, sizes)
+
+    def test_metadata_is_written_and_a_missing_date_is_not_invented(self):
+        doc = self._roundtrip("---\ntitle: T\nauthor: A\ndate: 2026-01-02\n---\n\n## S\n")
+        self.assertEqual((plain_text(doc.title), plain_text(doc.author), plain_text(doc.date)),
+                         ("T", "A", "2026-01-02"))
+        self.assertEqual(self._roundtrip("## S\n").date, [])
+
+    def test_the_fixture_keeps_its_content_through_a_round_trip(self):
+        from textconverter import save_to_file
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out.pptx")
+            save_to_file(str(FIXTURE), out)
+            before = parse_pptx(str(FIXTURE), output_dir=tmp, image_dir_name="a")
+            after = parse_pptx(out, output_dir=tmp, image_dir_name="b")
+        self.assertEqual(_headings(before), _headings(after))
+        for cls in (Table, Image, BlockQuote, Footnote, CodeBlock):
+            self.assertEqual(len(_of(before, cls)), len(_of(after, cls)), cls.__name__)
+        self.assertEqual(sum(len(b.items) for b in _of(before, ListBlock)),
+                         sum(len(b.items) for b in _of(after, ListBlock)))
+
+
+class TestPptxOutputThroughTheApi(BaseConverterTest):
+
+    def test_text_conversion_cannot_produce_pptx(self):
+        with self.assertRaisesRegex(ValueError, "to_format"):
+            textconverter.convert_text("# a", "markdown", "pptx")
+        with self.assertRaisesRegex(ValueError, "to_format"):
+            convert(str(FIXTURE), "pptx")
+
+    def test_output_format_is_inferred(self):
+        from textconverter.formats import OUTPUT_FORMATS, infer_output_format
+        self.assertEqual(infer_output_format("a.pptx"), "pptx")
+        self.assertEqual(OUTPUT_FORMATS["pptx"].auto_images, "embed")
+
+    def test_a_failed_conversion_leaves_no_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = os.path.join(tmp, "bad.pptx")
+            with open(bad, "w", encoding="utf-8") as f:
+                f.write("no")
+            with self.assertRaises(ValueError):
+                textconverter.save_to_file(bad, os.path.join(tmp, "out.pptx"))
+            self.assertEqual(os.listdir(tmp), ["bad.pptx"])
+
+    def test_the_source_is_never_overwritten(self):
+        with self.assertRaisesRegex(ValueError, "source file itself"):
+            textconverter.save_to_file(str(FIXTURE), str(FIXTURE))

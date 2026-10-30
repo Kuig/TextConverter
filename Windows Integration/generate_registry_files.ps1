@@ -22,6 +22,7 @@ $ImageSubcommands = @(
     [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
     [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
         [ordered]@{ Key="07docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
+        [ordered]@{ Key="08pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$false }
 )
 
 # Define subcommands for PDF sources: text-layer conversions, then the same
@@ -34,6 +35,7 @@ $PdfTextSubcommands = @(
     [ordered]@{ Key="04html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false }
     [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
         [ordered]@{ Key="06docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
+        [ordered]@{ Key="07pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$false }
 )
 # Explorer sorts subcommands by key, so the "r" prefix lists the raster ones last.
 $PdfRasterSubcommands = foreach ($Sub in $PdfTextSubcommands) {
@@ -54,6 +56,7 @@ $Associations = [ordered]@{
         [ordered]@{ Key="04html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
         [ordered]@{ Key="05pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
         [ordered]@{ Key="06docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
+        [ordered]@{ Key="07pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$false }
     )
     ".markdown" = @(
         [ordered]@{ Key="01tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain"; Extract=$false }
@@ -62,6 +65,7 @@ $Associations = [ordered]@{
         [ordered]@{ Key="04html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
         [ordered]@{ Key="05pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
         [ordered]@{ Key="06docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
+        [ordered]@{ Key="07pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$false }
     )
     ".tex" = @(
         [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
@@ -70,6 +74,7 @@ $Associations = [ordered]@{
         [ordered]@{ Key="04html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
         [ordered]@{ Key="05pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
         [ordered]@{ Key="06docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
+        [ordered]@{ Key="07pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$false }
     )
     ".latex" = @(
         [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
@@ -78,6 +83,7 @@ $Associations = [ordered]@{
         [ordered]@{ Key="04html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
         [ordered]@{ Key="05pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
         [ordered]@{ Key="06docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
+        [ordered]@{ Key="07pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$false }
     )
     ".html" = @(
         [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
@@ -92,8 +98,10 @@ $Associations = [ordered]@{
         [ordered]@{ Key="10html_dark_main"; Verb="to HTML (dark theme) - main content"; Ext=".html"; Template="dark-theme"; Extract=$true }
         [ordered]@{ Key="11pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
         [ordered]@{ Key="13docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
+        [ordered]@{ Key="15pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$false }
         [ordered]@{ Key="12pdf_main"; Verb="to PDF - main content (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$true }
         [ordered]@{ Key="14docx_main"; Verb="to Word - main content (.docx)"; Ext=".docx"; Template="plain"; Extract=$true }
+        [ordered]@{ Key="16pptx_main"; Verb="to PowerPoint - main content (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$true }
     )
     ".htm" = @(
         [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
@@ -108,8 +116,10 @@ $Associations = [ordered]@{
         [ordered]@{ Key="10html_dark_main"; Verb="to HTML (dark theme) - main content"; Ext=".html"; Template="dark-theme"; Extract=$true }
         [ordered]@{ Key="11pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
         [ordered]@{ Key="13docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
+        [ordered]@{ Key="15pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$false }
         [ordered]@{ Key="12pdf_main"; Verb="to PDF - main content (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$true }
         [ordered]@{ Key="14docx_main"; Verb="to Word - main content (.docx)"; Ext=".docx"; Template="plain"; Extract=$true }
+        [ordered]@{ Key="16pptx_main"; Verb="to PowerPoint - main content (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$true }
     )
     ".docx" = @(
         [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
@@ -118,6 +128,7 @@ $Associations = [ordered]@{
         [ordered]@{ Key="04html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false }
         [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
         [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
+        [ordered]@{ Key="07pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$false }
     )
     ".pptx" = @(
         [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
@@ -126,6 +137,7 @@ $Associations = [ordered]@{
         [ordered]@{ Key="04html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false }
         [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
         [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
+        [ordered]@{ Key="07docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
     )
     ".json" = $ImageSubcommands
     ".png"  = $ImageSubcommands
