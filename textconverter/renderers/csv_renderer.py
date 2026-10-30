@@ -1,7 +1,8 @@
 """CSV renderer: writes the document's tables as comma-separated text.
 
-Only tables are kept. A cell is its plain text (a line break stays a newline);
-footnotes, images and formulas are dropped.
+Only tables are kept. A cell is its plain text (a line break stays a newline,
+inline code its code, math ``$...$``, a reference its LaTeX macro); footnotes,
+images and the ``excel`` formula lines are dropped.
 """
 from __future__ import annotations
 
@@ -12,13 +13,13 @@ import re
 from ..ast import Document, Footnote, LineBreak, Table, TableCell, Text, walk
 from ..logger import log_warning
 from ._common import table_grid
-from ._sheets import Sheet, collect_sheets
+from ._sheets import Sheet, collect_sheets, literal_text
 
 _FILE_UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def cell_text(cell: TableCell) -> str:
-    """The text of a table cell: its texts and line breaks, descendants included, footnotes left out."""
+    """The text of a table cell: everything it shows, descendants included, footnotes left out."""
     skip: set[int] = set()
     parts: list[str] = []
     for node in walk(cell):
@@ -30,6 +31,8 @@ def cell_text(cell: TableCell) -> str:
             parts.append(node.content)
         elif isinstance(node, LineBreak):
             parts.append("\n")
+        elif (literal := literal_text(node)) is not None:
+            parts.append(literal)
     return "".join(parts).strip()
 
 

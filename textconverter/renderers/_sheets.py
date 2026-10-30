@@ -4,9 +4,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from ..ast import CodeBlock, Document, Heading, Table, walk
+from ..ast import Citation, CodeBlock, CodeInline, Document, Equation, Heading, Node, Reference, Table, walk
 from ..parsers._excel_formulas import FORMULA_LANGUAGE
-from ._common import plain_text
+from ._common import latex_reference_macro, plain_text
 
 _MAX_NAME = 31
 _INVALID = re.compile(r"[\[\]:*?/\\]")
@@ -18,6 +18,17 @@ class Sheet:
     name: str
     table: Table
     formulas: list[str] = field(default_factory=list)
+
+
+def literal_text(node: Node) -> str | None:
+    """What a cell shows for an inline node that holds no ``Text``: code, a ``$formula$``, a reference macro."""
+    if isinstance(node, CodeInline):
+        return node.code
+    if isinstance(node, Equation):
+        return f"${node.code}$"
+    if isinstance(node, (Citation, Reference)):
+        return latex_reference_macro(node, plain_text)
+    return None
 
 
 def _clean(name: str) -> str:

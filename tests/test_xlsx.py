@@ -188,10 +188,10 @@ class TestXlsxParser(BaseConverterTest):
 
 class TestXlsxPipeline(BaseConverterTest):
     def test_to_markdown_and_json(self):
-        md = convert(str(FIXTURE), "markdown")
+        md = convert(str(FIXTURE), "markdown", output_dir=str(OUTPUT_DIR))
         self.assertIn("| Item | Qty | Price | Total |", md)
         self.assertIn("```excel", md)
-        self.assertIn('"type": "Table"', convert(str(FIXTURE), "json"))
+        self.assertIn('"type": "Table"', convert(str(FIXTURE), "json", output_dir=str(OUTPUT_DIR)))
 
     def test_to_html_embeds_the_image(self):
         self.assertIn("data:image/png;base64", convert(str(FIXTURE), "html"))
@@ -245,6 +245,11 @@ class TestXlsxRenderer(BaseConverterTest):
         self.assertIs(ws["C2"].value, True)
         self.assertEqual(ws["D2"].value, "1,5")
         self.assertEqual(wb["Sales"]["B2"].value, 3)
+
+    def test_cells_keep_math_code_and_references(self):
+        ws = load_workbook(self._save("| k | v |\n|---|---|\n| math | $x^2$ |\n| code | `abc` |\n"
+                                      "| mix | val $5$ eur |\n| ref | \\ref{t} |\n")).active
+        self.assertEqual([ws.cell(r, 2).value for r in range(2, 6)], ["$x^2$", "abc", "val $5$ eur", "\\ref{t}"])
 
     def test_header_is_bold(self):
         ws = load_workbook(self._save(MARKDOWN))["Sales"]

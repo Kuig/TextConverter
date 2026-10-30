@@ -10,7 +10,7 @@ from dataclasses import replace
 from typing import Any
 
 from . import _net
-from .ast import Document
+from .ast import Document, Table, walk
 from .images import ImagePaths, discard_links, embed_images, lower_image_descriptions, remove_images
 from .logger import log_action, log_warning
 
@@ -206,7 +206,21 @@ def _transform_and_render(
 
     if to_format != "json":
         lower_image_descriptions(doc)
+    if to_format in ("csv", "xlsx"):
+        _require_table(doc, from_format, options)
     return render(doc)
+
+
+def _require_table(doc: Document, from_format: str, options: ConvertOptions) -> None:
+    """Raise ValueError, with the likely cause, when a spreadsheet target has no table to write."""
+    if any(isinstance(node, Table) for node in walk(doc)):
+        return
+    hint = ""
+    if from_format == "pdf" and options.pdf_mode == "text":
+        hint = " In a PDF's text layer only tables drawn with ruled lines are found: try pdf_mode 'raster'."
+    elif from_format == "image" or from_format == "pdf":
+        hint = " The AI did not transcribe a table: check the messages above."
+    raise ValueError(f"The document has no table to write as a spreadsheet.{hint}")
 
 
 def _check_formats(from_format: str | None, to_format: str) -> None:
@@ -453,16 +467,23 @@ def _save_csv(
     options: ConvertOptions,
     from_format: str | None,
     config: AppConfig | None,
-) -> None:
-    """Write the tables of ``source`` as CSV: ``output_path``, or ``<stem>_<sheet>.csv`` for each of several."""
+) -> list[str]:
+    """Write the tables of ``source`` as CSV: ``output_path``, or ``<stem>_<sheet>.csv`` for each of several.
+
+    Returns:
+        The paths written.
+    """
     out_path = pathlib.Path(output_path)
     files = _convert(source, "csv", options, config or load_config(), from_format=from_format,
                      output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images",
                      render=render_csv_files)
+    written = []
     for suffix, text in files:
         target = out_path.with_name(f"{out_path.stem}{suffix}{out_path.suffix}")
         with open(target, 'w', encoding='utf-8-sig', newline='') as f:
             f.write(text)
+        written.append(str(target))
+    return written
 
 
 def save_to_file(
@@ -472,7 +493,7 @@ def save_to_file(
     *,
     from_format: str | None = None,
     config: AppConfig | None = None,
-) -> None:
+) -> list[str]:
     """Convert a file or a remote URL and write the result to ``output_path``.
 
     The output format comes from the extension of ``output_path``; images are
@@ -495,9 +516,14 @@ def save_to_file(
         from_format: Source format; inferred from the extension when None.
         config: Configuration to use instead of config.json.
 
+    Returns:
+        The paths written: ``[output_path]``, or one path per table for a
+        ``.csv`` output with several tables.
+
     Raises:
-        ValueError: If the output format cannot be inferred, or the output
-            path is the source file itself.
+        ValueError: If the output format cannot be inferred, the output path
+            is the source file itself, or a ``.csv`` or ``.xlsx`` output has no
+            table to write.
         FileNotFoundError, RuntimeError, ImportError: As ``convert``.
     """
     options = options or ConvertOptions()
@@ -510,11 +536,10 @@ def save_to_file(
 
     out_path = pathlib.Path(output_path)
     if to_format == "csv":
-        _save_csv(source, output_path, options, from_format, config)
-        return
+        return _save_csv(source, output_path, options, from_format, config)
     if to_format in ("docx", "pptx", "xlsx"):
         _save_office(source, output_path, to_format, options, from_format, config)
-        return
+        return [output_path]
     if to_format == "pdf":
         from .renderers.pdf_renderer import render_pdf
         handling = "embed" if options.image_handling in ("auto", "link") else options.image_handling
@@ -523,10 +548,11 @@ def save_to_file(
             html = convert(source, "html", pdf_options, from_format=from_format,
                            output_dir=tmp, image_dir_name="images", config=config)
             render_pdf(html, output_path, base_dir=tmp)
-        return
+        return [output_path]
 
     result = convert(source, to_format, options, from_format=from_format,
                      output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images",
                      config=config)
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(result)
+    return [output_path]

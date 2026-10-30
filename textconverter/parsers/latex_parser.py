@@ -26,6 +26,24 @@ _ITEM = re.compile(r'\\item(?![a-zA-Z])')
 # A paragraph that is only a full-width rule (as the renderer writes a HorizontalRule).
 _RULE = re.compile(r'^(?:\\rule\{\\(?:text|line)width\}\{[^}]*\}|\\hrule|\\hrulefill)$')
 _ENV_BOUNDARY = re.compile(r'\\(begin|end)\{[^}]*\}')
+# The environments that hold a table's rows, and the floats that wrap them.
+_TABLE_ENVS = ('tabular', 'tabular*', 'tabularx', 'tabulary', 'longtable', 'longtable*', 'xltabular')
+_TABLE_FLOATS = ('table', 'table*', 'sidewaystable', 'sidewaystable*', 'wraptable')
+_TABLE_START = re.compile(r'\\begin\{(' + '|'.join(re.escape(env) for env in _TABLE_ENVS) + r')\}')
+# Table commands that draw and hold no data, by the number of {...} arguments they take.
+_TABLE_LAYOUT = {
+    'hline': 0, 'toprule': 0, 'midrule': 0, 'bottomrule': 0, 'addlinespace': 0, 'morecmidrules': 0,
+    'cline': 1, 'cmidrule': 1, 'hhline': 1, 'rowcolor': 1, 'cellcolor': 1, 'specialrule': 3,
+}
+_TABLE_LAYOUT_COMMAND = re.compile('|'.join(
+    rf'\\{name}(?![a-zA-Z])(?:\s*\[[^\]]*\]|\s*\([^)]*\))*' + r'\s*\{[^{}]*\}' * arguments
+    for name, arguments in _TABLE_LAYOUT.items()
+))
+_TABLE_ROW_END = re.compile(r'\\\\\*?(?:\[[^\]]*\])?|\\tabularnewline(?![a-zA-Z])')
+# What stands before the text of a \multirow: the optional and the required arguments.
+_MULTIROW = re.compile(r'\\multirow(?:\[[^\]]*\])?\s*\{[^{}]*\}(?:\[[^\]]*\])?\s*\{[^{}]*\}(?:\[[^\]]*\])?\s*')
+# The end of a longtable's first head, repeated head and feet; the last two parts are not body.
+_LONGTABLE_PART = re.compile(r'\\(endfirsthead|endhead|endfoot|endlastfoot)(?![a-zA-Z])')
 _VERBATIM = re.compile(r'(?P<begin>\\begin\{(?P<env>verbatim\*?|lstlisting)\})(?P<options>\[[^\]\n]*\])?'
                        r'(?P<body>.*?)(?P<end>\\end\{(?P=env)\})', re.DOTALL)
 
@@ -146,7 +164,8 @@ def parse_latex(text: str) -> Document:
     """Parses a basic subset of LaTeX into an AST Document.
 
     Recognized: sectioning, title/author/date, abstract, lists (nested),
-    verbatim/lstlisting, tabular (inside table or alone), figures, display
+    verbatim/lstlisting, tables (the tabular family and longtable, inside a
+    float or alone), figures, display
     math environments, keywords and quotes; any other environment contributes
     its content. Inline: emphasis, links, code, math, footnotes, citations,
     cross-references, accents and the common symbols.
@@ -291,7 +310,7 @@ def _environment(env: str, content: str, verbatim: list[str]) -> list[Node]:
         return [CodeBlock(code=code.strip('\n').rstrip(), language=lang.group(1).lower() if lang else None)]
     if env in ('itemize', 'enumerate', 'description'):
         return [_list(env, content, verbatim)]
-    if env == 'tabular':
+    if env in _TABLE_ENVS:
         return [_parse_latex_table(content.strip())]
     if env in ('figure', 'figure*'):
         images = []
@@ -306,13 +325,12 @@ def _environment(env: str, content: str, verbatim: list[str]) -> list[Node]:
             return _caption_paragraph(content, "Figure")
         _float_caption(content, images[0])
         return [Paragraph(children=images)]
-    if env in ('table', 'table*'):
-        tab_content, tab_start, _ = _extract_environment(content, "tabular")
-        if tab_start == -1:
+    if env in _TABLE_FLOATS:
+        tables = _float_tables(content)
+        if not tables:
             return _caption_paragraph(content, "Table")
-        table = _parse_latex_table(tab_content.strip())
-        _float_caption(content, table)
-        return [table]
+        _float_caption(content, tables[0])
+        return tables
     if env == 'abstract':
         return [Abstract(children=_parse_blocks(content, verbatim))]
     if env == 'keywords':
@@ -321,6 +339,20 @@ def _environment(env: str, content: str, verbatim: list[str]) -> list[Node]:
         return [BlockQuote(children=_parse_blocks(content, verbatim))]
     # Layout environments (center, minipage, ...): their content
     return _parse_blocks(content, verbatim)
+
+
+def _float_tables(content: str) -> list[Table]:
+    """Every table in a float's content, also inside subtables or a ``\\resizebox``."""
+    tables = []
+    pos = 0
+    while (start := _TABLE_START.search(content, pos)) is not None:
+        body, begin, end = _extract_environment(content, start.group(1), start.start())
+        if begin == -1:  # unclosed: skip the \begin and read on
+            pos = start.end()
+            continue
+        tables.append(_parse_latex_table(body.strip()))
+        pos = end
+    return tables
 
 
 def _float_caption(content: str, target: Table | Image) -> None:
@@ -376,21 +408,87 @@ def _items(content: str) -> list[tuple[str | None, str]]:
     return items
 
 
-def _parse_latex_table(content: str) -> Table:
-    table = Table()
-    content = content.replace('\\toprule', '').replace('\\midrule', '').replace('\\bottomrule', '')
-    rows = re.split(r'\\\\(?:\[[^\]]*\])?', content)
+def _longtable_rows(content: str) -> str:
+    """The first head and the body of a longtable, without the repeated head and the feet."""
+    parts = _LONGTABLE_PART.split(content)
+    heads = dict(zip(parts[1::2], parts[0::2]))
+    return heads.get('endfirsthead', heads.get('endhead', '')) + parts[-1]
 
-    for i, row in enumerate(rows):
-        row = row.replace('\\hline', '').strip()
-        if not row:
+
+def _table_cells(content: str) -> list[list[str]]:
+    """The source of each cell, row by row.
+
+    Rows and cells only end outside groups and nested environments, so
+    ``\\multicolumn{2}{c}{a\\\\b}`` is one cell. ``\\&`` is a literal ampersand.
+    """
+    rows: list[list[str]] = [[]]
+    start = pos = depth = 0
+    while pos < len(content):
+        char = content[pos]
+        if char == '\\':
+            row_end = _TABLE_ROW_END.match(content, pos) if depth == 0 else None
+            boundary = _ENV_BOUNDARY.match(content, pos)
+            if row_end:
+                rows[-1].append(content[start:pos])
+                rows.append([])
+                start = pos = row_end.end()
+            elif boundary:
+                depth += 1 if boundary.group(1) == 'begin' else -1
+                pos = boundary.end()
+            else:
+                pos += 2
             continue
-        # A cell separator is an unescaped "&" (\& is a literal ampersand)
-        cells = [TableCell(children=parse_inline_latex(c.strip())) for c in re.split(r'(?<!\\)&', row)]
-        if i == 0:
-            table.headers = cells
-        else:
+        if char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+        elif char == '&' and depth == 0:
+            rows[-1].append(content[start:pos])
+            start = pos + 1
+        pos += 1
+    rows[-1].append(content[start:])
+    return rows
+
+
+def _spanned_cell(source: str) -> tuple[str, int]:
+    """A cell's source without ``\\multicolumn`` and ``\\multirow``, and the columns it spans."""
+    source = source.strip()
+    if source.startswith('\\multicolumn'):
+        args, _, end = extract_macro_args(source, '\\multicolumn')
+        if len(args) >= 3:
+            text, _ = _spanned_cell(args[2])
+            return text + source[end:], int(args[0]) if args[0].strip().isdigit() else 1
+    multirow = _MULTIROW.match(source)
+    if multirow and source.startswith('{', multirow.end()):
+        text, end = find_balanced_braces(source, multirow.end())
+        return _spanned_cell(text)[0] + source[end:], 1
+    return source, 1
+
+
+def _parse_latex_table(content: str) -> Table:
+    """A table from the content of its environment.
+
+    The first row is the header. As for HTML ``colspan``, the AST has no spans:
+    a ``\\multicolumn`` is its text and blank cells, a ``\\multirow`` its text.
+    """
+    table = Table()
+    content = _longtable_rows(content)
+    if '\\caption' in content:  # a longtable holds its own caption
+        _float_caption(content, table)
+        content = _strip_macro(_strip_macro(content, '\\caption'), '\\label')
+
+    for row in _table_cells(_TABLE_LAYOUT_COMMAND.sub('', content)):
+        if len(row) == 1 and not row[0].strip():
+            continue
+        cells: list[TableCell] = []
+        for source in row:
+            text, span = _spanned_cell(source)
+            cells.append(TableCell(children=parse_inline_latex(text.strip())))
+            cells.extend(TableCell() for _ in range(span - 1))
+        if table.headers or table.rows:
             table.rows.append(TableRow(cells=cells))
+        else:
+            table.headers = cells
     return table
 
 

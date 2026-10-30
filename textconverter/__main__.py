@@ -18,7 +18,7 @@ def cmd_convert(args: argparse.Namespace) -> None:
         args: Parsed argument namespace.
     """
     try:
-        save_to_file(
+        written = save_to_file(
             args.source,
             args.output,
             ConvertOptions(
@@ -32,7 +32,7 @@ def cmd_convert(args: argparse.Namespace) -> None:
             ),
             from_format=args.from_format,
         )
-        log_success(f"Saved to {args.output}")
+        log_success(f"Saved to {', '.join(written)}")
     except Exception as exc:
         log_error(f"Error: {exc}")
         sys.exit(1)

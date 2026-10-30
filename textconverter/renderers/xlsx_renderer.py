@@ -16,13 +16,13 @@ from dataclasses import dataclass, field
 
 import xlsxwriter
 
-from ..ast import CodeInline, Footnote, Image, LineBreak, Link, Node, TableCell, Text
+from ..ast import Footnote, Image, LineBreak, Link, Node, TableCell, Text
 from ..logger import log_warning
 from ..parsers._excel_formulas import expand
 from ..parsers.xlsx_parser import format_value
 from ._common import plain_text, table_grid, text_style
 from ._office import image_bytes
-from ._sheets import Sheet, collect_sheets
+from ._sheets import Sheet, collect_sheets, literal_text
 
 _PLAIN = (False, False, False, None)
 _MAX_WIDTH = 60
@@ -51,8 +51,8 @@ def _collect(nodes: list[Node], cell: _Cell, spans: list[tuple[str, int, int]]) 
             cell.runs.append((node.content, text_style(node)))
         elif isinstance(node, LineBreak):
             cell.runs.append(("\n", _PLAIN))
-        elif isinstance(node, CodeInline):
-            cell.runs.append((node.code, _PLAIN))
+        elif (literal := literal_text(node)) is not None:
+            cell.runs.append((literal, _PLAIN))
         elif isinstance(node, Footnote):
             cell.notes.append(plain_text(node.content).strip())
         elif isinstance(node, Image):

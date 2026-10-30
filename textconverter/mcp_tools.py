@@ -149,13 +149,13 @@ def register_tools(mcp: object) -> None:
                 (every page rendered and transcribed by the AI describer).
 
         Returns:
-            Confirmation message with the output path.
+            Confirmation message with the paths written.
         """
         def call() -> str:
             options = ConvertOptions(template=template, image_handling=image_handling,
                                      code_parsing=code_parsing, extract_html=extract_html,
                                      discard_links=discard_links, site_cleanup=site_cleanup,
                                      pdf_mode=pdf_mode)
-            save_to_file(source, output_path, options, from_format=from_format)
-            return f"Successfully saved to {output_path}"
+            written = save_to_file(source, output_path, options, from_format=from_format)
+            return f"Successfully saved to {', '.join(written)}"
         return _run(call)

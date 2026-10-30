@@ -179,6 +179,72 @@ class TestLatexFixes(BaseConverterTest):
         md = _md("\\begin{tabular}{ll}\nA \\& B & C \\\\\n1 & 2 \\\\\n\\end{tabular}")
         self.assertEqual(md.splitlines()[0], "| A & B | C |")
 
+    def _table(self, body: str) -> list[list[str]]:
+        from textconverter.ast import Table
+        from textconverter.renderers.csv_renderer import table_rows
+        (table,) = [node for node in _blocks(body) if isinstance(node, Table)]
+        return table_rows(table)
+
+    def test_every_table_environment_is_a_table(self):
+        for begin, end in (("\\begin{tabular}{ll}", "\\end{tabular}"),
+                           ("\\begin{tabular*}{\\textwidth}{ll}", "\\end{tabular*}"),
+                           ("\\begin{tabularx}{\\textwidth}{lX}", "\\end{tabularx}"),
+                           ("\\begin{tabulary}{\\textwidth}{LL}", "\\end{tabulary}"),
+                           ("\\begin{longtable}[c]{ll}", "\\end{longtable}"),
+                           ("\\begin{xltabular}{\\textwidth}{lX}", "\\end{xltabular}")):
+            with self.subTest(begin):
+                self.assertEqual(self._table(f"{begin}\nA & B \\\\\n1 & 2 \\\\\n{end}"), [["A", "B"], ["1", "2"]])
+                self.assertEqual(self._table(f"\\begin{{table}}\n{begin}\nA \\\\\n{end}\n\\end{{table}}"), [["A"]])
+
+    def test_rules_and_colors_leave_no_trace_in_the_cells(self):
+        rows = self._table("\\begin{tabular}{ll}\n\\toprule[1pt]\nA & B \\\\\n\\cmidrule(lr){1-2}\n"
+                           "\\rowcolor{gray!20} 1 & \\cellcolor[HTML]{EEEEEE}2 \\\\\n\\addlinespace[2pt]\n"
+                           "3 & 4 \\\\\n\\cline{1-2}\n\\specialrule{1pt}{2pt}{2pt}\n{\\bfseries 5} & 6 \\\\*\n"
+                           "\\hhline{|=|=|}\n7 & 8 \\tabularnewline\n\\bottomrule\n\\end{tabular}")
+        self.assertEqual(rows, [["A", "B"], ["1", "2"], ["3", "4"], ["5", "6"], ["7", "8"]])
+
+    def test_a_rule_keeps_the_group_that_follows_it(self):
+        self.assertEqual(self._table("\\begin{tabular}{l}\n\\hline {\\bfseries A} \\\\\n\\end{tabular}"), [["A"]])
+
+    def test_multicolumn_and_multirow_keep_their_text(self):
+        rows = self._table("\\begin{tabular}{lll}\n\\multicolumn{2}{c}{Span} & Z \\\\\n"
+                           "\\multirow{2}{*}{R} & 1 & 2 \\\\\n & 3 & 4 \\\\\n"
+                           "\\multirow[t]{2}{3cm}[1mm]{S} & 5 & 6 \\\\\n"
+                           "\\multicolumn{3}{l}{\\multirow{2}{*}{T}} \\\\\n\\end{tabular}")
+        self.assertEqual(rows, [["Span", "", "Z"], ["R", "1", "2"], ["", "3", "4"], ["S", "5", "6"], ["T", "", ""]])
+
+    def test_a_group_or_a_nested_table_does_not_end_a_cell(self):
+        rows = self._table("\\begin{tabular}{ll}\n\\multicolumn{1}{c}{a\\\\b} & c \\\\\n"
+                           "\\begin{tabular}{c}d\\\\e\\end{tabular} & f \\\\\n\\end{tabular}")
+        self.assertEqual(rows[0], ["a\nb", "c"])
+        self.assertEqual((len(rows), rows[1][1]), (2, "f"))
+
+    def test_every_table_of_a_float_is_kept_and_the_first_gets_the_caption(self):
+        from textconverter.ast import Table
+        from textconverter.renderers._common import plain_text
+        tables = [node for node in _blocks(
+            "\\begin{table}\\caption{Cap}\n\\begin{subtable}{.5\\textwidth}\\begin{tabular}{l}A \\\\\\end{tabular}"
+            "\\end{subtable}\n\\resizebox{\\textwidth}{!}{\\begin{tabular}{l}B \\\\\\end{tabular}}\n\\end{table}")
+            if isinstance(node, Table)]
+        self.assertEqual([plain_text(t.headers[0].children) for t in tables], ["A", "B"])
+        self.assertEqual((plain_text(tables[0].caption), tables[1].caption), ("Cap", []))
+
+    def test_sideways_float_gets_its_caption(self):
+        from textconverter.renderers._common import plain_text
+        (table,) = _blocks("\\begin{sidewaystable}\\caption{Cap}\\begin{tabular}{l}A \\\\\\end{tabular}\\end{sidewaystable}")
+        self.assertEqual(plain_text(table.caption), "Cap")
+
+    def test_longtable_repeated_head_and_feet_are_not_rows(self):
+        from textconverter.renderers._common import plain_text
+        (table,) = _blocks(
+            "\\begin{longtable}{ll}\n\\caption{Cap}\\label{t} \\\\\n\\hline A & B \\\\\n\\endfirsthead\n"
+            "\\caption[]{Cap, continued} \\\\\nA & B \\\\\n\\endhead\nnext page \\\\\n\\endfoot\nend \\\\\n"
+            "\\endlastfoot\n1 & 2 \\\\\n3 & 4 \\\\\n\\end{longtable}")
+        self.assertEqual((plain_text(table.caption), table.label), ("Cap", "t"))
+        self.assertEqual(self._table("\\begin{longtable}{ll}\nA & B \\\\\n\\endhead\nfoot \\\\\n\\endfoot\n"
+                                     "1 & 2 \\\\\n\\end{longtable}"), [["A", "B"], ["1", "2"]])
+        self.assertEqual(len(table.rows), 2)
+
     def test_percent_inside_verbatim_is_code(self):
         md = _md('\\begin{verbatim}\nprintf("%d", x); % not a comment\n\\end{verbatim}')
         self.assertIn('printf("%d", x); % not a comment', md)

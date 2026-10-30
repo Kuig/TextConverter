@@ -4,7 +4,7 @@ Multi-format document conversion tool with AI-powered image description and heur
 
 ## Overview
 
-TextConverter converts between PDF, Word (.docx), PowerPoint (.pptx), Excel (.xlsx), CSV, HTML, Markdown, LaTeX, and JSON formats (PDF output is printed from the light HTML theme; Word, PowerPoint and Excel output are written natively; CSV and Excel carry the tables only). It supports:
+TextConverter converts between PDF, Word (.docx), PowerPoint (.pptx), Excel (.xlsx), CSV, HTML, Markdown, LaTeX, and JSON formats (PDF output is printed from the light HTML theme; Word, PowerPoint and Excel output are written natively; CSV and Excel carry the tables only; in a PDF's text layer only tables drawn with ruled lines are found). It supports:
 - **URL Inputs**: Directly convert remote documents (both PDFs and HTML pages) from a remote URL.
 - **HTML Content Extraction**: A zero-dependency heuristic parser to clean up webpage boilerplates (like navigation headers, footers, script, and style elements) and isolate the primary content (`<main>`, `<article>`).
 - **Remote Image Downloading**: Automatically downloads and cleans remote images referenced in webpages, applying OS-safe filename sanitization and exact binary content-based deduplication to prevent duplicate copies on disk.

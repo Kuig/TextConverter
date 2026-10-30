@@ -5,6 +5,7 @@ Usage: python -m unittest discover -s tests -p "test_csv.py"
 from __future__ import annotations
 import os
 import tempfile
+from unittest.mock import patch
 
 from textconverter import ConvertOptions, convert, convert_text, save_to_file
 from textconverter.ast import Document, Footnote, Heading, Image, Table, TableCell, TableRow, Text
@@ -86,6 +87,29 @@ class TestCsvPipeline(BaseConverterTest):
         md = "# T\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
         self.assertEqual(convert_text(md, "markdown", "csv"), "a,b\r\n1,2\r\n")
 
+    def test_cells_keep_math_code_and_references(self):
+        md = ("| k | v |\n|---|---|\n| math | $x^2$ |\n| code | `abc` |\n| mix | val $5$ eur |\n"
+              "| ref | see \\ref{t} and \\cite{key} |\n")
+        self.assertEqual(convert_text(md, "markdown", "csv"),
+                         "k,v\r\nmath,$x^2$\r\ncode,abc\r\nmix,val $5$ eur\r\nref,see \\ref{t} and \\cite{key}\r\n")
+
+    def test_a_footnote_in_a_cell_stays_out(self):
+        md = "| k |\n|---|\n| a\\footnote{note `x`} |\n"
+        self.assertEqual(convert_text(md, "markdown", "csv"), "k\r\na\r\n")
+
+    def test_no_table_explains_the_cause(self):
+        with self.assertRaisesRegex(ValueError, "no table to write"):
+            convert_text("no table here", "markdown", "csv")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "x.pdf")
+            with patch("textconverter.api.parse_pdf", return_value=Document()):
+                with open(path, "wb"):
+                    pass
+                with self.assertRaisesRegex(ValueError, "pdf_mode 'raster'"):
+                    convert(path, "csv")
+                with self.assertRaisesRegex(ValueError, "did not transcribe"):
+                    convert(path, "csv", ConvertOptions(pdf_mode="raster"))
+
     def test_cp1252_file_is_read(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "x.csv")
@@ -99,13 +123,14 @@ class TestCsvPipeline(BaseConverterTest):
             src, out = os.path.join(tmp, "in.md"), os.path.join(tmp, "out.csv")
             with open(src, "w", encoding="utf-8") as f:
                 f.write(md)
-            save_to_file(src, out, ConvertOptions())
+            written = save_to_file(src, out, ConvertOptions())
             self.assertEqual(sorted(os.listdir(tmp)), ["in.md", "out_Costs.csv", "out_Sales.csv"])
+            self.assertEqual(sorted(os.path.basename(p) for p in written), ["out_Costs.csv", "out_Sales.csv"])
             with open(os.path.join(tmp, "out_Sales.csv"), "rb") as f:
                 self.assertEqual(f.read(), b"\xef\xbb\xbfa\r\n1\r\n")
 
     def test_save_single_table_keeps_the_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "out.csv")
-            save_to_file(str(INPUT_DIR / "Test_data.csv"), out)
+            self.assertEqual(save_to_file(str(INPUT_DIR / "Test_data.csv"), out), [out])
             self.assertEqual(os.listdir(tmp), ["out.csv"])

@@ -243,7 +243,7 @@ if st.button("Convert", type="primary", use_container_width=True):
                     site_cleanup=site_cleanup,
                     pdf_mode=pdf_mode,
                 )
-                save_to_file(source, output, options, config=_selected_config())
-                st.success(f"Saved to: `{output}`")
+                written = save_to_file(source, output, options, config=_selected_config())
+                st.success("Saved to: " + ", ".join(f"`{path}`" for path in written))
             except Exception as exc:
                 st.error(f"Error: {exc}")
