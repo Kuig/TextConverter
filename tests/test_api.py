@@ -80,7 +80,8 @@ class TestTextAndFiles(BaseConverterTest):
     def test_format_inference(self):
         self.assertEqual(infer_input_format("a/B.TEX"), "latex")
         self.assertEqual(infer_input_format("x.webp"), "image")
-        self.assertIsNone(infer_input_format("x.docx"))
+        self.assertEqual(infer_input_format("x.docx"), "docx")
+        self.assertIsNone(infer_input_format("x.doc"))
         self.assertEqual(infer_output_format("out.htm"), "html")
         self.assertIsNone(infer_output_format("out.txt"))
 

@@ -36,6 +36,8 @@ INPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
     Format("latex", (".tex", ".latex"), media_types=("application/x-tex", "text/x-tex")),
     Format("json", (".json",), media_types=("application/json",)),
     Format("pdf", (".pdf",), binary=True, media_types=("application/pdf",)),
+    Format("docx", (".docx",), binary=True, media_types=(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",)),
     Format("image", (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"), binary=True,
            media_types=("image/",)),
 )}
@@ -49,7 +51,7 @@ OUTPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
     Format("pdf", (".pdf",), binary=True, auto_images="embed"),
 )}
 
-# Output formats convert() returns as a string.
+# Output formats convert() returns as a string (the binary ones go through save_to_file()).
 TEXT_OUTPUT_FORMATS = tuple(name for name, f in OUTPUT_FORMATS.items() if not f.binary)
 
 # The image handling modes offered by the CLI, the GUI and the MCP tools.

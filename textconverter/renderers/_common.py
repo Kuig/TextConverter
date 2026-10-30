@@ -1,11 +1,22 @@
-"""Helpers shared by the Markdown, HTML and LaTeX renderers."""
+"""Helpers shared by the Markdown, HTML, LaTeX and Word renderers."""
 from __future__ import annotations
 
 import re
+import urllib.parse
 from collections.abc import Callable
 from dataclasses import replace
 
 from ..ast import Citation, Footnote, Image, Label, Link, Node, Paragraph, Reference, Table, TableCell, Text, walk
+
+
+# Link schemes that run code when clicked; such links are rendered inert.
+_UNSAFE_SCHEMES = ("javascript", "vbscript", "data")
+
+
+def safe_href(url: str) -> str:
+    """The URL, or "#" when its scheme would run code (``javascript:`` and the like)."""
+    scheme = urllib.parse.urlparse(url.strip()).scheme.lower()
+    return "#" if scheme in _UNSAFE_SCHEMES else url
 
 
 def plain_text(nodes: list[Node]) -> str:

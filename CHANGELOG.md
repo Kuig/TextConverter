@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Word input: `.docx` files, local or downloaded, are read into the AST (`python-docx` is now a
+  dependency). Styles are recognized by name, so documents in any Word language work. Read:
+  title and metadata, headings, formatting, links, nested bulleted and numbered lists (mixed
+  kinds per level), quotes, code (by font or style), tables (header row, merged cells), captions
+  (the `SEQ` label and number are dropped), footnotes and endnotes, images (extracted like PDF
+  images), text boxes (as quotes) and equations (Office Math is translated to LaTeX). What the
+  AST cannot hold (underline, highlight, headers and footers, shapes) is dropped with a single
+  warning.
+- The Windows context menu offers the conversions of a `.docx` file.
+
+### Changed
+
+- `lift_macros` (reading reference macros written as text) moved from the HTML parser to the
+  shared `parsers/_latex_macros.py`; `images.store_image` and `renderers/_common.safe_href` are
+  now public helpers.
+
 ## [0.3.1] - 2026-10-29
 
 ### Added

@@ -5,7 +5,9 @@ import pathlib
 import re
 import tempfile
 import urllib.parse
+from collections.abc import Callable
 from dataclasses import replace
+from typing import Any
 
 from . import _net
 from .ast import Document
@@ -16,6 +18,7 @@ from .parsers.markdown_parser import parse_markdown
 from .parsers.html_parser import parse_html
 from .parsers.latex_parser import parse_latex
 from .parsers.pdf_parser import parse_pdf
+from .parsers.docx_parser import parse_docx
 from .parsers.image_parser import parse_image
 from .parsers.json_parser import parse_json
 
@@ -34,6 +37,9 @@ from .options import ConvertOptions
 
 # HTML template that PDF output is printed from.
 PDF_TEMPLATE = "light"
+
+# Turns the transformed document into the conversion's result (a string for the text formats).
+Render = Callable[[Document], Any]
 
 
 def _is_url(source: str) -> bool:
@@ -63,6 +69,9 @@ def _parse(
             output_dir=output_dir, image_dir_name=image_dir_name,
             write_images=options.image_handling != "discard",
         )
+    if from_format == "docx":
+        return parse_docx(path, output_dir=output_dir, image_dir_name=image_dir_name,
+                          write_images=options.image_handling != "discard")
     if from_format == "image":
         return parse_image(path, config=config)
     if from_format == "markdown":
@@ -85,6 +94,11 @@ _RENDERERS = {
     "latex": lambda doc, options: render_latex(doc),
     "json": lambda doc, options: render_json(doc),
 }
+
+
+def _text_render(to_format: str, options: ConvertOptions) -> Render:
+    """The render step of ``convert``: the document as text in ``to_format``."""
+    return lambda doc: _RENDERERS[to_format](doc, options)
 
 
 def _image_handling(options: ConvertOptions, to_format: str) -> str:
@@ -111,12 +125,12 @@ def _image_folder(handling: str, output_dir: str | None, image_dir_name: str | N
 def _doc_dir(from_format: str, output_dir: str | None, source_path: str | None) -> str:
     """Directory the parsed document's relative image paths resolve against.
 
-    The PDF parser writes its images under ``output_dir`` (or the current
-    directory); an image source path is relative to the current directory;
+    The PDF and Word parsers write their images under ``output_dir`` (or the
+    current directory); an image source path is relative to the current directory;
     a text source references images next to the source file; text given
     directly resolves against the current directory.
     """
-    if from_format == "pdf":
+    if from_format in ("pdf", "docx"):
         return output_dir or os.getcwd()
     if source_path and from_format != "image":
         return os.path.dirname(os.path.abspath(source_path))
@@ -135,8 +149,9 @@ def _transform_and_render(
     image_dir_name: str | None,
     source_url: str | None,
     source_path: str | None,
-) -> str:
-    """Apply the image and link passes to a parsed document, then render it.
+    render: Render,
+) -> Any:
+    """Apply the image and link passes to a parsed document, then render it with ``render``.
 
     Local image paths are absolute while the passes run, so the download
     folder, the embedder and the AI describer agree on every file; the paths
@@ -170,7 +185,7 @@ def _transform_and_render(
 
     if to_format != "json":
         lower_image_descriptions(doc)
-    return _RENDERERS[to_format](doc, options)
+    return render(doc)
 
 
 def _check_formats(from_format: str | None, to_format: str) -> None:
@@ -207,7 +222,7 @@ def convert_text(
 
     Raises:
         ValueError: If a format is unknown, or ``from_format`` needs a file
-            (PDF, image).
+            (PDF, Word, image).
         ImportError: If the image handling needs ``unified_ai_client`` and it
             is not installed.
     """
@@ -220,7 +235,8 @@ def convert_text(
     with _image_folder(_image_handling(options, to_format), output_dir, image_dir_name) as (parent, name):
         return _transform_and_render(doc, from_format, to_format, options, config,
                                      output_dir=output_dir, image_parent=parent, image_dir_name=name,
-                                     source_url=None, source_path=None)
+                                     source_url=None, source_path=None,
+                                     render=_text_render(to_format, options))
 
 
 def convert(
@@ -261,10 +277,30 @@ def convert(
     """
     _check_formats(from_format, to_format)
     options = options or ConvertOptions()
-    config = config or load_config()
+    return _convert(source, to_format, options, config or load_config(), from_format=from_format,
+                    output_dir=output_dir, image_dir_name=image_dir_name,
+                    render=_text_render(to_format, options))
+
+
+def _convert(
+    source: str,
+    to_format: str,
+    options: ConvertOptions,
+    config: AppConfig,
+    *,
+    from_format: str | None,
+    output_dir: str | None,
+    image_dir_name: str | None,
+    render: Render,
+) -> Any:
+    """Parse a file or URL, transform it and pass the document to ``render`` (what ``convert`` does).
+
+    ``render`` runs while the conversion's temporary image folder still
+    exists, so a renderer can read the images from disk.
+    """
     if _is_url(source):
         return _convert_url(source, from_format, to_format, options, config,
-                            output_dir=output_dir, image_dir_name=image_dir_name)
+                            output_dir=output_dir, image_dir_name=image_dir_name, render=render)
 
     if not os.path.isfile(source):
         raise FileNotFoundError(f"Source file not found: {source}")
@@ -279,7 +315,7 @@ def convert(
             doc = _parse(from_format, options, config, text=_read_text(source))
         return _transform_and_render(doc, from_format, to_format, options, config,
                                      output_dir=output_dir, image_parent=parent, image_dir_name=name,
-                                     source_url=None, source_path=source)
+                                     source_url=None, source_path=source, render=render)
 
 
 _META_CHARSET = re.compile(rb'<meta[^>]+charset\s*=\s*["\']?([\w.:-]+)', re.IGNORECASE)
@@ -314,7 +350,8 @@ def _convert_url(
     *,
     output_dir: str | None,
     image_dir_name: str | None,
-) -> str:
+    render: Render,
+) -> Any:
     """Download ``url`` and convert it; binary formats go through a temporary file."""
     log_action(f"Downloading remote source: {url}")
     download = _net.fetch(url, timeout=30)
@@ -330,7 +367,7 @@ def _convert_url(
         with folder as (parent, name):
             return _transform_and_render(doc, from_format, to_format, options, config,
                                          output_dir=output_dir, image_parent=parent, image_dir_name=name,
-                                         source_url=url, source_path=None)
+                                         source_url=url, source_path=None, render=render)
 
     ext = os.path.splitext(url_path)[1].lower()
     fd, temp_path = tempfile.mkstemp(suffix=ext if ext in fmt.extensions else fmt.extensions[0])
@@ -342,7 +379,7 @@ def _convert_url(
                          output_dir=parent, image_dir_name=name, source_url=url)
             return _transform_and_render(doc, from_format, to_format, options, config,
                                          output_dir=output_dir, image_parent=parent, image_dir_name=name,
-                                         source_url=url, source_path=temp_path)
+                                         source_url=url, source_path=temp_path, render=render)
     finally:
         try:
             os.remove(temp_path)

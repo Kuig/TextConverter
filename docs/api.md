@@ -51,7 +51,7 @@ Convert a file or a remote URL and return the result as a string.
 
 - `source`: A file path, or an `http://`/`https://` URL. A path that does not exist raises `FileNotFoundError`.
 - `to_format`: `"markdown"`, `"html"`, `"latex"` or `"json"` (PDF output goes through `save_to_file()`).
-- `from_format`: `"markdown"`, `"html"`, `"latex"`, `"json"`, `"pdf"` or `"image"`. Inferred when omitted: from the file extension (`.txt` is read as Markdown); for a URL, from the response's `Content-Type`, then the URL's extension, else HTML. A downloaded text page is decoded with the charset of its `Content-Type` or `<meta charset>`, else UTF-8.
+- `from_format`: `"markdown"`, `"html"`, `"latex"`, `"json"`, `"pdf"`, `"docx"` or `"image"`. Inferred when omitted: from the file extension (`.txt` is read as Markdown); for a URL, from the response's `Content-Type`, then the URL's extension, else HTML. A downloaded text page is decoded with the charset of its `Content-Type` or `<meta charset>`, else UTF-8.
 - A URL that cannot be downloaded raises `textconverter._net.DownloadError` (a `RuntimeError`).
 - `output_dir` / `image_dir_name`: Base directory and subdirectory name used to write downloaded and extracted images. Image paths in the result are relative to `output_dir` (to the source's folder when it is None), so local images referenced by a source in another folder still resolve.
 - `config`: A `textconverter.config.AppConfig` to use instead of `config.json` (e.g. `load_config()` with the AI provider or models changed).

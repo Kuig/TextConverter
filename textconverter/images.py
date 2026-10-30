@@ -91,7 +91,7 @@ def _same_content(path: str, data: bytes) -> bool:
         return False
 
 
-def _store(data: bytes, target_dir: str, basename: str) -> str:
+def store_image(data: bytes, target_dir: str, basename: str) -> str:
     """Write ``data`` to ``target_dir`` and return the path.
 
     An existing file with the same content is reused; one with different
@@ -176,7 +176,7 @@ class ImagePaths:
             basename = _with_image_extension(_sanitize_filename(_extract_image_filename(url)),
                                              download.content_type)
             try:
-                self._rewrite(node, _store(download.data, target_dir, basename))
+                self._rewrite(node, store_image(download.data, target_dir, basename))
             except OSError as exc:
                 log_warning(f"Could not save image {url}: {exc}")
                 self._rewrite(node, url)

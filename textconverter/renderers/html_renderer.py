@@ -1,17 +1,13 @@
 from __future__ import annotations
 import html
-import urllib.parse
 
 from ..ast import (
     Abstract, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote, Heading,
     HorizontalRule, Image, Label, LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Reference,
     Table, TableCell, Text,
 )
-from ._common import figure_image, latex_reference_macro, plain_text, table_grid
+from ._common import figure_image, latex_reference_macro, plain_text, safe_href, table_grid
 from .templates import get_template
-
-# Link schemes that run code when clicked; such links are rendered inert.
-_UNSAFE_SCHEMES = ("javascript", "vbscript", "data")
 
 
 def render_html(doc: Document, template_name: str = "plain") -> str:
@@ -49,12 +45,6 @@ def _metadata(doc: Document) -> str:
     fields = [(doc.title, 'h1', 'tc-title'), (doc.author, 'p', 'tc-author'), (doc.date, 'p', 'tc-date')]
     lines = [f'<{tag} class="{cls}">{_text_lines(nodes)}</{tag}>' for nodes, tag, cls in fields if nodes]
     return '<div class="tc-meta">\n' + '\n'.join(lines) + '\n</div>' if lines else ""
-
-
-def _safe_href(url: str) -> str:
-    """The URL, or "#" when its scheme would run code (``javascript:`` and the like)."""
-    scheme = urllib.parse.urlparse(url.strip()).scheme.lower()
-    return "#" if scheme in _UNSAFE_SCHEMES else url
 
 
 def _heading(node: Heading) -> str:
@@ -152,7 +142,7 @@ def _text(node: Text) -> str:
 
 def _link(node: Link) -> str:
     title_str = f' title="{html.escape(node.title)}"' if node.title else ''
-    return f'<a href="{html.escape(_safe_href(node.url))}"{title_str}>{_inline(node.content)}</a>'
+    return f'<a href="{html.escape(safe_href(node.url))}"{title_str}>{_inline(node.content)}</a>'
 
 
 def _image(node: Image) -> str:

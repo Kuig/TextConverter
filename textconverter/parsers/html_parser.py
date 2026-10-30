@@ -9,7 +9,7 @@ from ..ast import (
     HorizontalRule, Image, Label, LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Reference,
     Table, TableCell, TableRow, Text, abstract_from, child_lists, walk,
 )
-from ._latex_macros import REFERENCE_MACROS, parse_reference_macro
+from ._latex_macros import REFERENCE_MACRO, lift_macros, parse_reference_macro
 from ._math import strip_displaystyle, unwrap_math
 
 if TYPE_CHECKING:
@@ -57,7 +57,6 @@ _WHITESPACE = re.compile(r'[ \t\n\r\f]+')
 _INLINE_NODES = (Text, Link, Image, CodeInline, LineBreak, Equation, Footnote, Citation, Reference, Label)
 # The classes TextConverter's HTML output marks its own constructs with.
 _META_CLASSES = {'tc-title': 'title', 'tc-author': 'author', 'tc-date': 'date'}
-_REFERENCE_MACRO = re.compile(rf'\\(?:{"|".join(REFERENCE_MACROS)})\*?(?![a-zA-Z])')
 
 # Containers whose children are blocks: inline content gets an anonymous paragraph.
 _BLOCK_CONTAINERS = (Document, BlockQuote, ListItem, _CaptionHolder)
@@ -704,13 +703,13 @@ class ASTHTMLParser(HTMLParser):
             # TextConverter 0.3.0 wrote reference macros as bare text
             for node in list(walk(self.doc)):
                 for lst in child_lists(node):
-                    lst[:] = _lift_macros(lst)
+                    lst[:] = lift_macros(lst)
 
 
 def _reference_node(raw: str) -> Node:
     """The citation, reference or label a ``tc-ref`` span holds; its text when it is not one."""
     raw = raw.strip()
-    m = _REFERENCE_MACRO.match(raw)
+    m = REFERENCE_MACRO.match(raw)
     if m:
         node, end = parse_reference_macro(raw, 0, m.group(0), lambda arg: [Text(content=arg)])
         if node is not None and end == len(raw):
@@ -725,83 +724,6 @@ def _strip_footnote_frame(content: list[Node]) -> None:
     if content and isinstance(content[-1], Text) and content[-1].content.rstrip().endswith('}'):
         content[-1].content = content[-1].content.rstrip()[:-1]
     content[:] = [n for n in content if not (isinstance(n, Text) and not n.content)]
-
-
-def _lift_macros(nodes: list[Node]) -> list[Node]:
-    """Turn reference macros written as text (``\\cite{a}``, ``\\footnote{...}``) into nodes.
-
-    A footnote's content may span several formatted text nodes; a macro that
-    does not parse stays text.
-    """
-    out: list[Node] = []
-    i = 0
-    while i < len(nodes):
-        node = nodes[i]
-        m = _REFERENCE_MACRO.search(node.content) if isinstance(node, Text) else None
-        if m is None:
-            out.append(node)
-            i += 1
-            continue
-        if m.start():
-            out.append(replace(node, content=node.content[:m.start()]))
-        rest = node.content[m.start():]
-        name = m.group(0)
-        if name.rstrip('*') == '\\footnote':
-            lifted = _lift_footnote(nodes, i, replace(node, content=rest[len(name):]))
-            if lifted is not None:
-                footnote, i, tail = lifted
-                out.append(footnote)
-                if tail is not None:
-                    nodes = [*nodes[:i], tail, *nodes[i:]]
-                continue
-        else:
-            macro, end = parse_reference_macro(rest, 0, name, lambda arg: [Text(content=arg)])
-            if macro is not None:
-                out.append(macro)
-                nodes = [*nodes[:i], replace(node, content=rest[end:]), *nodes[i + 1:]]
-                if not rest[end:]:
-                    i += 1
-                continue
-        out.append(replace(node, content=name))
-        nodes = [*nodes[:i], replace(node, content=rest[len(name):]), *nodes[i + 1:]]
-        if not rest[len(name):]:
-            i += 1
-    return out
-
-
-def _lift_footnote(nodes: list[Node], i: int, first: Text) -> tuple[Footnote, int, Text | None] | None:
-    """Read ``{...}`` from ``first`` (the text after ``\\footnote``) and the nodes after ``nodes[i]``.
-
-    Returns ``(footnote, index of the next unread node, the text left after the
-    closing brace)``, or None when the braces are not balanced.
-    """
-    if not first.content.startswith('{'):
-        return None
-    content: list[Node] = []
-    depth = 0
-    current: Node = first
-    j = i
-    while True:
-        if isinstance(current, Text):
-            text = current.content
-            for k, ch in enumerate(text):
-                depth += {'{': 1, '}': -1}.get(ch, 0)
-                if depth == 0:
-                    inner = text[1:k] if current is first else text[:k]
-                    if inner:
-                        content.append(replace(current, content=inner))
-                    tail = text[k + 1:]
-                    return Footnote(content=_lift_macros(content)), j + 1, (
-                        replace(current, content=tail) if tail else None)
-            inner = text[1:] if current is first else text
-            if inner:
-                content.append(replace(current, content=inner))
-        else:
-            content.append(current)
-        j += 1
-        if j >= len(nodes):
-            return None
-        current = nodes[j]
 
 
 _NOISE = frozenset(['script', 'style', 'nav', 'footer', 'header',

@@ -1,16 +1,19 @@
-"""LaTeX macro parsing shared by the LaTeX and Markdown parsers.
+"""LaTeX macro parsing shared by the LaTeX, Markdown, HTML and Word parsers.
 
-Markdown sources keep footnotes, citations and cross-references as LaTeX
-macros (the renderers write them that way), so both parsers read them here.
+Markdown, HTML and Word sources keep footnotes, citations and cross-references
+as LaTeX macros (the renderers write them that way), so the parsers read them here.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
+from dataclasses import replace
 
-from ..ast import Citation, Footnote, Label, Node, Reference
+from ..ast import Citation, Footnote, Label, Node, Reference, Text
 
 # Macros kept as AST nodes; a trailing "*" (\citet*) is accepted and ignored.
 REFERENCE_MACROS = ("footnote", "cite", "citet", "citep", "ref", "label")
+REFERENCE_MACRO = re.compile(rf'\\(?:{"|".join(REFERENCE_MACROS)})\*?(?![a-zA-Z])')
 
 
 def find_balanced_braces(text: str, start_pos: int) -> tuple[str, int]:
@@ -128,3 +131,80 @@ def parse_reference_macro(
     if base == "ref":
         return Reference(label=args[0].strip()), end
     return Label(name=args[0].strip()), end
+
+
+def lift_macros(nodes: list[Node]) -> list[Node]:
+    """Turn reference macros written as text (``\\cite{a}``, ``\\footnote{...}``) into nodes.
+
+    A footnote's content may span several formatted text nodes; a macro that
+    does not parse stays text.
+    """
+    out: list[Node] = []
+    i = 0
+    while i < len(nodes):
+        node = nodes[i]
+        m = REFERENCE_MACRO.search(node.content) if isinstance(node, Text) else None
+        if m is None:
+            out.append(node)
+            i += 1
+            continue
+        if m.start():
+            out.append(replace(node, content=node.content[:m.start()]))
+        rest = node.content[m.start():]
+        name = m.group(0)
+        if name.rstrip('*') == '\\footnote':
+            lifted = _lift_footnote(nodes, i, replace(node, content=rest[len(name):]))
+            if lifted is not None:
+                footnote, i, tail = lifted
+                out.append(footnote)
+                if tail is not None:
+                    nodes = [*nodes[:i], tail, *nodes[i:]]
+                continue
+        else:
+            macro, end = parse_reference_macro(rest, 0, name, lambda arg: [Text(content=arg)])
+            if macro is not None:
+                out.append(macro)
+                nodes = [*nodes[:i], replace(node, content=rest[end:]), *nodes[i + 1:]]
+                if not rest[end:]:
+                    i += 1
+                continue
+        out.append(replace(node, content=name))
+        nodes = [*nodes[:i], replace(node, content=rest[len(name):]), *nodes[i + 1:]]
+        if not rest[len(name):]:
+            i += 1
+    return out
+
+
+def _lift_footnote(nodes: list[Node], i: int, first: Text) -> tuple[Footnote, int, Text | None] | None:
+    """Read ``{...}`` from ``first`` (the text after ``\\footnote``) and the nodes after ``nodes[i]``.
+
+    Returns ``(footnote, index of the next unread node, the text left after the
+    closing brace)``, or None when the braces are not balanced.
+    """
+    if not first.content.startswith('{'):
+        return None
+    content: list[Node] = []
+    depth = 0
+    current: Node = first
+    j = i
+    while True:
+        if isinstance(current, Text):
+            text = current.content
+            for k, ch in enumerate(text):
+                depth += {'{': 1, '}': -1}.get(ch, 0)
+                if depth == 0:
+                    inner = text[1:k] if current is first else text[:k]
+                    if inner:
+                        content.append(replace(current, content=inner))
+                    tail = text[k + 1:]
+                    return Footnote(content=lift_macros(content)), j + 1, (
+                        replace(current, content=tail) if tail else None)
+            inner = text[1:] if current is first else text
+            if inner:
+                content.append(replace(current, content=inner))
+        else:
+            content.append(current)
+        j += 1
+        if j >= len(nodes):
+            return None
+        current = nodes[j]
