@@ -4,7 +4,7 @@ Multi-format document conversion tool with AI-powered image description and heur
 
 ## Overview
 
-TextConverter converts between PDF, Word (.docx), HTML, Markdown, LaTeX, and JSON formats (PDF output is printed from the light HTML theme). It supports:
+TextConverter converts between PDF, Word (.docx), HTML, Markdown, LaTeX, and JSON formats (PDF output is printed from the light HTML theme; Word output is written natively). It supports:
 - **URL Inputs**: Directly convert remote documents (both PDFs and HTML pages) from a remote URL.
 - **HTML Content Extraction**: A zero-dependency heuristic parser to clean up webpage boilerplates (like navigation headers, footers, script, and style elements) and isolate the primary content (`<main>`, `<article>`).
 - **Remote Image Downloading**: Automatically downloads and cleans remote images referenced in webpages, applying OS-safe filename sanitization and exact binary content-based deduplication to prevent duplicate copies on disk.
@@ -107,6 +107,9 @@ textconverter convert https://en.wikipedia.org/wiki/Modena DocsOutput/modena.md 
 # Scanned PDF: render every page and transcribe it with AI (classification, then OCR or description)
 textconverter convert DocsInput/scan.pdf DocsOutput/scan.md --pdf-mode raster
 
+# Any source to Word (images embedded, equations kept as LaTeX text, real footnotes)
+textconverter convert DocsInput/document.md DocsOutput/document.docx
+
 # Any source to PDF (printed with Edge/Chrome when installed, else a built-in renderer)
 textconverter convert DocsInput/document.md DocsOutput/document.pdf
 
@@ -167,6 +170,7 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
 * **Extension Filtering**: Only shows relevant options:
   * **PDFs**: Shows all output options (.md, .tex, light/dark HTML), each also in a "(raster)" variant that renders the pages and transcribes them with AI (`--pdf-mode raster`), for scanned PDFs.
   * **Word documents** (`.docx`): Convert to Markdown, LaTeX, light/dark HTML and PDF.
+  * **Word output**: Every other source type also offers "to Word (.docx)".
   * **PDF output**: Every other source type also offers "to PDF (.pdf)" (and, for HTML, its main-content variant).
   * **Markdown / LaTeX**: Excludes self-conversion (e.g., no "convert to .md" option for `.md` files).
   * **HTML / HTM**: Includes duplicate options for "main content" extraction (`--extract-html` to filter out boilerplate).

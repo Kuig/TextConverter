@@ -86,7 +86,7 @@ def register_tools(mcp: object) -> None:
         Args:
             source: File path, or remote URL (http:// or https://).
             to_format: Target format: 'markdown', 'html', 'latex' or 'json'.
-            from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'image').
+            from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'docx', 'image').
                 Inferred from the extension (for a URL, from its Content-Type) if None.
             template: HTML template: 'plain', 'light' or 'dark'.
             image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
@@ -133,10 +133,10 @@ def register_tools(mcp: object) -> None:
             source: File path, or remote URL (http:// or https://). Text is not
                 accepted: use textconverter_convert_text for it.
             output_path: Output file path; its extension (.md, .html, .tex, .json,
-                .pdf) sets the format. Images go to '<output name>_images' next to it.
-            from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'image').
+                .pdf, .docx) sets the format. Images go to '<output name>_images' next to it.
+            from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'docx', 'image').
                 Inferred from the extension (for a URL, from its Content-Type) if None.
-            template: HTML template: 'plain', 'light' or 'dark' (ignored for .pdf).
+            template: HTML template: 'plain', 'light' or 'dark' (ignored for .pdf and .docx).
             image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
             code_parsing: Fence code blocks found by heuristic detection (Markdown
                 sources, PDF sources in text mode).

@@ -17,7 +17,7 @@ from dataclasses import dataclass, field, replace
 from lxml import etree
 
 from ..ast import (
-    Abstract, BlockQuote, CodeBlock, CodeInline, Document, Equation, Footnote, Heading, Image, Label,
+    Abstract, BlockQuote, CodeBlock, CodeInline, Document, Equation, Footnote, Heading, HorizontalRule, Image, Label,
     LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Table, TableCell, TableRow, Text,
     abstract_from,
 )
@@ -317,7 +317,7 @@ class _Reader:
                 flow.close()
                 self._title = nodes
                 flow.out.extend(ctx.extra)
-            elif lowered == "equation" and (code := self._plain_text(el).strip()):
+            elif lowered == "equation display" and (code := self._plain_text(el).strip()):
                 body, env = split_math_env(code)
                 flow.leaf(Equation(code=body, inline=False, env=env))
             elif _HEADING.match(name) and nodes:
@@ -332,6 +332,8 @@ class _Reader:
                 flow.leaf(Paragraph(children=nodes), ctx.extra)
             else:
                 flow.close()
+                if el.find(f"{_w('pPr')}/{_w('pBdr')}/{_w('bottom')}") is not None:
+                    flow.out.append(HorizontalRule())
                 flow.out.extend(ctx.extra)
         flow.close()
         return flow.out
@@ -387,6 +389,9 @@ class _Reader:
         if rows and self._has_header(tbl, rows[0][0]):
             table.headers = rows[0][1]
             rows = rows[1:]
+            for cell in table.headers:
+                # A header is already set apart; its bold text would be bold twice.
+                cell.children = [replace(n, bold=False) if isinstance(n, Text) else n for n in cell.children]
         table.rows = [TableRow(cells=cells) for _, cells in rows]
         return table
 
@@ -503,7 +508,8 @@ class _Reader:
         fmt.strike = _flag(props.find(_w("strike"))) or _flag(props.find(_w("dstrike")))
         fmt.script = {"superscript": "sup", "subscript": "sub"}.get(_val(props.find(_w("vertAlign")), ""))
         underline = props.find(_w("u"))
-        fmt.underline = underline is not None and _val(underline, "single") != "none"
+        fmt.underline = (underline is not None and _val(underline, "single") != "none"
+                         and run.getparent().tag != _w("hyperlink"))
         fmt.highlight = _val(props.find(_w("highlight")), "none") != "none"
         fonts = props.find(_w("rFonts"))
         if fonts is not None:
@@ -757,7 +763,7 @@ class _Flow:
             if text and isinstance(text[0], Text):
                 text[0] = replace(text[0], content=_LABEL_SEPARATOR.sub("", text[0].content, count=1))
         label = next((n.name for n in text if isinstance(n, Label)), None)
-        text = [n for n in text if not isinstance(n, Label)]
+        text = self.reader._tidy([n for n in text if not isinstance(n, Label)])
         previous = self.out[-1] if self.out else None
         figure = self._lone_image(previous)
         if before_table:

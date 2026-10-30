@@ -387,6 +387,32 @@ def _convert_url(
             log_warning(f"Could not remove temporary file {temp_path}: {exc}")
 
 
+def _save_docx(
+    source: str,
+    output_path: str,
+    options: ConvertOptions,
+    from_format: str | None,
+    config: AppConfig | None,
+) -> None:
+    """Write the converted ``source`` as a Word file; the file appears only once complete."""
+    from .renderers.docx_renderer import render_docx
+    if from_format is not None:
+        check_choice("from_format", from_format, INPUT_FORMATS)
+    handling = "embed" if options.image_handling in ("auto", "link") else options.image_handling
+    docx_options = replace(options, image_handling=handling)
+    directory = os.path.dirname(os.path.abspath(output_path))
+    fd, temp_path = tempfile.mkstemp(suffix=".docx.tmp", dir=directory)
+    os.close(fd)
+    try:
+        _convert(source, "docx", docx_options, config or load_config(), from_format=from_format,
+                 output_dir=directory, image_dir_name=f"{pathlib.Path(output_path).stem}_images",
+                 render=lambda doc: render_docx(doc, temp_path, base_dir=directory))
+        os.replace(temp_path, output_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 def save_to_file(
     source: str,
     output_path: str,
@@ -399,11 +425,13 @@ def save_to_file(
 
     The output format comes from the extension of ``output_path``; images are
     written to a ``<output stem>_images`` folder next to it, unless they are
-    embedded (``embed``, or ``auto`` for HTML), which leaves no folder. A ``.pdf`` output
+    embedded (``embed``, or ``auto`` for HTML and Word), which leaves no folder. A ``.pdf`` output
     is the HTML rendering with the light template, printed by
     ``renderers.pdf_renderer.render_pdf``: ``options.template`` is ignored and
     images are embedded (``auto`` and ``link`` both act as ``embed``), so the
-    PDF is self-contained and no image folder is left next to it.
+    PDF is self-contained and no image folder is left next to it. A ``.docx``
+    output is the document written by ``renderers.docx_renderer.render_docx``,
+    with the same image rules and no template.
 
     Args:
         source: A file path, or an ``http://``/``https://`` URL.
@@ -426,6 +454,9 @@ def save_to_file(
         raise ValueError(f"The output path is the source file itself: {output_path}")
 
     out_path = pathlib.Path(output_path)
+    if to_format == "docx":
+        _save_docx(source, output_path, options, from_format, config)
+        return
     if to_format == "pdf":
         from .renderers.pdf_renderer import render_pdf
         handling = "embed" if options.image_handling in ("auto", "link") else options.image_handling

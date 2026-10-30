@@ -49,6 +49,8 @@ OUTPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
     Format("json", (".json",), auto_images="auto_latex"),
     # Written only by save_to_file(): the HTML rendering, printed.
     Format("pdf", (".pdf",), binary=True, auto_images="embed"),
+    # Written only by save_to_file(): the AST rendered straight to a Word file.
+    Format("docx", (".docx",), binary=True, auto_images="embed"),
 )}
 
 # Output formats convert() returns as a string (the binary ones go through save_to_file()).
