@@ -383,11 +383,26 @@ class TestDocxRenderer(DocxOutputTest):
             xml = z.read("word/document.xml").decode("utf-8")
         self.assertEqual(xml.count("SEQ Table"), 2)
 
-    def test_equations_stay_latex(self):
-        doc = self._roundtrip("Inline $a_1+\\frac{b}{c}$ here.\n\n$$\\begin{align}x&=1\\end{align}$$\n")
+    def test_equations_are_native_word_equations(self):
+        source = "Inline $a_1+\\frac{b}{c}$ here.\n\n$$\\begin{align}x&=1\\end{align}$$\n"
+        out = self._save(source)
+        with zipfile.ZipFile(out) as z:
+            xml = z.read("word/document.xml").decode("utf-8")
+        self.assertIn("<m:oMathPara", xml)
+        self.assertEqual(xml.count("<m:oMath>") + xml.count("<m:oMath "), 2)
+        self.assertNotIn("a_1", xml, "the formula is structure, not LaTeX text")
+        doc = self._roundtrip(source)
         inline, display = _of(doc, Equation)
         self.assertEqual((inline.code, inline.inline), ("a_1+\\frac{b}{c}", True))
         self.assertEqual((display.code, display.env, display.inline), ("x&=1", "align", False))
+
+    def test_a_formula_that_cannot_be_translated_stays_latex_text(self):
+        with patch("textconverter.renderers.docx_renderer.log_warning") as warn:
+            doc = self._roundtrip("Odd $\\unknowncmd{x}$ and\n\n$$\\unknowncmd{y}$$\n")
+        self.assertEqual(warn.call_count, 2)
+        inline, display = _of(doc, Equation)
+        self.assertEqual((inline.code, inline.inline), ("\\unknowncmd{x}", True))
+        self.assertEqual((display.code, display.inline), ("\\unknowncmd{y}", False))
 
     def test_footnotes_are_native_and_references_stay_macros(self):
         out = self._save("A claim[^1] and \\cite{key}, see \\ref{sec:a}.\n\n[^1]: The **note** text.")
@@ -444,3 +459,37 @@ class TestDocxOutputThroughTheApi(BaseConverterTest):
     def test_the_source_is_never_overwritten(self):
         with self.assertRaisesRegex(ValueError, "source file itself"):
             textconverter.save_to_file(str(FIXTURE), str(FIXTURE))
+
+
+class TestLatexToOmml(BaseConverterTest):
+    """Formulas written as OMML read back as the same LaTeX."""
+
+    FORMULAS = (
+        r"a_1+\frac{b}{c}",
+        r"x^2+y_i^2",
+        r"\sqrt{x}+\sqrt[3]{y}",
+        r"\sum_{n=1}^\infty a_n",
+        r"\int_0^1 f\left(x\right)",
+        r"\left[x+1\right]",
+        r"\alpha x+\beta",
+        r"\hat{x}+\overline{y}+\vec{v}",
+        r"\cos \frac{n\pi x}{L}",
+        r"\lim_{n\to\infty}a_n",
+        r"x\leq y\neq z",
+        r"\text{if }x>0",
+        r"\mathbb{R}",
+        r"\begin{matrix} a & b \\ c & d \end{matrix}",
+        r"\begin{aligned} x&=1 \\ y&=2 \end{aligned}",
+    )
+
+    def test_round_trip(self):
+        from textconverter.renderers._omml import latex_to_omml
+        for formula in self.FORMULAS:
+            with self.subTest(formula=formula):
+                self.assertEqual(omml_to_latex(latex_to_omml(formula)), formula)
+
+    def test_unsupported_and_broken_formulas_raise(self):
+        from textconverter.renderers._omml import UnsupportedMath, latex_to_omml
+        for formula in (r"\unknowncmd{x}", r"\frac{a}{", r"a}", r"\begin{tikzpicture}x\end{tikzpicture}"):
+            with self.subTest(formula=formula), self.assertRaises(UnsupportedMath):
+                latex_to_omml(formula)

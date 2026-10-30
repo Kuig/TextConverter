@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warning.
 - Word output: a `.docx` target (`save_to_file`, `textconverter convert x.md x.docx`, the MCP save tool, the GUI) writes headings, formatting, links, nested lists with their own
   numbering, quotes, code, tables with a header row, numbered captions, embedded images and
-  native footnotes. Equations are kept as LaTeX text and citations as macros. `auto` image
+  native footnotes. Equations are written as native Word equations (a formula the converter cannot translate stays
+  LaTeX text, with a warning) and citations as macros. `auto` image
   handling resolves to `embed`. Reading the written file gives back the same AST.
 - The Windows context menu offers the conversions of a `.docx` file, and "to Word" for the
   other sources.

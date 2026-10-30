@@ -20,7 +20,11 @@ from ..ast import (
 )
 from ..images import is_remote, resolve_local
 from ..logger import log_warning
+from lxml import etree
+
+from ..parsers._omml import M_NS
 from ._common import figure_image, latex_reference_macro, plain_text, safe_href, table_grid, text_runs
+from ._omml import UnsupportedMath, latex_to_omml
 
 _CODE_FONT = "Consolas"
 _LINK_COLOR = "0563C1"
@@ -168,8 +172,7 @@ class _Writer:
         elif isinstance(node, Table):
             self._table(node)
         elif isinstance(node, Equation):
-            p = self.document.add_paragraph(style="Equation Display")
-            self._add_run(p, self._equation_code(node), style="Equation")
+            self._equation(self.document.add_paragraph(), node, None, display=True)
         elif not isinstance(node, Appendix):
             self._paragraph(Paragraph(children=[node]), depth)
 
@@ -341,9 +344,23 @@ class _Writer:
 
     # ---- inline content -------------------------------------------------
 
-    @staticmethod
-    def _equation_code(node: Equation) -> str:
-        return f"\\begin{{{node.env}}}\n{node.code}\n\\end{{{node.env}}}" if node.env else node.code
+    def _equation(self, paragraph, node: Equation, container, display: bool) -> None:
+        """A Word equation; a formula that cannot be translated stays LaTeX text in the Equation style."""
+        try:
+            math = latex_to_omml(node.code, node.env)
+        except UnsupportedMath as exc:
+            log_warning(f"Equation kept as LaTeX text, not translated to a Word equation ({exc}): "
+                        f"{node.code[:60]}")
+            code = f"\\begin{{{node.env}}}\n{node.code}\n\\end{{{node.env}}}" if node.env else node.code
+            if display:
+                paragraph.style = "Equation Display"
+            self._add_run(paragraph, code, container, style="Equation")
+            return
+        if display:
+            wrapper = etree.SubElement(paragraph._p, f"{{{M_NS}}}oMathPara")
+            wrapper.append(math)
+        else:
+            (container if container is not None else paragraph._p).append(math)
 
     def _add_run(self, paragraph, text: str, container=None, *, bold=False, italic=False, strike=False,
                  script: str | None = None, style: str | None = None, font: str | None = None):
@@ -384,7 +401,7 @@ class _Writer:
             elif isinstance(node, Image):
                 self._picture(paragraph, node, container)
             elif isinstance(node, Equation):
-                self._add_run(paragraph, self._equation_code(node), container, style="Equation")
+                self._equation(paragraph, node, container, display=False)
             elif isinstance(node, Footnote):
                 self._footnote(paragraph, node, container)
             else:

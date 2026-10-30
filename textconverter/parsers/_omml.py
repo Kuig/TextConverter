@@ -15,7 +15,7 @@ from lxml import etree
 M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 
 # Characters that need a command (or an escape) in LaTeX math.
-_SYMBOLS = {
+SYMBOLS = {
     "α": r"\alpha", "β": r"\beta", "γ": r"\gamma", "δ": r"\delta", "ε": r"\epsilon", "ϵ": r"\varepsilon",
     "ζ": r"\zeta", "η": r"\eta", "θ": r"\theta", "ϑ": r"\vartheta", "ι": r"\iota", "κ": r"\kappa",
     "λ": r"\lambda", "μ": r"\mu", "ν": r"\nu", "ξ": r"\xi", "π": r"\pi", "ϖ": r"\varpi", "ρ": r"\rho",
@@ -38,23 +38,23 @@ _SYMBOLS = {
     "#": r"\#", "%": r"\%", "&": r"\&", "$": r"\$", "_": r"\_", "{": r"\{", "}": r"\}",
 }
 # The n-ary operator characters.
-_NARY = {
+NARY = {
     "∑": r"\sum", "∏": r"\prod", "∐": r"\coprod", "∫": r"\int", "∬": r"\iint", "∭": r"\iiint",
     "∮": r"\oint", "⋃": r"\bigcup", "⋂": r"\bigcap", "⋁": r"\bigvee", "⋀": r"\bigwedge",
     "⨁": r"\bigoplus", "⨂": r"\bigotimes",
 }
-_ACCENTS = {
+ACCENTS = {
     "̂": r"\hat", "^": r"\hat", "̃": r"\tilde", "~": r"\tilde", "̄": r"\bar",
     "‾": r"\bar", "¯": r"\bar", "̇": r"\dot", "˙": r"\dot", "̈": r"\ddot",
     "¨": r"\ddot", "⃗": r"\vec", "→": r"\vec", "̆": r"\breve", "˘": r"\breve",
     "́": r"\acute", "´": r"\acute", "̀": r"\grave", "`": r"\grave", "̌": r"\check",
 }
 # Delimiter characters that need a command after \left / \right.
-_DELIMITERS = {
+DELIMITERS = {
     "{": r"\{", "}": r"\}", "‖": r"\|", "⟨": r"\langle", "⟩": r"\rangle", "⌊": r"\lfloor",
     "⌋": r"\rfloor", "⌈": r"\lceil", "⌉": r"\rceil", "": ".",
 }
-_FUNCTIONS = frozenset(
+FUNCTIONS = frozenset(
     "sin cos tan cot sec csc arcsin arccos arctan sinh cosh tanh coth log ln lg exp lim limsup liminf "
     "max min sup inf det gcd arg deg dim ker hom Pr".split()
 )
@@ -107,7 +107,7 @@ def _text(raw: str) -> str:
     for ch in raw:
         if 0x1D400 <= ord(ch) <= 0x1D7FF:
             ch = unicodedata.normalize("NFKC", ch)
-        parts.append(_SYMBOLS.get(ch, ch))
+        parts.append(SYMBOLS.get(ch, ch))
     return _join(parts)
 
 
@@ -134,10 +134,12 @@ def _run(el: etree._Element) -> str:
     raw = "".join(t.text or "" for t in el.iterfind(f"{{{M_NS}}}t"))
     if not raw.strip():
         return ""
-    text = _text(raw)
     if _flag(el, "rPr", "nor"):
         return r"\text{" + raw + "}"
-    return text
+    style = _prop(el, "rPr", "sty")
+    if sum(ch.isalpha() for ch in raw) > 1 and style in ("p", "b", "bi"):
+        return (r"\mathbf{" if style == "b" else r"\mathrm{") + raw + "}"
+    return _text(raw)
 
 
 def _fraction(el: etree._Element) -> str:
@@ -158,7 +160,7 @@ def _radical(el: etree._Element) -> str:
 
 
 def _nary(el: etree._Element) -> str:
-    op = _NARY.get(_prop(el, "naryPr", "chr", "∫"), _prop(el, "naryPr", "chr", "∫"))
+    op = NARY.get(_prop(el, "naryPr", "chr", "∫"), _prop(el, "naryPr", "chr", "∫"))
     sub = "" if _flag(el, "naryPr", "subHide") else _sub(el, "sub")
     sup = "" if _flag(el, "naryPr", "supHide") else _sub(el, "sup")
     out = op
@@ -171,7 +173,7 @@ def _nary(el: etree._Element) -> str:
 
 
 def _delimiter(raw: str) -> str:
-    return _DELIMITERS.get(raw, raw)
+    return DELIMITERS.get(raw, raw)
 
 
 def _delimited(el: etree._Element) -> str:
@@ -183,9 +185,10 @@ def _delimited(el: etree._Element) -> str:
 
 
 def _function(el: etree._Element) -> str:
-    name = _sub(el, "fName").strip()
+    holder = _child(el, "fName")
+    name = "".join(t.text or "" for t in holder.iter(f"{{{M_NS}}}t")).strip() if holder is not None else ""
     plain = name.lstrip("\\")
-    if plain in _FUNCTIONS:
+    if plain in FUNCTIONS:
         command = "\\" + plain
     elif name.startswith("\\") or not name:
         command = name
@@ -196,7 +199,7 @@ def _function(el: etree._Element) -> str:
 
 
 def _accent(el: etree._Element) -> str:
-    command = _ACCENTS.get(_prop(el, "accPr", "chr", "̂") or "̂", r"\hat")
+    command = ACCENTS.get(_prop(el, "accPr", "chr", "̂") or "̂", r"\hat")
     return command + "{" + _sub(el, "e") + "}"
 
 
@@ -212,14 +215,16 @@ def _matrix(el: etree._Element) -> str:
 
 
 def _array(el: etree._Element) -> str:
-    rows = [_content(e) for e in el.iterfind(f"{{{M_NS}}}e")]
+    rows = [_content(e).replace(r"\&", "&") for e in el.iterfind(f"{{{M_NS}}}e")]
     return r"\begin{aligned} " + r" \\ ".join(rows) + r" \end{aligned}"
 
 
 def _limit(el: etree._Element, below: bool) -> str:
     base, limit = _sub(el, "e"), _sub(el, "lim")
-    if below and base.lstrip("\\") in _FUNCTIONS:
-        return base + "_" + _arg(limit)
+    holder = _child(el, "e")
+    name = "".join(t.text or "" for t in holder.iter(f"{{{M_NS}}}t")).strip() if holder is not None else ""
+    if below and name in FUNCTIONS:
+        return "\\" + name + "_" + _arg(limit)
     return (r"\underset{" if below else r"\overset{") + limit + "}{" + base + "}"
 
 
