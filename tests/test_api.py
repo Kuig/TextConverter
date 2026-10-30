@@ -6,7 +6,11 @@ Usage: python -m unittest discover -s tests -p "test_api.py"
 from __future__ import annotations
 
 import os
+import re
+import subprocess
+import sys
 import tempfile
+import unittest
 from pathlib import Path
 
 import textconverter
@@ -114,16 +118,73 @@ class TestEmbeddedImages(BaseConverterTest):
         self.assertIn("relative to the root of the site", warn.call_args.args[0])
 
 
+@unittest.skipUnless(sys.platform == "win32", "the context menu is Windows only")
 class TestWindowsIntegration(BaseConverterTest):
+    FOLDER = INPUT_DIR.parent.parent / "Windows Integration"
 
-    def test_context_menu_covers_every_input_format(self):
-        """Every input extension except .txt (left out on purpose) has a context menu entry."""
-        import re
-        from textconverter.formats import INPUT_FORMATS
-        script = (INPUT_DIR.parent.parent / "Windows Integration" / "generate_registry_files.ps1").read_text(encoding="utf-8")
-        menu = set(re.findall(r'^\s+"(\.\w+)"\s*=', script, flags=re.MULTILINE))
-        supported = {ext for f in INPUT_FORMATS.values() for ext in f.extensions} - {".txt"}
-        self.assertEqual(menu, supported)
+    def _register(self, folder: str) -> str:
+        subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                        str(self.FOLDER / "generate_registry_files.ps1"), "-OutputDir", folder],
+                       check=True, capture_output=True)
+        return (Path(folder) / "register.reg").read_text(encoding="utf-16")
+
+    def _menu(self, register: str) -> dict[str, set[str]]:
+        """The target extensions of each source extension, from the generated registry file."""
+        menu: dict[str, set[str]] = {}
+        source = ""
+        for line in register.splitlines():
+            key = re.search(r'SystemFileAssociations.(\.\w+).shell.TextConverter', line)
+            source = key.group(1) if key else source
+            target = re.search(r'%1\W+(\.\w+) --template', line)
+            if target:
+                menu.setdefault(source, set()).add(target.group(1))
+        return menu
+
+    def test_context_menu_goes_from_every_input_to_every_output(self):
+        """Except .txt as a source, JSON as a target, and a format to itself (HTML cleans a page up)."""
+        from textconverter.formats import INPUT_FORMATS, OUTPUT_FORMATS
+        targets = {f.extensions[0] for f in OUTPUT_FORMATS.values()} - {".json"}
+        with tempfile.TemporaryDirectory() as tmp:
+            register = self._register(tmp)
+        menu = self._menu(register)
+        expected = {}
+        for name, fmt in INPUT_FORMATS.items():
+            own = OUTPUT_FORMATS[name].extensions[0] if name in OUTPUT_FORMATS else None
+            for ext in fmt.extensions:
+                expected[ext] = targets if name == "html" or ext == ".tsv" else targets - {own}
+        del expected[".txt"]
+        self.assertEqual(menu, expected)
+        self.assertIn(".csv --template plain --pdf-mode raster", register)
+        self.assertIn(".xlsx --template plain --extract-html", register)
+
+    def _run_entry(self, source: Path, target: str, *options: str) -> None:
+        """Run convert.cmd the way Explorer does, with the file name quoted by the registry command."""
+        command = f'cmd /c ""{self.FOLDER / "convert.cmd"}" "{source}" {target} {" ".join(options)}"'
+        result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    @unittest.skipUnless((INPUT_DIR.parent.parent / ".venv" / "Scripts" / "textconverter.exe").exists(), "no .venv")
+    def test_context_menu_never_overwrites(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "a & b 50%.html"
+            source.write_text("<p>x</p>", encoding="utf-8")
+            self._run_entry(source, ".html", "--template", "plain")
+            self._run_entry(source, ".html", "--template", "dark-theme")
+            self._run_entry(source, ".html", "--template", "plain")
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()),
+                             ["a & b 50%.html", "a & b 50%_converted.html", "a & b 50%_converted2.html",
+                              "a & b 50%_converted3.html"])
+            self.assertEqual(source.read_text(encoding="utf-8"), "<p>x</p>")
+
+    @unittest.skipUnless((INPUT_DIR.parent.parent / ".venv" / "Scripts" / "textconverter.exe").exists(), "no .venv")
+    def test_context_menu_counts_the_files_of_a_table_each(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "t.md"
+            source.write_text("# A\n\n| a |\n|---|\n| 1 |\n\n# B\n\n| b |\n|---|\n| 2 |\n", encoding="utf-8")
+            self._run_entry(source, ".csv", "--template", "plain")
+            self._run_entry(source, ".csv", "--template", "plain")
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()),
+                             ["t.md", "t_converted2_A.csv", "t_converted2_B.csv", "t_converted_A.csv", "t_converted_B.csv"])
 
 
 class TestCli(BaseConverterTest):

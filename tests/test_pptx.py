@@ -368,6 +368,37 @@ class TestPptxRenderer(PptxOutputTest):
         self.assertEqual(names, ["Title Slide", "Title and Content"])
         self.assertEqual(_headings(self._read(path)), [(2, "Opening"), (2, "List")])
 
+    def _layouts(self, source: str) -> list[str]:
+        return [s.slide_layout.name for s in Presentation(self._save(source)).slides]
+
+    def test_a_first_level_2_slide_is_a_title_only_with_one_short_line(self):
+        long_line = "word " * 20
+        for body, layout in (("A subtitle", "Title Slide"), ("Ends with a period.", "Title Slide"),
+                             ("One.\n\nTwo.", "Title and Content"), ("- a\n- b", "Title and Content"),
+                             (long_line, "Title and Content"), ("line  \nbreak", "Title and Content")):
+            with self.subTest(body):
+                self.assertEqual(self._layouts(f"# Deck\n\n## Intro\n\n{body}\n\n## Next\n\nx\n")[0], layout)
+
+    def test_a_section_with_its_own_text_keeps_the_title_layout(self):
+        self.assertEqual(self._layouts("# Deck\n\nOne.\n\nTwo.\n\n## Next\n\nx\n")[0], "Title Slide")
+
+    def test_a_bare_level_1_heading_stays_a_section_name_when_slides_follow(self):
+        path = self._save("# Deck\n\n## Intro\n\nx\n")
+        titles = [s.shapes.title.text_frame.text for s in Presentation(path).slides]
+        self.assertEqual(titles, ["Intro"])
+
+    def test_bare_level_1_headings_alone_get_a_title_slide_each(self):
+        path = self._save("# One\n\n# Two\n")
+        slides = Presentation(path).slides
+        self.assertEqual([s.slide_layout.name for s in slides], ["Title Slide", "Title Slide"])
+        self.assertEqual([s.shapes.title.text_frame.text for s in slides], ["One", "Two"])
+        self.assertEqual([len(s.placeholders) for s in slides], [1, 1])
+        self.assertEqual(_headings(self._read(path)), [(1, "One"), (1, "Two")])
+
+    def test_a_single_bare_level_1_heading_gets_a_slide(self):
+        path = self._save("# Only\n")
+        self.assertEqual([s.slide_layout.name for s in Presentation(path).slides], ["Title Slide"])
+
     def test_sections_default_section_and_the_sections_own_slide(self):
         doc = self._roundtrip("## Before\n\n- x\n\n# A\n\nintro\n\n## In A\n\n# B\n\n## In B\n")
         self.assertEqual(_headings(doc), [(1, "Default Section"), (2, "Before"), (1, "A"), (2, "In A"),

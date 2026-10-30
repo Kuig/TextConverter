@@ -1,12 +1,26 @@
 @echo off
 REM Called by the Explorer context menu entries (see generate_registry_files.ps1):
 REM   convert.cmd <source file> <target extension> [textconverter convert options]
-REM Writes the result next to the source, with the target extension, through the
-REM project's CLI. On failure the window stays open so the error can be read.
+REM Writes the result next to the source through the project's CLI, as
+REM <name>_converted<ext>, or <name>_converted2<ext> and so on when such a file
+REM exists (also as one of the <name>_converted_<sheet>.csv of a table per file):
+REM no existing file is overwritten. On failure the window stays open so the
+REM error can be read.
 setlocal
 set "EXE=%~dp0..\.venv\Scripts\textconverter.exe"
 set "SOURCE=%~1"
-set "OUTPUT=%~dpn1%~2"
+set "STEM=%~dpn1_converted"
+set "EXT=%~2"
+set "NUMBER=1"
+set "TAG="
+:name
+if not exist "%STEM%%TAG%*%EXT%" goto named
+set /a NUMBER+=1
+set "TAG=%NUMBER%"
+goto name
+
+:named
+set "OUTPUT=%STEM%%TAG%%EXT%"
 set "OPTIONS="
 shift
 shift

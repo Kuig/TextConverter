@@ -184,19 +184,12 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
 
 #### Features
 * **Cascading Menu**: Adds a grouped `"Convert with TextConverter..."` menu.
-* **Extension Filtering**: Only shows relevant options:
-  * **PDFs**: Shows all output options (.md, .tex, light/dark HTML), each also in a "(raster)" variant that renders the pages and transcribes them with AI (`--pdf-mode raster`), for scanned PDFs.
-  * **Word documents** (`.docx`): Convert to Markdown, LaTeX, light/dark HTML and PDF.
-  * **PowerPoint presentations** (`.pptx`): Convert to Markdown, LaTeX, light/dark HTML, PDF and Word.
-  * **CSV and Excel files** (`.csv`, `.tsv`, `.xlsx`): Convert to Markdown, LaTeX, light/dark HTML, PDF, Word and PowerPoint (and between CSV and Excel).
-  * **Word output**: Every other source type also offers "to Word (.docx)".
-  * **PowerPoint output**: Every other source type also offers "to PowerPoint (.pptx)".
-  * **PDF output**: Every other source type also offers "to PDF (.pdf)" (and, for HTML, its main-content variant).
-  * **Markdown / LaTeX**: Excludes self-conversion (e.g., no "convert to .md" option for `.md` files).
-  * **HTML / HTM**: Includes duplicate options for "main content" extraction (`--extract-html` to filter out boilerplate).
+* **Every conversion**: Each source offers Markdown, LaTeX, HTML (no theme, light, dark), PDF, Word, PowerPoint, Excel and CSV, except its own format. Excel and CSV keep the tables only, and fail on a document without tables. JSON is reached through the CLI: it is the AST, for debugging or for reusing a parsed document.
+  * **PDFs**: Each entry also comes in a "(raster)" variant that renders the pages and transcribes them with AI (`--pdf-mode raster`), for scanned PDFs.
+  * **HTML / HTM**: HTML is a target too, to clean a page up, and each entry also comes in a "main content" variant (`--extract-html` to filter out boilerplate).
   * **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`): The image is transcribed or described by the AI models of `config.json`.
-  * **JSON** (the AST form written by TextConverter): Converts to every other format.
-* **Same behavior as the CLI**: Every entry runs `Windows Integration/convert.cmd`, which calls `textconverter convert` with its default options (so `--image-handling auto`) and writes the result next to the source file. PDF sources in text mode also get `--code-parsing`. If a conversion fails, the window stays open to show the error.
+* **Nothing is overwritten**: The result goes next to the source file as `<name>_converted<ext>`, then `<name>_converted2<ext>` and so on.
+* **Same behavior as the CLI**: Every entry runs `Windows Integration/convert.cmd`, which calls `textconverter convert` with its default options (so `--image-handling auto`). PDF sources in text mode also get `--code-parsing`. If a conversion fails, the window stays open to show the error.
 
 #### Setup
 1. Open a PowerShell terminal in the project root.
@@ -205,7 +198,7 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
    cd "Windows Integration"
    .\generate_registry_files.ps1
    ```
-   This dynamically detects the project folder and generates two registry files: `register.reg` and `unregister.reg`. Run it again (and re-import `register.reg`) after moving the project or updating TextConverter.
+   This dynamically detects the project folder and generates two registry files: `register.reg` and `unregister.reg`. Run it again (and re-import `register.reg`, which replaces the earlier entries) after moving the project or updating TextConverter.
 3. Double-click `register.reg` and approve the prompt to register the context menu. On Windows 11 the entries are under **Show more options**.
 4. To remove the integration, double-click `unregister.reg`.
 

@@ -105,7 +105,7 @@ class TestXlsxParser(BaseConverterTest):
         tables = [n for n in self.doc.children if isinstance(n, Table)]
         self.assertEqual(_grid(tables[0])[1:], [
             ["Apple", "3", "1.5", "4.5", "", ""], ["Pear", "5", "2.25", "11.25", "", ""],
-            ["Plum", "2", "4", "8", "", ""], ["Sum", "10", "7.75", "20.5", "", ""]])
+            ["Plum", "2", "4", "8", "", ""], ["Sum", "10", "7.75", "23.75", "", ""]])
         self.assertEqual(_grid(tables[1])[1], ["2026-10-30", "TRUE", "very important"])
         self.assertEqual(_grid(tables[1])[2], ["2026-10-31 14:30:00", "FALSE", "007"])
 
@@ -118,7 +118,7 @@ class TestXlsxParser(BaseConverterTest):
         nodes = list(walk(self.doc))
         self.assertEqual([plain_text(n.content) for n in nodes if isinstance(n, Footnote)], ["Fresh\nfrom the market"])
         link = next(n for n in nodes if isinstance(n, Link))
-        self.assertEqual((link.url, plain_text(link.content)), ("https://example.com", "Pear"))
+        self.assertEqual((link.url, plain_text(link.content)), ("https://example.com/", "Pear"))
         very = next(n for n in nodes if isinstance(n, Text) and n.content == "very ")
         self.assertTrue(very.bold)
         self.assertFalse(next(n for n in nodes if isinstance(n, Text) and n.content == "important").bold)
@@ -281,7 +281,7 @@ class TestXlsxRenderer(BaseConverterTest):
         render_xlsx(parse_xlsx(str(FIXTURE), write_images=False), str(out))
         wb = load_workbook(out, rich_text=True)
         self.assertIn("Fresh", wb["Sales"]["A2"].comment.text)
-        self.assertEqual(wb["Sales"]["A3"].hyperlink.target, "https://example.com")
+        self.assertEqual(wb["Sales"]["A3"].hyperlink.target, "https://example.com/")
         rich = wb["Dates"]["C2"].value
         self.assertEqual([getattr(p, "text", p) for p in rich], ["very ", "important"])
 

@@ -3,8 +3,8 @@
 A level 1 heading is a section and any deeper heading a slide (a level below 2 gets a ``#`` per level in its
 title). The text of a slide goes in one content placeholder, shrunk until it fits; tables and pictures
 follow it, and a quote headed by ``Text box (x .., y .., w .., h ..)`` becomes a text box at that frame.
-Footnotes are the slide's speaker notes. The first slide uses the title layout when it only holds a line
-or two of text.
+Footnotes are the slide's speaker notes. The first slide uses the title layout when it looks like a title
+and subtitle; a deck of bare level 1 headings, which would have no slide, gets a title slide for each.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from lxml import etree
 
 from ..ast import (
-    Abstract, BlockQuote, CodeBlock, Document, Equation, Footnote, Heading, Image, Link, ListBlock, Node,
+    Abstract, BlockQuote, CodeBlock, Document, Equation, Footnote, Heading, Image, LineBreak, Link, ListBlock, Node,
     Paragraph, Table, Text, walk,
 )
 from ..logger import log_warning
@@ -41,6 +41,8 @@ _TITLE_SIZE = 32.0
 _SECTIONS_URI = "{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"
 _DEFAULT_SECTION = "Default Section"
 _LAYOUT_TITLE, _LAYOUT_CONTENT, _LAYOUT_TITLE_ONLY = 0, 1, 5
+# The longest paragraph under a level 2 heading that still reads as a subtitle.
+_SUBTITLE_LENGTH = 80
 
 
 def render_pptx(doc: Document, output_path: str, base_dir: str | None = None) -> None:
@@ -74,6 +76,8 @@ class _Plan:
     tables: list[Table] = field(default_factory=list)
     pictures: list[Image] = field(default_factory=list)
     registered: bool = False
+    subheading: bool = False  # made by a heading deeper than level 1
+    bare_section: bool = False  # a level 1 heading alone, in a deck that would otherwise have no slide
 
     def footnotes(self) -> list[Footnote]:
         nodes = [*self.title, *self.blocks, *self.quotes, *self.tables]
@@ -114,6 +118,7 @@ class _Deck:
     def _plan(self, doc: Document) -> tuple[list[_Plan], list[str]]:
         plans: list[_Plan] = []
         sections: list[str] = []
+        section_plans: list[_Plan] = []
         current: _Plan | None = None
 
         def register(plan: _Plan) -> _Plan:
@@ -127,13 +132,19 @@ class _Deck:
                 if node.level == 1:
                     sections.append(plain_text(node.children).strip())
                 current = _Plan(level=2 if node.level == 1 else node.level, title=node.children,
-                                section=len(sections) - 1 if sections else None)
+                                section=len(sections) - 1 if sections else None, subheading=node.level != 1)
+                if node.level == 1:
+                    section_plans.append(current)
                 if node.level != 1 or any(isinstance(n, Footnote) for n in node.children):
                     register(current)
             else:
                 if current is None:
                     current = _Plan(level=2, title=[], section=None)
                 self._add(register(current), node)
+        if not plans:
+            for plan in section_plans:
+                plan.bare_section = True
+                register(plan)
         return plans, sections
 
     def _add(self, plan: _Plan, node: Node) -> None:
@@ -164,8 +175,7 @@ class _Deck:
         captions = [Paragraph(children=[Text(content=plain_text(c.caption), italic=True)])
                     for c in [*plan.tables, *plan.pictures] if c.caption]
         lines = lines_of([*plan.blocks, *captions])
-        title_layout = (first and plan.level == 2 and not (plan.quotes or plan.tables or pictures)
-                        and 0 < len(plan.blocks) <= 2 and all(isinstance(b, Paragraph) for b in plan.blocks))
+        title_layout = _reads_as_title(plan, pictures, first)
         layout = _LAYOUT_TITLE if title_layout else _LAYOUT_CONTENT if lines else _LAYOUT_TITLE_ONLY
         slide = self.prs.slides.add_slide(self.prs.slide_layouts[layout])
         self._title(slide, plan, centered=title_layout)
@@ -199,6 +209,9 @@ class _Deck:
 
     def _subtitle(self, slide, lines: list[Line]) -> None:
         shape = slide.placeholders[1]
+        if not lines:
+            shape._element.getparent().remove(shape._element)
+            return
         shape.left, shape.top, shape.width, shape.height = _MARGIN * 2, 3500000, SLIDE_WIDTH - 4 * _MARGIN, 1800000
         self.text.fill(shape.text_frame, lines, fit(lambda s: lines_height(lines, shape.width, s), 1800000 / EMU_PER_PT),
                        center=True)
@@ -333,6 +346,28 @@ class _Deck:
             slide_ids = etree.SubElement(section, f"{{{NS['p14']}}}sldIdLst")
             for slide_id in ids:
                 etree.SubElement(slide_ids, f"{{{NS['p14']}}}sldId", id=str(slide_id))
+
+
+def _reads_as_title(plan: _Plan, pictures: list[_Picture], first: bool) -> bool:
+    """Whether a slide takes the title layout: a bare section, or a first slide that is a title and subtitle.
+
+    A level 2 slide qualifies with one short line; a section's own text or
+    text before any heading with one or two paragraphs.
+    """
+    if plan.bare_section:
+        return True
+    if not first or plan.level != 2 or plan.quotes or plan.tables or pictures:
+        return False
+    if plan.subheading:
+        return len(plan.blocks) == 1 and _is_short_line(plan.blocks[0])
+    return 0 < len(plan.blocks) <= 2 and all(isinstance(b, Paragraph) for b in plan.blocks)
+
+
+def _is_short_line(block: Node) -> bool:
+    if not isinstance(block, Paragraph) or any(isinstance(n, LineBreak) for n in walk(block)):
+        return False
+    text = plain_text(block.children).strip()
+    return "\n" not in text and len(text) <= _SUBTITLE_LENGTH
 
 
 def fit_title(text: str, width_emu: float, size: float) -> float:
