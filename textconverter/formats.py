@@ -40,6 +40,9 @@ INPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",)),
     Format("pptx", (".pptx",), binary=True, media_types=(
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",)),
+    Format("csv", (".csv", ".tsv"), media_types=("text/csv", "text/tab-separated-values")),
+    Format("xlsx", (".xlsx",), binary=True, media_types=(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",)),
     Format("image", (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"), binary=True,
            media_types=("image/",)),
 )}
@@ -55,6 +58,10 @@ OUTPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
     Format("docx", (".docx",), binary=True, auto_images="embed"),
     # Written only by save_to_file(): the AST rendered straight to a PowerPoint file.
     Format("pptx", (".pptx",), binary=True, auto_images="embed"),
+    # Tables only. The CSV text is the first table; save_to_file() writes one file per table.
+    Format("csv", (".csv",), auto_images="discard"),
+    # Written only by save_to_file(): the AST's tables as sheets of an Excel file.
+    Format("xlsx", (".xlsx",), binary=True, auto_images="embed"),
 )}
 
 # Output formats convert() returns as a string (the binary ones go through save_to_file()).

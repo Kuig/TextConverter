@@ -46,6 +46,18 @@ $PdfRasterSubcommands = foreach ($Sub in $PdfTextSubcommands) {
     $Copy
 }
 
+# Subcommands for data sources (CSV, TSV, Excel): only their tables are kept.
+$DataSubcommands = @(
+    [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="02tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="03html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="04html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false }
+    [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
+    [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="07docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="08pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$false }
+)
+
 # Define associations and subcommands
 $Associations = [ordered]@{
     ".pdf" = @($PdfTextSubcommands) + @($PdfRasterSubcommands)
@@ -139,6 +151,9 @@ $Associations = [ordered]@{
         [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
         [ordered]@{ Key="07docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
     )
+    ".csv"  = $DataSubcommands
+    ".tsv"  = $DataSubcommands
+    ".xlsx" = $DataSubcommands
     ".json" = $ImageSubcommands
     ".png"  = $ImageSubcommands
     ".jpg"  = $ImageSubcommands

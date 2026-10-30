@@ -20,6 +20,8 @@ from .parsers.latex_parser import parse_latex
 from .parsers.pdf_parser import parse_pdf
 from .parsers.docx_parser import parse_docx
 from .parsers.pptx_parser import parse_pptx
+from .parsers.csv_parser import parse_csv
+from .parsers.xlsx_parser import parse_xlsx
 from .parsers.image_parser import parse_image
 from .parsers.json_parser import parse_json
 
@@ -27,6 +29,7 @@ from .renderers.markdown_renderer import render_markdown
 from .renderers.html_renderer import render_html
 from .renderers.latex_renderer import render_latex
 from .renderers.json_renderer import render_json
+from .renderers.csv_renderer import render_csv, render_csv_files
 
 from .site_profiles import resolve_profiles
 from .config import AppConfig, load_config
@@ -47,7 +50,15 @@ def _is_url(source: str) -> bool:
     return source.startswith(("http://", "https://"))
 
 
-def _read_text(path: str) -> str:
+def _read_text(path: str, from_format: str) -> str:
+    """The text of a source file: UTF-8, except CSV, which also reads a BOM and falls back to cp1252."""
+    if from_format == "csv":
+        with open(path, "rb") as f:
+            data = f.read()
+        try:
+            return data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return data.decode("cp1252", errors="replace")
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
@@ -76,8 +87,13 @@ def _parse(
     if from_format == "pptx":
         return parse_pptx(path, output_dir=output_dir, image_dir_name=image_dir_name,
                           write_images=options.image_handling != "discard")
+    if from_format == "xlsx":
+        return parse_xlsx(path, output_dir=output_dir, image_dir_name=image_dir_name,
+                          write_images=options.image_handling != "discard")
     if from_format == "image":
         return parse_image(path, config=config)
+    if from_format == "csv":
+        return parse_csv(text)
     if from_format == "markdown":
         return parse_markdown(text, code_parsing=options.code_parsing)
     if from_format == "html":
@@ -97,6 +113,7 @@ _RENDERERS = {
     "html": lambda doc, options: render_html(doc, template_name=options.template),
     "latex": lambda doc, options: render_latex(doc),
     "json": lambda doc, options: render_json(doc),
+    "csv": lambda doc, options: render_csv(doc),
 }
 
 
@@ -129,12 +146,12 @@ def _image_folder(handling: str, output_dir: str | None, image_dir_name: str | N
 def _doc_dir(from_format: str, output_dir: str | None, source_path: str | None) -> str:
     """Directory the parsed document's relative image paths resolve against.
 
-    The PDF, Word and PowerPoint parsers write their images under ``output_dir`` (or the
+    The PDF, Word, PowerPoint and Excel parsers write their images under ``output_dir`` (or the
     current directory); an image source path is relative to the current directory;
     a text source references images next to the source file; text given
     directly resolves against the current directory.
     """
-    if from_format in ("pdf", "docx", "pptx"):
+    if from_format in ("pdf", "docx", "pptx", "xlsx"):
         return output_dir or os.getcwd()
     if source_path and from_format != "image":
         return os.path.dirname(os.path.abspath(source_path))
@@ -316,7 +333,7 @@ def _convert(
         if INPUT_FORMATS[from_format].binary:
             doc = _parse(from_format, options, config, path=source, output_dir=parent, image_dir_name=name)
         else:
-            doc = _parse(from_format, options, config, text=_read_text(source))
+            doc = _parse(from_format, options, config, text=_read_text(source, from_format))
         return _transform_and_render(doc, from_format, to_format, options, config,
                                      output_dir=output_dir, image_parent=parent, image_dir_name=name,
                                      source_url=None, source_path=source, render=render)
@@ -427,6 +444,24 @@ def _save_office(
             os.remove(temp_path)
 
 
+def _save_csv(
+    source: str,
+    output_path: str,
+    options: ConvertOptions,
+    from_format: str | None,
+    config: AppConfig | None,
+) -> None:
+    """Write the tables of ``source`` as CSV: ``output_path``, or ``<stem>_<sheet>.csv`` for each of several."""
+    out_path = pathlib.Path(output_path)
+    files = _convert(source, "csv", options, config or load_config(), from_format=from_format,
+                     output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images",
+                     render=render_csv_files)
+    for suffix, text in files:
+        target = out_path.with_name(f"{out_path.stem}{suffix}{out_path.suffix}")
+        with open(target, 'w', encoding='utf-8-sig', newline='') as f:
+            f.write(text)
+
+
 def save_to_file(
     source: str,
     output_path: str,
@@ -445,7 +480,9 @@ def save_to_file(
     images are embedded (``auto`` and ``link`` both act as ``embed``), so the
     PDF is self-contained and no image folder is left next to it. A ``.docx``
     output is the document written by ``renderers.docx_renderer.render_docx``,
-    with the same image rules and no template.
+    with the same image rules and no template. A ``.csv`` output holds the
+    document's tables only: one file, or ``<stem>_<sheet name>.csv`` per table
+    when there are several (the name is the nearest heading above the table).
 
     Args:
         source: A file path, or an ``http://``/``https://`` URL.
@@ -468,6 +505,9 @@ def save_to_file(
         raise ValueError(f"The output path is the source file itself: {output_path}")
 
     out_path = pathlib.Path(output_path)
+    if to_format == "csv":
+        _save_csv(source, output_path, options, from_format, config)
+        return
     if to_format in ("docx", "pptx"):
         _save_office(source, output_path, to_format, options, from_format, config)
         return
