@@ -409,10 +409,13 @@ def _convert_url(
 
 
 def _office_writer(to_format: str) -> Callable[..., None]:
-    """The ``render_*(doc, path, base_dir=...)`` function of an Office output format."""
+    """The ``render_*(doc, path, base_dir=...)`` function of an Office or Excel output format."""
     if to_format == "docx":
         from .renderers.docx_renderer import render_docx
         return render_docx
+    if to_format == "xlsx":
+        from .renderers.xlsx_renderer import render_xlsx
+        return render_xlsx
     from .renderers.pptx_renderer import render_pptx
     return render_pptx
 
@@ -425,7 +428,7 @@ def _save_office(
     from_format: str | None,
     config: AppConfig | None,
 ) -> None:
-    """Write the converted ``source`` as a Word or PowerPoint file; the file appears only once complete."""
+    """Write the converted ``source`` as a Word, PowerPoint or Excel file; the file appears only once complete."""
     write = _office_writer(to_format)
     if from_format is not None:
         check_choice("from_format", from_format, INPUT_FORMATS)
@@ -480,7 +483,8 @@ def save_to_file(
     images are embedded (``auto`` and ``link`` both act as ``embed``), so the
     PDF is self-contained and no image folder is left next to it. A ``.docx``
     output is the document written by ``renderers.docx_renderer.render_docx``,
-    with the same image rules and no template. A ``.csv`` output holds the
+    with the same image rules and no template; so are ``.pptx`` and ``.xlsx``
+    (the latter keeps only the tables, one sheet each). A ``.csv`` output holds the
     document's tables only: one file, or ``<stem>_<sheet name>.csv`` per table
     when there are several (the name is the nearest heading above the table).
 
@@ -508,7 +512,7 @@ def save_to_file(
     if to_format == "csv":
         _save_csv(source, output_path, options, from_format, config)
         return
-    if to_format in ("docx", "pptx"):
+    if to_format in ("docx", "pptx", "xlsx"):
         _save_office(source, output_path, to_format, options, from_format, config)
         return
     if to_format == "pdf":

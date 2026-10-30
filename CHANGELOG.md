@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- CSV and Excel input: `.csv`, `.tsv` and `.xlsx` files, local or downloaded, are read into the AST (`openpyxl` is now a
+  dependency). A CSV is one table whose header is the first row (delimiter and encoding detected). A workbook is a level 1
+  heading and a table per visible sheet; formulas become an `excel` code block under the table (one line per column or row of
+  repeated formula, e.g. `D2:D100 = B2*C2`), cells show their stored result, comments become footnotes, and links, partial
+  text formatting and images anchored to a cell are read. Merged cells, charts, pivot tables, filters and conditional
+  formatting are dropped with a single warning.
+- CSV and Excel output: a `.xlsx` target writes the document's tables only, one sheet each, named after the heading above
+  (`XlsxWriter` is now a declared dependency); the `excel` code block under a table gives its formulas, written with the
+  table text as their stored result. Footnotes in cells are comments, images are anchored to their cell, `auto` image handling
+  resolves to `embed`. A `.csv` target writes the tables as UTF-8 with a BOM: one file, or `<stem>_<sheet>.csv` per table;
+  `to_format="csv"` returns the first table, and `auto` image handling resolves to `discard`. A document without a table
+  raises `ValueError`. Reading the written Excel file gives back the same AST.
+- The Windows context menu offers the conversions of `.csv`, `.tsv` and `.xlsx` files (including CSV to Excel and Excel to CSV).
 - Word input: `.docx` files, local or downloaded, are read into the AST (`python-docx` is now a
   dependency). Styles are recognized by name, so documents in any Word language work. Read:
   title and metadata, headings, formatting, links, nested bulleted and numbered lists (mixed

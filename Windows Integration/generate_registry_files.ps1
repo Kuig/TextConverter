@@ -47,6 +47,7 @@ $PdfRasterSubcommands = foreach ($Sub in $PdfTextSubcommands) {
 }
 
 # Subcommands for data sources (CSV, TSV, Excel): only their tables are kept.
+# CSV and Excel files get no target of their own format: the output would overwrite the source file.
 $DataSubcommands = @(
     [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
     [ordered]@{ Key="02tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain"; Extract=$false }
@@ -56,6 +57,8 @@ $DataSubcommands = @(
     [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
     [ordered]@{ Key="07docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
     [ordered]@{ Key="08pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="09xlsx"; Verb="to Excel (.xlsx)"; Ext=".xlsx"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="10csv"; Verb="to CSV (.csv)"; Ext=".csv"; Template="plain"; Extract=$false }
 )
 
 # Define associations and subcommands
@@ -151,9 +154,9 @@ $Associations = [ordered]@{
         [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
         [ordered]@{ Key="07docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
     )
-    ".csv"  = $DataSubcommands
+    ".csv"  = @($DataSubcommands | Where-Object { $_.Ext -ne ".csv" })
     ".tsv"  = $DataSubcommands
-    ".xlsx" = $DataSubcommands
+    ".xlsx" = @($DataSubcommands | Where-Object { $_.Ext -ne ".xlsx" })
     ".json" = $ImageSubcommands
     ".png"  = $ImageSubcommands
     ".jpg"  = $ImageSubcommands

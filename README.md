@@ -4,7 +4,7 @@ Multi-format document conversion tool with AI-powered image description and heur
 
 ## Overview
 
-TextConverter converts between PDF, Word (.docx), PowerPoint (.pptx), HTML, Markdown, LaTeX, and JSON formats (PDF output is printed from the light HTML theme; Word and PowerPoint output are written natively). It supports:
+TextConverter converts between PDF, Word (.docx), PowerPoint (.pptx), Excel (.xlsx), CSV, HTML, Markdown, LaTeX, and JSON formats (PDF output is printed from the light HTML theme; Word, PowerPoint and Excel output are written natively; CSV and Excel carry the tables only). It supports:
 - **URL Inputs**: Directly convert remote documents (both PDFs and HTML pages) from a remote URL.
 - **HTML Content Extraction**: A zero-dependency heuristic parser to clean up webpage boilerplates (like navigation headers, footers, script, and style elements) and isolate the primary content (`<main>`, `<article>`).
 - **Remote Image Downloading**: Automatically downloads and cleans remote images referenced in webpages, applying OS-safe filename sanitization and exact binary content-based deduplication to prevent duplicate copies on disk.
@@ -66,6 +66,10 @@ When set to `auto` (the default), the tool dynamically maps the strategy based o
   - If the image is classified as `text`, `table` or `formula`, the AI transcribes it and the transcript replaces the image: a formula becomes an equation, a table a `tabular`, text paragraphs. An image alone in its paragraph replaces the paragraph; one amid text splits it around the content.
   - If the image is classified as any other type (e.g., diagrams or photos), the AI description is skipped to conserve resources, and standard `\includegraphics{...}` markup is rendered.
 
+* **Excel output (`.xlsx`)**: Resolves to **`embed`**; an image in a table cell is anchored to that cell.
+
+* **CSV output**: Resolves to **`discard`**: CSV holds text only.
+
 * **Markdown output (`to_format="markdown"`)**: Resolves to **`link`**.
   - Local or downloaded images are referenced via standard relative paths.
   - The images are rendered as standard Markdown image syntax: `![alt_text](path/to/image "optional_title")`. No description generation is performed.
@@ -115,6 +119,13 @@ textconverter convert DocsInput/document.md DocsOutput/slides.pptx
 
 # A presentation to Markdown (text boxes become quotes that give their position on the slide)
 textconverter convert DocsInput/slides.pptx DocsOutput/slides.md
+
+# A workbook to Markdown (a heading and a table per sheet, formulas as an `excel` code block under each table)
+textconverter convert DocsInput/book.xlsx DocsOutput/book.md
+
+# The tables of any source to Excel (the heading above a table names its sheet) or to CSV (one file per table)
+textconverter convert DocsInput/document.md DocsOutput/tables.xlsx
+textconverter convert DocsInput/document.md DocsOutput/tables.csv
 
 # Any source to PDF (printed with Edge/Chrome when installed, else a built-in renderer)
 textconverter convert DocsInput/document.md DocsOutput/document.pdf
@@ -177,6 +188,7 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
   * **PDFs**: Shows all output options (.md, .tex, light/dark HTML), each also in a "(raster)" variant that renders the pages and transcribes them with AI (`--pdf-mode raster`), for scanned PDFs.
   * **Word documents** (`.docx`): Convert to Markdown, LaTeX, light/dark HTML and PDF.
   * **PowerPoint presentations** (`.pptx`): Convert to Markdown, LaTeX, light/dark HTML, PDF and Word.
+  * **CSV and Excel files** (`.csv`, `.tsv`, `.xlsx`): Convert to Markdown, LaTeX, light/dark HTML, PDF, Word and PowerPoint (and between CSV and Excel).
   * **Word output**: Every other source type also offers "to Word (.docx)".
   * **PowerPoint output**: Every other source type also offers "to PowerPoint (.pptx)".
   * **PDF output**: Every other source type also offers "to PDF (.pdf)" (and, for HTML, its main-content variant).

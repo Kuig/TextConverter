@@ -42,8 +42,8 @@ def register_tools(mcp: object) -> None:
 
         Args:
             text: The source document itself (never read as a file path).
-            from_format: Source format: 'markdown', 'html', 'latex' or 'json'.
-            to_format: Target format: 'markdown', 'html', 'latex' or 'json'.
+            from_format: Source format: 'markdown', 'html', 'latex', 'json' or 'csv'.
+            to_format: Target format: 'markdown', 'html', 'latex', 'json' or 'csv' (the first table).
             template: HTML template: 'plain', 'light' or 'dark'.
             image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
             code_parsing: Fence code blocks found by heuristic detection (Markdown sources).
@@ -85,8 +85,8 @@ def register_tools(mcp: object) -> None:
 
         Args:
             source: File path, or remote URL (http:// or https://).
-            to_format: Target format: 'markdown', 'html', 'latex' or 'json'.
-            from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'docx', 'pptx', 'image').
+            to_format: Target format: 'markdown', 'html', 'latex', 'json' or 'csv' (the first table).
+            from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'docx', 'pptx', 'csv', 'xlsx', 'image').
                 Inferred from the extension (for a URL, from its Content-Type) if None.
             template: HTML template: 'plain', 'light' or 'dark'.
             image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
@@ -133,10 +133,11 @@ def register_tools(mcp: object) -> None:
             source: File path, or remote URL (http:// or https://). Text is not
                 accepted: use textconverter_convert_text for it.
             output_path: Output file path; its extension (.md, .html, .tex, .json,
-                .pdf, .docx, .pptx) sets the format. Images go to '<output name>_images' next to it.
-            from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'docx', 'pptx', 'image').
+                .pdf, .docx, .pptx, .xlsx, .csv) sets the format. A .csv output holds the tables only,
+                one file per table when there are several. Images go to '<output name>_images' next to it.
+            from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'docx', 'pptx', 'csv', 'xlsx', 'image').
                 Inferred from the extension (for a URL, from its Content-Type) if None.
-            template: HTML template: 'plain', 'light' or 'dark' (ignored for .pdf, .docx and .pptx).
+            template: HTML template: 'plain', 'light' or 'dark' (ignored for .pdf, .docx, .pptx and .xlsx).
             image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
             code_parsing: Fence code blocks found by heuristic detection (Markdown
                 sources, PDF sources in text mode).

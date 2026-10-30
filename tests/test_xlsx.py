@@ -8,13 +8,15 @@ import os
 import tempfile
 from unittest.mock import patch
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Font
 
-from textconverter import ConvertOptions, convert
-from textconverter.ast import CodeBlock, Footnote, Heading, Image, Link, Table, Text, walk
+import json
+
+from textconverter import ConvertOptions, convert, convert_text, save_to_file
+from textconverter.ast import CodeBlock, Document, Footnote, Heading, Image, Link, Table, Text, walk
 from textconverter.formats import OUTPUT_FORMATS, infer_input_format, infer_input_format_from_media_type
 from textconverter.parsers._excel_formulas import compress, expand
 from textconverter.parsers.xlsx_parser import format_value, parse_xlsx
@@ -196,3 +198,123 @@ class TestXlsxPipeline(BaseConverterTest):
 
     def test_discard_removes_the_image(self):
         self.assertNotIn("![](", convert(str(FIXTURE), "markdown", ConvertOptions(image_handling="discard")))
+
+
+MARKDOWN = """# Sales
+
+| Item | Qty | Total |
+|---|---|---|
+| Apple | 3 | 4.5 |
+| Pear | 5 | 11.25 |
+| **Sum** | 8 | 15.75 |
+
+```excel
+C2:C3 = B2*1.5
+B4 = SUM(B2:B3)
+```
+
+Some prose that a spreadsheet cannot hold.
+
+## Notes / 2026
+
+| Code | When | Done | Text |
+|---|---|---|---|
+| 007 | 2026-10-30 | TRUE | 1,5 |
+"""
+
+ONE_TABLE = "| a |\n|---|\n| 1 |\n"
+
+
+class TestXlsxRenderer(BaseConverterTest):
+    def _save(self, markdown: str, name: str = "out.xlsx"):
+        out = self._out(name)
+        src = self._out(name + ".md")
+        src.write_text(markdown, encoding="utf-8")
+        save_to_file(str(src), str(out))
+        return out
+
+    def test_tables_become_sheets_named_after_their_headings(self):
+        wb = load_workbook(self._save(MARKDOWN))
+        self.assertEqual(wb.sheetnames, ["Sales", "Notes   2026"])
+
+    def test_text_becomes_numbers_booleans_dates_but_only_when_exact(self):
+        wb = load_workbook(self._save(MARKDOWN))
+        ws = wb["Notes   2026"]
+        self.assertEqual(ws["A2"].value, "007")
+        self.assertEqual(ws["B2"].value, datetime.datetime(2026, 10, 30))
+        self.assertIs(ws["C2"].value, True)
+        self.assertEqual(ws["D2"].value, "1,5")
+        self.assertEqual(wb["Sales"]["B2"].value, 3)
+
+    def test_header_is_bold(self):
+        ws = load_workbook(self._save(MARKDOWN))["Sales"]
+        self.assertTrue(ws["A1"].font.b)
+        self.assertTrue(ws["A4"].font.b)
+        self.assertFalse(ws["A2"].font.b)
+
+    def test_formulas_are_written_with_their_stored_result(self):
+        path = self._save(MARKDOWN)
+        formulas, values = load_workbook(path)["Sales"], load_workbook(path, data_only=True)["Sales"]
+        self.assertEqual([formulas["C2"].value, formulas["C3"].value, formulas["B4"].value],
+                         ["=B2*1.5", "=B3*1.5", "=SUM(B2:B3)"])
+        self.assertEqual([values["C2"].value, values["C3"].value, values["B4"].value], [4.5, 11.25, 8])
+
+    def test_prose_is_dropped_and_no_table_is_an_error(self):
+        wb = load_workbook(self._save(MARKDOWN))
+        self.assertEqual(wb["Sales"].max_row, 4)
+        with self.assertRaises(ValueError):
+            self._save("# Only text\n\nNo table here.\n", "none.xlsx")
+        self.assertFalse(self._out("none.xlsx").exists())
+
+    def test_two_tables_under_one_heading_get_distinct_sheets(self):
+        wb = load_workbook(self._save(f"# Data\n\n{ONE_TABLE}\n{ONE_TABLE}"))
+        self.assertEqual(wb.sheetnames, ["Data", "Data (2)"])
+
+    def test_comment_link_and_rich_text(self):
+        from textconverter.renderers.xlsx_renderer import render_xlsx
+        out = self._out("rich.xlsx")
+        render_xlsx(parse_xlsx(str(FIXTURE), write_images=False), str(out))
+        wb = load_workbook(out, rich_text=True)
+        self.assertIn("Fresh", wb["Sales"]["A2"].comment.text)
+        self.assertEqual(wb["Sales"]["A3"].hyperlink.target, "https://example.com")
+        rich = wb["Dates"]["C2"].value
+        self.assertEqual([getattr(p, "text", p) for p in rich], ["very ", "important"])
+
+    def test_metadata_goes_to_the_file_properties(self):
+        md = '---\ntitle: "Book"\nauthor: "Ada"\ndate: "2026-03-04"\n---\n\n' + ONE_TABLE
+        props = load_workbook(self._save(md)).properties
+        self.assertEqual((props.title, props.creator, props.created.date().isoformat()), ("Book", "Ada", "2026-03-04"))
+
+    def test_round_trip_is_identical(self):
+        options = ConvertOptions(image_handling="discard")
+        out = self._out("roundtrip.xlsx")
+        save_to_file(str(FIXTURE), str(out), options)
+        self.assertEqual(json.loads(convert(str(out), "json", options)),
+                         json.loads(convert(str(FIXTURE), "json", options)))
+
+    def test_images_are_embedded_by_default_and_survive_the_round_trip(self):
+        out = self._out("images.xlsx")
+        save_to_file(str(FIXTURE), str(out))
+        self.assertFalse(self._out("images_images").exists())
+        self.assertEqual(len(load_workbook(out)["Dates"]._images), 1)
+
+    def test_markdown_image_reference_is_anchored_to_its_cell(self):
+        src = INPUT_DIR / "tmp_img_table.md"
+        src.write_text("| a |\n|---|\n| ![x](OcrText.png) |\n", encoding="utf-8")
+        try:
+            out = self._out("md_image.xlsx")
+            save_to_file(str(src), str(out))
+        finally:
+            src.unlink()
+        self.assertEqual(len(load_workbook(out)["Sheet1"]._images), 1)
+
+    def test_xlsx_is_not_a_text_output(self):
+        with self.assertRaises(ValueError):
+            convert_text(ONE_TABLE, "markdown", "xlsx")
+
+    def test_csv_to_xlsx_and_back(self):
+        out, back = self._out("data.xlsx"), self._out("data.csv")
+        save_to_file(str(INPUT_DIR / "Test_data.csv"), str(out))
+        save_to_file(str(out), str(back))
+        self.assertEqual(back.read_bytes().decode("utf-8-sig"),
+                         'Name,Qty,Note\r\nApple,3,"two\nlines"\r\nPear,5,\r\n')
