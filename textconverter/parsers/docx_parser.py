@@ -7,8 +7,6 @@ dropped, with a single warning listing them.
 """
 from __future__ import annotations
 
-import hashlib
-import os
 import re
 import zipfile
 from collections import Counter
@@ -20,22 +18,16 @@ from ..ast import (
     BlockQuote, CodeInline, Document, Equation, Footnote, Heading, HorizontalRule, Image, LineBreak, Link, Node,
     Paragraph, Table, TableCell, TableRow, Text,
 )
-from ..images import store_image
+from ..images import ImageStore
 from ..logger import log_warning
 from ..renderers._common import text_runs
 from ._docx_blocks import Field, Flow, Inline, ListRef, Numbering, tidy
 from ._docx_xml import NS, M, OFFICE, R, flag, local, val, w, xpath
 from ._latex_macros import lift_macros
 from ._math import split_math_env
+from ._office import MONOSPACE, is_code
 from ._omml import omml_to_latex
 
-# Fonts whose text is code; the lower-cased family name.
-_MONOSPACE = frozenset({
-    "consolas", "courier new", "courier", "lucida console", "cascadia code", "cascadia mono", "menlo",
-    "monaco", "source code pro", "dejavu sans mono", "liberation mono", "andale mono", "fira code",
-    "fira mono", "jetbrains mono", "roboto mono", "ubuntu mono", "sf mono", "noto sans mono",
-    "lucida sans typewriter", "monospace",
-})
 _CODE_STYLES = frozenset({"code", "source code", "preformatted text", "html preformatted", "macro text"})
 _QUOTE_STYLES = frozenset({"quote", "intense quote", "block text"})
 _HEADING = re.compile(r"^Heading (\d)$")
@@ -48,7 +40,7 @@ _NOTE_LAYOUT = ("separator", "continuationSeparator", "continuationNotice")
 _ALIGNED = re.compile(r"^\\begin\{aligned\} (.*) \\end\{aligned\}$", re.DOTALL)
 
 
-def _display_equation(math: etree._Element) -> Equation:
+def display_equation(math: etree._Element) -> Equation:
     """A display equation; a whole equation array is an ``align`` environment."""
     code = omml_to_latex(math)
     aligned = _ALIGNED.match(code)
@@ -106,11 +98,9 @@ class _Reader:
         self.part = document.part
         self._style_types = WD_STYLE_TYPE
         self._rt = RT
-        self.image_dir_name = image_dir_name
-        self.target_dir = os.path.join(output_dir or os.getcwd(), image_dir_name or "")
+        self._store = ImageStore(output_dir, image_dir_name)
         self.write_images = write_images
         self.dropped: Counter[str] = Counter()
-        self._images: dict[str, str] = {}
         self._styles: dict[tuple[str, str | None], object] = {}
         self._notes: dict[str, tuple[object, dict[str, etree._Element]]] = {}
         self._numbering: Numbering | None = None
@@ -238,7 +228,7 @@ class _Reader:
                 flow.group("quote", Paragraph(children=nodes), ctx.extra)
             elif lowered == "abstract" and nodes:
                 flow.group("abstract", Paragraph(children=nodes), ctx.extra)
-            elif lowered in _CODE_STYLES or self._is_code(nodes):
+            elif lowered in _CODE_STYLES or is_code(nodes):
                 flow.group("code", self._plain_text(el, keep_tabs=True).rstrip(), ctx.extra)
             elif nodes:
                 flow.leaf(Paragraph(children=nodes), ctx.extra)
@@ -259,13 +249,6 @@ class _Reader:
             else:
                 self.dropped["text box"] += 1
         return [*nodes, *extras]
-
-    @staticmethod
-    def _is_code(nodes: list[Node]) -> bool:
-        if not any(isinstance(n, CodeInline) and n.code.strip() for n in nodes):
-            return False
-        return all(isinstance(n, (CodeInline, LineBreak)) or (isinstance(n, Text) and not n.content.strip())
-                   for n in nodes)
 
     def _plain_text(self, p: etree._Element, keep_tabs: bool = False) -> str:
         """The text of a paragraph's runs, ``\\n`` for a line break; tabs stay when ``keep_tabs``."""
@@ -374,7 +357,7 @@ class _Reader:
             elif tag == f"{{{M}}}oMath":
                 ctx.emit(Equation(code=omml_to_latex(child), inline=True))
             elif tag == f"{{{M}}}oMathPara":
-                ctx.extra.extend(_display_equation(m) for m in child.findall(f"{{{M}}}oMath"))
+                ctx.extra.extend(display_equation(m) for m in child.findall(f"{{{M}}}oMath"))
             previous_equation_run = was_equation_run
 
     def _hyperlink(self, el: etree._Element, ctx: Inline) -> None:
@@ -406,7 +389,7 @@ class _Reader:
         fonts = props.find(w("rFonts"))
         if fonts is not None:
             names = (fonts.get(w(a)) for a in ("ascii", "hAnsi", "cs"))
-            fmt.code = any(n and n.lower() in _MONOSPACE for n in names)
+            fmt.code = any(n and n.lower() in MONOSPACE for n in names)
         char_style = props.find(w("rStyle"))
         if char_style is not None:
             style = self._style(val(char_style), "CHARACTER")
@@ -555,14 +538,7 @@ class _Reader:
         except KeyError:
             self.dropped["linked or missing image"] += 1
             return None
-        digest = hashlib.sha1(part.blob).hexdigest()
-        if digest not in self._images:
-            ext = re.sub(r"[^a-z0-9]", "", part.partname.ext.lower()) or "bin"
-            if ext in ("emf", "wmf"):
-                log_warning(f"Image in {ext.upper()} format kept as a file, but most viewers cannot show it.")
-            basename = os.path.basename(store_image(part.blob, self.target_dir, f"image_{len(self._images) + 1}.{ext}"))
-            self._images[digest] = f"{self.image_dir_name}/{basename}" if self.image_dir_name else basename
-        return Image(src=self._images[digest], alt=alt)
+        return Image(src=self._store.save(part.blob, part.partname.ext), alt=alt)
 
     def _drawing(self, drawing: etree._Element, ctx: Inline) -> None:
         outer = "not(ancestor::w:txbxContent)"

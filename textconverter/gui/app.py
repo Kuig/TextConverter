@@ -27,7 +27,7 @@ except ImportError:
     AI_AVAILABLE = False
 
 FORMAT_LABELS = {"markdown": "Markdown Files", "html": "HTML Files", "latex": "LaTeX Files",
-                 "json": "JSON Files", "pdf": "PDF Files", "docx": "Word Files", "image": "Images"}
+                 "json": "JSON Files", "pdf": "PDF Files", "docx": "Word Files", "pptx": "PowerPoint Files", "image": "Images"}
 
 
 def _filetypes(formats: dict, all_label: str | None) -> list[tuple[str, str]]:

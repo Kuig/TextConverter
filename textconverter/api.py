@@ -19,6 +19,7 @@ from .parsers.html_parser import parse_html
 from .parsers.latex_parser import parse_latex
 from .parsers.pdf_parser import parse_pdf
 from .parsers.docx_parser import parse_docx
+from .parsers.pptx_parser import parse_pptx
 from .parsers.image_parser import parse_image
 from .parsers.json_parser import parse_json
 
@@ -71,6 +72,9 @@ def _parse(
         )
     if from_format == "docx":
         return parse_docx(path, output_dir=output_dir, image_dir_name=image_dir_name,
+                          write_images=options.image_handling != "discard")
+    if from_format == "pptx":
+        return parse_pptx(path, output_dir=output_dir, image_dir_name=image_dir_name,
                           write_images=options.image_handling != "discard")
     if from_format == "image":
         return parse_image(path, config=config)
@@ -125,12 +129,12 @@ def _image_folder(handling: str, output_dir: str | None, image_dir_name: str | N
 def _doc_dir(from_format: str, output_dir: str | None, source_path: str | None) -> str:
     """Directory the parsed document's relative image paths resolve against.
 
-    The PDF and Word parsers write their images under ``output_dir`` (or the
+    The PDF, Word and PowerPoint parsers write their images under ``output_dir`` (or the
     current directory); an image source path is relative to the current directory;
     a text source references images next to the source file; text given
     directly resolves against the current directory.
     """
-    if from_format in ("pdf", "docx"):
+    if from_format in ("pdf", "docx", "pptx"):
         return output_dir or os.getcwd()
     if source_path and from_format != "image":
         return os.path.dirname(os.path.abspath(source_path))
@@ -387,26 +391,36 @@ def _convert_url(
             log_warning(f"Could not remove temporary file {temp_path}: {exc}")
 
 
-def _save_docx(
+def _office_writer(to_format: str) -> Callable[..., None]:
+    """The ``render_*(doc, path, base_dir=...)`` function of an Office output format."""
+    if to_format == "docx":
+        from .renderers.docx_renderer import render_docx
+        return render_docx
+    from .renderers.pptx_renderer import render_pptx
+    return render_pptx
+
+
+def _save_office(
     source: str,
     output_path: str,
+    to_format: str,
     options: ConvertOptions,
     from_format: str | None,
     config: AppConfig | None,
 ) -> None:
-    """Write the converted ``source`` as a Word file; the file appears only once complete."""
-    from .renderers.docx_renderer import render_docx
+    """Write the converted ``source`` as a Word or PowerPoint file; the file appears only once complete."""
+    write = _office_writer(to_format)
     if from_format is not None:
         check_choice("from_format", from_format, INPUT_FORMATS)
     handling = "embed" if options.image_handling in ("auto", "link") else options.image_handling
-    docx_options = replace(options, image_handling=handling)
+    office_options = replace(options, image_handling=handling)
     directory = os.path.dirname(os.path.abspath(output_path))
-    fd, temp_path = tempfile.mkstemp(suffix=".docx.tmp", dir=directory)
+    fd, temp_path = tempfile.mkstemp(suffix=f".{to_format}.tmp", dir=directory)
     os.close(fd)
     try:
-        _convert(source, "docx", docx_options, config or load_config(), from_format=from_format,
+        _convert(source, to_format, office_options, config or load_config(), from_format=from_format,
                  output_dir=directory, image_dir_name=f"{pathlib.Path(output_path).stem}_images",
-                 render=lambda doc: render_docx(doc, temp_path, base_dir=directory))
+                 render=lambda doc: write(doc, temp_path, base_dir=directory))
         os.replace(temp_path, output_path)
     finally:
         if os.path.exists(temp_path):
@@ -454,8 +468,8 @@ def save_to_file(
         raise ValueError(f"The output path is the source file itself: {output_path}")
 
     out_path = pathlib.Path(output_path)
-    if to_format == "docx":
-        _save_docx(source, output_path, options, from_format, config)
+    if to_format in ("docx", "pptx"):
+        _save_office(source, output_path, to_format, options, from_format, config)
         return
     if to_format == "pdf":
         from .renderers.pdf_renderer import render_pdf

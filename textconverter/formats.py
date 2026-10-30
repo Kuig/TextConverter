@@ -38,6 +38,8 @@ INPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
     Format("pdf", (".pdf",), binary=True, media_types=("application/pdf",)),
     Format("docx", (".docx",), binary=True, media_types=(
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",)),
+    Format("pptx", (".pptx",), binary=True, media_types=(
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",)),
     Format("image", (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"), binary=True,
            media_types=("image/",)),
 )}

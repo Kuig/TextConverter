@@ -112,6 +112,32 @@ def store_image(data: bytes, target_dir: str, basename: str) -> str:
         name = f"{base}_{counter}{ext}"
 
 
+class ImageStore:
+    """Writes the images an Office parser extracts, one file per distinct content.
+
+    Args:
+        output_dir: Parent of the image folder; the current directory when None.
+        image_dir_name: Name of the image folder inside ``output_dir``.
+    """
+
+    def __init__(self, output_dir: str | None, image_dir_name: str | None):
+        self.image_dir_name = image_dir_name
+        self.target_dir = os.path.join(output_dir or os.getcwd(), image_dir_name or "")
+        self._by_digest: dict[str, str] = {}
+
+    def save(self, blob: bytes, extension: str) -> str:
+        """Write ``blob`` as ``image_<n>.<extension>`` and return the ``src`` for the Image node."""
+        digest = hashlib.sha1(blob).hexdigest()
+        if digest not in self._by_digest:
+            ext = re.sub(r"[^a-z0-9]", "", extension.lower()) or "bin"
+            if ext in ("emf", "wmf"):
+                log_warning(f"Image in {ext.upper()} format kept as a file, but most viewers cannot show it.")
+            path = store_image(blob, self.target_dir, f"image_{len(self._by_digest) + 1}.{ext}")
+            basename = os.path.basename(path)
+            self._by_digest[digest] = f"{self.image_dir_name}/{basename}" if self.image_dir_name else basename
+        return self._by_digest[digest]
+
+
 class ImagePaths:
     """Tracks the image paths rewritten during one conversion.
 
