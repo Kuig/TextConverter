@@ -11,6 +11,7 @@ from typing import Any
 
 from . import _net
 from .ast import Document, Table, walk
+from .code_detector import fence_code_paragraphs
 from .images import ImagePaths, discard_links, embed_images, lower_image_descriptions, remove_images
 from .logger import log_action, log_warning
 
@@ -81,12 +82,13 @@ def _parse(
             output_dir=output_dir, image_dir_name=image_dir_name,
             write_images=options.image_handling != "discard",
         )
-    if from_format == "docx":
-        return parse_docx(path, output_dir=output_dir, image_dir_name=image_dir_name,
-                          write_images=options.image_handling != "discard")
-    if from_format == "pptx":
-        return parse_pptx(path, output_dir=output_dir, image_dir_name=image_dir_name,
-                          write_images=options.image_handling != "discard")
+    if from_format in ("docx", "pptx"):
+        parser = parse_docx if from_format == "docx" else parse_pptx
+        doc = parser(path, output_dir=output_dir, image_dir_name=image_dir_name,
+                     write_images=options.image_handling != "discard", keep_indentation=options.code_parsing)
+        if options.code_parsing:
+            fence_code_paragraphs(doc)
+        return doc
     if from_format == "xlsx":
         return parse_xlsx(path, output_dir=output_dir, image_dir_name=image_dir_name,
                           write_images=options.image_handling != "discard")

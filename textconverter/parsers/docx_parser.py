@@ -67,6 +67,7 @@ def parse_docx(
     output_dir: str | None = None,
     image_dir_name: str | None = None,
     write_images: bool = True,
+    keep_indentation: bool = False,
 ) -> Document:
     """Parse a Word document into an AST Document.
 
@@ -75,6 +76,7 @@ def parse_docx(
         output_dir: Base directory for the extracted images (current directory if None).
         image_dir_name: Image subdirectory name inside ``output_dir``.
         write_images: Extract the embedded images; when False they are left out.
+        keep_indentation: Keep a paragraph's leading spaces, for code detection.
 
     Raises:
         ValueError: If the file is not a readable ``.docx`` document.
@@ -85,13 +87,14 @@ def parse_docx(
         document = docx.Document(file_path)
     except (PackageNotFoundError, zipfile.BadZipFile, KeyError, etree.XMLSyntaxError) as exc:
         raise ValueError(f"Not a readable Word (.docx) document: {file_path} ({exc})") from exc
-    return _Reader(document, output_dir, image_dir_name, write_images).read()
+    return _Reader(document, output_dir, image_dir_name, write_images, keep_indentation).read()
 
 
 class _Reader:
     """Reads one python-docx document; see ``parse_docx``."""
 
-    def __init__(self, document, output_dir: str | None, image_dir_name: str | None, write_images: bool):
+    def __init__(self, document, output_dir: str | None, image_dir_name: str | None, write_images: bool,
+                 keep_indentation: bool = False):
         from docx.enum.style import WD_STYLE_TYPE
         from docx.opc.constants import RELATIONSHIP_TYPE as RT
         self.document = document
@@ -100,6 +103,7 @@ class _Reader:
         self._rt = RT
         self._store = ImageStore(output_dir, image_dir_name)
         self.write_images = write_images
+        self.keep_indentation = keep_indentation
         self.dropped: Counter[str] = Counter()
         self._styles: dict[tuple[str, str | None], object] = {}
         self._notes: dict[str, tuple[object, dict[str, etree._Element]]] = {}
@@ -331,7 +335,7 @@ class _Reader:
         while ctx.stack:
             self._end_field(ctx)
         nodes = lift_macros(text_runs(ctx.out))
-        return tidy(nodes), ctx
+        return tidy(nodes, keep_indentation=self.keep_indentation), ctx
 
     def _inline_children(self, parent: etree._Element, ctx: Inline) -> None:
         previous_equation_run = False

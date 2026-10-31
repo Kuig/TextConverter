@@ -90,8 +90,8 @@ def register_tools(mcp: object) -> None:
                 Inferred from the extension (for a URL, from its Content-Type) if None.
             template: HTML template: 'plain', 'light' or 'dark'.
             image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
-            code_parsing: Fence code blocks found by heuristic detection (Markdown
-                sources, PDF sources in text mode).
+            code_parsing: Fence code blocks found by heuristic detection (Markdown, Word
+                and PowerPoint sources, PDF sources in text mode).
             extract_html: Filter noise and keep the main content of HTML input.
             discard_links: Replace every hyperlink with its visible text.
             site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during
@@ -139,8 +139,8 @@ def register_tools(mcp: object) -> None:
                 Inferred from the extension (for a URL, from its Content-Type) if None.
             template: HTML template: 'plain', 'light' or 'dark' (ignored for .pdf, .docx, .pptx and .xlsx).
             image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
-            code_parsing: Fence code blocks found by heuristic detection (Markdown
-                sources, PDF sources in text mode).
+            code_parsing: Fence code blocks found by heuristic detection (Markdown, Word
+                and PowerPoint sources, PDF sources in text mode).
             extract_html: Filter noise and keep the main content of HTML input.
             discard_links: Replace every hyperlink with its visible text.
             site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during

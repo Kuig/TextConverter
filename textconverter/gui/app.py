@@ -189,7 +189,7 @@ with st.sidebar:
         format_func={"text": "Text layer", "raster": "Raster pages + AI transcription"}.get,
         help="Raster renders every page and transcribes it with the AI models below (for scans).",
     )
-    code_parsing = st.checkbox("Enable code detection", help="Markdown sources, and PDF sources in text mode.")
+    code_parsing = st.checkbox("Enable code detection", help="Markdown, Word and PowerPoint sources, and PDF sources in text mode.")
     extract_html = st.checkbox("Clean HTML & extract main content")
     site_cleanup = st.checkbox("Site-specific cleanup (e.g. Wikipedia)", value=load_config().html.site_cleanup,
                                disabled=not extract_html)

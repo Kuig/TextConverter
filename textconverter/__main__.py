@@ -105,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_convert.add_argument(
         "--code-parsing",
         action="store_true",
-        help="Fence code blocks found by heuristic detection (Markdown sources, PDF sources in text mode).",
+        help="Fence code blocks found by heuristic detection (Markdown, Word and PowerPoint sources, PDF sources in text mode).",
     )
     p_convert.add_argument("--extract-html", action="store_true", help="Filter noise and extract main content from HTML.")
     p_convert.add_argument("--no-site-cleanup", action="store_true", help="Skip site-specific HTML cleanup (e.g. Wikipedia) even with --extract-html.")

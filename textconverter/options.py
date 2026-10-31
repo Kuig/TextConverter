@@ -17,7 +17,7 @@ class ConvertOptions:
         image_handling: One of ``formats.IMAGE_HANDLING_MODES``. ``"auto"``
             picks the output format's default (see the README's Image Handling).
         code_parsing: Fence code blocks found by the heuristic detector
-            (Markdown sources, and PDF sources in text mode).
+            (Markdown, Word and PowerPoint sources, and PDF sources in text mode).
         extract_html: Strip boilerplate and keep the main content of HTML input.
         discard_links: Replace every hyperlink with its visible text.
         site_cleanup: Run site-specific cleanup (e.g. Wikipedia) during

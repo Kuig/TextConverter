@@ -50,6 +50,49 @@ class DocxFixtureTest(BaseConverterTest):
         cls.warnings = [call.args[0] for call in warn.call_args_list]
 
 
+class TestCodeDetection(BaseConverterTest):
+    CODE = ["import os", "def f(x):", "    y = x + 1", "    if y:", "        return y", "    else:", "        return 0"]
+    PROSE = "Questa è una frase normale, con una virgola e (tra parentesi) un inciso."
+
+    def _save(self, tmp: str, *lines: str) -> str:
+        document = docx.Document()
+        for line in lines:
+            document.add_paragraph(line)
+        path = os.path.join(tmp, "code.docx")
+        document.save(path)
+        return path
+
+    def test_plain_paragraphs_of_code_become_one_block_with_the_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._save(tmp, self.PROSE, *self.CODE, self.PROSE)
+            markdown = textconverter.convert(path, "markdown", textconverter.ConvertOptions(code_parsing=True, image_handling="discard"))
+        self.assertIn("```python\n" + "\n".join(self.CODE) + "\n```", markdown)
+        self.assertEqual(markdown.count(self.PROSE), 2)
+
+    def test_nothing_changes_without_the_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            markdown = textconverter.convert(self._save(tmp, *self.CODE), "markdown", textconverter.ConvertOptions(image_handling="discard"))
+        self.assertNotIn("```", markdown)
+
+    def test_prose_stays_prose(self):
+        lines = [self.PROSE, "Vedi anche: la sezione seguente (pag. 3).", "Esempio:", "Il costo è 3 = 2 + 1."]
+        with tempfile.TemporaryDirectory() as tmp:
+            markdown = textconverter.convert(self._save(tmp, *lines), "markdown",
+                               textconverter.ConvertOptions(code_parsing=True, image_handling="discard"))
+        self.assertNotIn("```", markdown)
+
+    def test_code_in_a_monospaced_font_stays_one_block(self):
+        document = docx.Document()
+        for line in ("x = 1", "y = 2"):
+            document.add_paragraph().add_run(line).font.name = "Consolas"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "mono.docx")
+            document.save(path)
+            options = textconverter.ConvertOptions(image_handling="discard")
+            self.assertEqual(textconverter.convert(path, "markdown", options),
+                             textconverter.convert(path, "markdown", textconverter.ConvertOptions(code_parsing=True, image_handling="discard")))
+
+
 class TestFixtureStructure(DocxFixtureTest):
 
     def test_title_and_metadata(self):

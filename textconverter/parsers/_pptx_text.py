@@ -61,11 +61,13 @@ class TextReader:
     Args:
         part: The python-pptx part the text bodies belong to.
         dropped: Counts the features without a counterpart, for the parser's single warning.
+        keep_indentation: Keep a paragraph's leading spaces, for code detection.
     """
 
-    def __init__(self, part, dropped: Counter[str]):
+    def __init__(self, part, dropped: Counter[str], keep_indentation: bool = False):
         self._part = part
         self._dropped = dropped
+        self._keep_indentation = keep_indentation
 
     # ---- inline content -------------------------------------------------
 
@@ -87,7 +89,7 @@ class TextReader:
         for url, group in groupby(out, key=lambda pair: pair[1]):
             members = [node for node, _ in group]
             nodes.extend([Link(url=url, content=members)] if url else members)
-        return tidy(lift_macros(text_runs(nodes))), extras
+        return tidy(lift_macros(text_runs(nodes)), keep_indentation=self._keep_indentation), extras
 
     def _run(self, run: etree._Element, default_mono: bool, out: list[tuple[Node, str | None]]) -> None:
         text = "".join(t.text or "" for t in run.findall(a("t"))).replace("\t", " ").replace("\x0b", "\n")

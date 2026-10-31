@@ -277,6 +277,40 @@ class TestBoxPreamble(BaseConverterTest):
         self.assertIsNone(parse_box_preamble("An ordinary quote"))
 
 
+class TestCodeDetection(BaseConverterTest):
+    CODE = "def f(x):\n    y = x + 1\n    return y"
+
+    def _markdown(self, **options) -> str:
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        box = slide.shapes.add_textbox(100, 100, 3000000, 3000000)
+        box.text_frame.text = "Some introduction to the slide with enough plain words in it"
+        other = slide.shapes.add_textbox(100, 3200000, 3000000, 3000000)
+        lines = self.CODE.split("\n")
+        other.text_frame.text = lines[0]
+        for line in lines[1:]:
+            other.text_frame.add_paragraph().text = line
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "code.pptx")
+            prs.save(path)
+            return convert(path, "markdown", textconverter.ConvertOptions(image_handling="discard", **options))
+
+    def test_code_in_a_text_box_keeps_the_frame_line(self):
+        markdown = self._markdown(code_parsing=True)
+        self.assertIn("```python", markdown)
+        self.assertIn("```python" + chr(10) + self.CODE + chr(10) + "```", markdown.replace("> ", ""))
+        self.assertRegex(markdown, r"> Text box .x \d+%")
+
+    def test_nothing_changes_without_the_flag(self):
+        self.assertNotIn("```", self._markdown())
+
+    def test_the_short_text_of_real_slides_is_not_code(self):
+        markdown = convert(str(INPUT_DIR / "Test_slides.pptx"), "markdown",
+                           textconverter.ConvertOptions(image_handling="discard", code_parsing=True))
+        self.assertEqual(markdown, convert(str(INPUT_DIR / "Test_slides.pptx"), "markdown",
+                                           textconverter.ConvertOptions(image_handling="discard")))
+
+
 class TestPptxThroughTheApi(BaseConverterTest):
 
     def test_markdown_from_the_fixture(self):

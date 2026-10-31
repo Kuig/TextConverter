@@ -2,8 +2,9 @@ from __future__ import annotations
 import re
 import string
 
-from textconverter.ast import CodeInline, Equation, Text, walk
+from textconverter.ast import BlockQuote, CodeBlock, CodeInline, Document, Equation, LineBreak, Node, Paragraph, Text, walk
 from textconverter.logger import log_info, log_action, log_warning
+from textconverter.parsers._pptx_xml import parse_box_preamble
 from textconverter.parsers.markdown_parser import TABLE_SEPARATOR, parse_inline
 
 # Characters that code is made of: ASCII punctuation only (accented letters, "★" or
@@ -19,6 +20,8 @@ _REFERENCE_ENTRY = re.compile(r'^\[\d+\]')
 _MARKERS = re.compile(r'(?<!\S)\[[^\]\s]{1,4}\](?!\S)')
 _URL_OR_EMAIL = re.compile(r'https?://\S+|\S+@\S+\.\w+')
 _CODE_INDICATORS = ("=", "(", ")", "[", "]", "{", "}", ";", "import", "print", "def", "return")
+# Up to this many words, a paragraph next to code may be a line of it that does not look like code alone.
+_SHORT_LINE_WORDS = 6
 
 
 KEYWORDS = {
@@ -215,6 +218,21 @@ def _prose_copy(block: str) -> str:
     return "\n".join(lines)
 
 
+def _code_block(block: str) -> tuple[bool, str | None]:
+    """Whether a block is unfenced code, and its language.
+
+    Second check on the text a reader would see (the block itself is kept as
+    is: removing "emphasis" from real code turned __init__ into init).
+    """
+    if not _is_candidate(block.strip()):
+        return False, None
+    is_code, lang = detect_code(block)
+    if not is_code:
+        return False, None
+    still_code, still_lang = detect_code(_prose_copy(block))
+    return still_code, (still_lang or lang) if still_code else None
+
+
 def pre_process_markdown_code(text: str) -> str:
     """Detect and wrap code blocks in a Markdown text using a heuristic algorithm.
 
@@ -239,21 +257,10 @@ def pre_process_markdown_code(text: str) -> str:
             classified_blocks.append((False, None, block))
             continue
 
-        if _is_candidate(stripped):
-            is_code, lang = detect_code(block)
-            if is_code:
-                # Second check on the text a reader would see (the block itself is kept
-                # as is: removing "emphasis" from real code turned __init__ into init)
-                still_code, still_lang = detect_code(_prose_copy(block))
-                if still_code:
-                    log_action(f"Detected code block (language: {still_lang or lang or 'unknown'}) for: {block[:60]}...")
-                    classified_blocks.append((True, still_lang or lang, block))
-                else:
-                    classified_blocks.append((False, None, block))
-            else:
-                classified_blocks.append((False, None, block))
-        else:
-            classified_blocks.append((False, None, block))
+        is_code, lang = _code_block(block)
+        if is_code:
+            log_action(f"Detected code block (language: {lang or 'unknown'}) for: {block[:60]}...")
+        classified_blocks.append((is_code, lang, block))
 
     # Merge consecutive code blocks
     merged_blocks: list[str] = []
@@ -281,3 +288,101 @@ def pre_process_markdown_code(text: str) -> str:
         merged_blocks.append(f"```{lang_str}\n{merged_code}\n```")
 
     return "\n\n".join(merged_blocks)
+
+
+def _plain_paragraph(node: Node) -> str | None:
+    """The text of a paragraph of unformatted text and line breaks; None for anything else."""
+    if not isinstance(node, Paragraph) or not node.children:
+        return None
+    parts = []
+    for child in node.children:
+        if isinstance(child, LineBreak):
+            parts.append("\n")
+        elif isinstance(child, Text) and not (child.bold or child.italic or child.strikethrough or child.script):
+            parts.append(child.content)
+        else:
+            return None
+    return "".join(parts)
+
+
+def _is_code_paragraph(text: str) -> bool:
+    """Whether a paragraph is code: ``_code_block``, with a keyword or indentation besides.
+
+    Slides are full of short text heavy in punctuation and capitals ("Parameters;",
+    "the runtime (AOT/JIT)") that the punctuation alone would pass.
+    """
+    if not _code_block(text)[0]:
+        return False
+    metrics = is_code(text)[2]
+    return metrics["keywords"] > 0 or metrics["indent"] > 0
+
+
+def _absorb_short_lines(texts: list[str | None], code: list[bool]) -> None:
+    """Mark as code the short paragraphs around code: lines like ``x = 1`` or ``else:`` are not code alone.
+
+    One line per paragraph is how code usually sits in Word and PowerPoint.
+    From a line of code, the short paragraphs that follow (and, likewise, those
+    before it) join up to the last one with a code indicator, or all of them
+    when they end at more code.
+    """
+    def short(i: int) -> bool:
+        return texts[i] is not None and 0 < len(texts[i].split()) <= _SHORT_LINE_WORDS
+
+    last = len(texts) - 1
+    for step, starts in ((1, range(last + 1)), (-1, range(last, -1, -1))):
+        for start in starts:
+            if not code[start]:
+                continue
+            i, join_to = start + step, None
+            while 0 <= i <= last and not code[i] and short(i):
+                if any(indicator in texts[i] for indicator in _CODE_INDICATORS):
+                    join_to = i
+                i += step
+            if 0 <= i <= last and code[i]:
+                join_to = i
+            if join_to is not None:
+                for i in range(start, join_to + step, step):
+                    code[i] = True
+
+
+def _without_indentation(block: Node) -> Node:
+    """The block with no leading spaces, as a paragraph that is not code has."""
+    if isinstance(block, Paragraph) and block.children and isinstance(block.children[0], Text):
+        block.children[0].content = block.children[0].content.lstrip()
+    return block
+
+
+def _fence_blocks(blocks: list[Node]) -> list[Node]:
+    """The blocks with each run of code paragraphs merged into a CodeBlock."""
+    texts = [_plain_paragraph(block) for block in blocks]
+    code = [text is not None and _is_code_paragraph(text) for text in texts]
+    _absorb_short_lines(texts, code)
+    fenced: list[Node] = []
+    run: list[str] = []
+    for block, text, is_code in zip([*blocks, None], [*texts, None], [*code, False]):
+        if is_code:
+            run.append(text)
+            continue
+        if run:
+            source = "\n".join(run).rstrip()
+            log_action(f"Detected code block for: {source[:60]}...")
+            fenced.append(CodeBlock(code=source, language=detect_code(source)[1]))
+            run = []
+        if block is not None:
+            fenced.append(_without_indentation(block))
+    return fenced
+
+
+def fence_code_paragraphs(doc: Document) -> None:
+    """Turn the unformatted paragraphs that read as code into code blocks, in place.
+
+    For sources without Markdown text to read (Word, PowerPoint). Only the
+    document's blocks and its quotes are looked at, and only paragraphs of
+    plain text; the frame line of a text box stays.
+    """
+    doc.children[:] = _fence_blocks(doc.children)
+    for quote in doc.children:
+        if isinstance(quote, BlockQuote) and quote.children:
+            first = _plain_paragraph(quote.children[0]) or ""
+            kept = 1 if parse_box_preamble(first) else 0
+            quote.children[kept:] = _fence_blocks(quote.children[kept:])

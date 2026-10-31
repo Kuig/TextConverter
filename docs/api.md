@@ -27,7 +27,7 @@ How a document is converted. Values are checked on creation: an unknown `templat
 
 - `template`: HTML template: `"plain"`, `"light"` (also `"light-theme"`, `"pretty"`) or `"dark"` (also `"dark-theme"`). Used for HTML output.
 - `image_handling`: `"auto"` (default, format-dependent), `"describe"`, `"embed"`, `"link"` or `"discard"` (see the README's [Image Handling](../README.md#image-handling)). `"auto_latex"` is also accepted, as the mode `auto` uses on LaTeX/JSON output, but it's not meant to be set directly since its behavior may change.
-- `code_parsing`: Enable heuristic code-block detection (Markdown sources, and PDF sources in text mode).
+- `code_parsing`: Enable heuristic code-block detection (Markdown, Word and PowerPoint sources, and PDF sources in text mode). In Word and PowerPoint it looks at paragraphs of unformatted text, also in quotes and text boxes, and merges the adjacent ones it recognizes; text in a monospaced font or a code style is read as code without it.
 - `extract_html`: Strip boilerplate and isolate main content when parsing HTML.
 - `discard_links`: Replace every hyperlink with its visible text (any source format).
 - `site_cleanup`: Override for site-specific HTML cleanup during `extract_html`. `None` uses the `html.site_cleanup` config default; `False` disables it for this call.

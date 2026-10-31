@@ -20,8 +20,8 @@ _TASK = {"☐": False, "☑": True}
 _LABEL_SEPARATOR = re.compile(r"^\s*[:.\-\u2013\u2014]?\s*")
 
 
-def tidy(nodes: list[Node]) -> list[Node]:
-    """Merge adjacent code and trim the paragraph's edges."""
+def tidy(nodes: list[Node], keep_indentation: bool = False) -> list[Node]:
+    """Merge adjacent code and trim the paragraph's edges (the end only, with ``keep_indentation``)."""
     merged: list[Node] = []
     for node in nodes:
         if isinstance(node, CodeInline) and merged and isinstance(merged[-1], CodeInline):
@@ -32,7 +32,7 @@ def tidy(nodes: list[Node]) -> list[Node]:
         del merged[0]
     while merged and isinstance(merged[-1], LineBreak):
         del merged[-1]
-    if merged and isinstance(merged[0], Text):
+    if merged and isinstance(merged[0], Text) and not keep_indentation:
         merged[0] = replace(merged[0], content=merged[0].content.lstrip())
     if merged and isinstance(merged[-1], Text):
         merged[-1] = replace(merged[-1], content=merged[-1].content.rstrip())

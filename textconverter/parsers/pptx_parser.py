@@ -41,6 +41,7 @@ def parse_pptx(
     output_dir: str | None = None,
     image_dir_name: str | None = None,
     write_images: bool = True,
+    keep_indentation: bool = False,
 ) -> Document:
     """Parse a PowerPoint presentation into an AST Document.
 
@@ -49,6 +50,7 @@ def parse_pptx(
         output_dir: Base directory for the extracted images (current directory if None).
         image_dir_name: Image subdirectory name inside ``output_dir``.
         write_images: Extract the pictures; when False they are left out.
+        keep_indentation: Keep a paragraph's leading spaces, for code detection.
 
     Raises:
         ValueError: If the file is not a readable ``.pptx`` presentation.
@@ -59,7 +61,7 @@ def parse_pptx(
         presentation = Presentation(file_path)
     except (PackageNotFoundError, zipfile.BadZipFile, KeyError, etree.XMLSyntaxError) as exc:
         raise ValueError(f"Not a readable PowerPoint (.pptx) presentation: {file_path} ({exc})") from exc
-    return _Reader(presentation, output_dir, image_dir_name, write_images).read()
+    return _Reader(presentation, output_dir, image_dir_name, write_images, keep_indentation).read()
 
 
 @dataclass
@@ -85,11 +87,13 @@ def _is_text_shape(shape: etree._Element) -> bool:
 class _Reader:
     """Reads one python-pptx presentation; see ``parse_pptx``."""
 
-    def __init__(self, presentation, output_dir: str | None, image_dir_name: str | None, write_images: bool):
+    def __init__(self, presentation, output_dir: str | None, image_dir_name: str | None, write_images: bool,
+                 keep_indentation: bool = False):
         self.presentation = presentation
         self.width = float(presentation.slide_width)
         self.height = float(presentation.slide_height)
         self.write_images = write_images
+        self.keep_indentation = keep_indentation
         self.dropped: Counter[str] = Counter()
         self._store = ImageStore(output_dir, image_dir_name)
 
@@ -140,7 +144,7 @@ class _Reader:
     # ---- slides -----------------------------------------------------------
 
     def _slide(self, slide) -> _Slide:
-        reader = TextReader(slide.part, self.dropped)
+        reader = TextReader(slide.part, self.dropped, keep_indentation=self.keep_indentation)
         items = list(iter_items(xpath(slide.element, "p:cSld/p:spTree")[0]))
         title = next((i for i in items if _placeholder_type(i.el) in _TITLE_TYPES), None) or self._guess_title(items)
         level, nodes = self._title(reader, title)

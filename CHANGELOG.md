@@ -52,11 +52,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `save_to_file()` returns the list of paths written.
+- The Windows context menu goes from every source to every target, with Excel and CSV added, except JSON and a format to
+  itself (HTML to HTML stays, to clean a page up). Results are named `<name>_converted<ext>`, then `<name>_converted2<ext>`
+  and so on, so nothing is overwritten; `register.reg` replaces the earlier entries. "main content" entries now read like
+  "to Markdown (.md) - main content".
+- `code_parsing` also works on Word and PowerPoint sources: unformatted paragraphs that read as code become one code block.
+- With a `.csv` or `.xlsx` target and no table, the error tells the likely cause, and suggests `pdf_mode="raster"` for a PDF.
 - Word and PowerPoint parsers share image storage (`ImageStore`) and monospace detection, and the renderers
   share how images are read and file properties are written.
 - `lift_macros` (reading reference macros written as text) moved from the HTML parser to the
   shared `parsers/_latex_macros.py`; `images.store_image` and `renderers/_common.safe_href` are
   now public helpers.
+
+### Fixed
+
+- LaTeX tables that were lost or garbled, in every output format: `tabularx`, `tabular*`, `tabulary`, `longtable` and
+  `xltabular` are tables, a float keeps all its tables, and `sidewaystable` and `wraptable` keep their caption. `\multicolumn`
+  and `\multirow` keep their text (a `\multicolumn` is followed by blank cells), rule and color commands leave no trace in the
+  cells (`\cline`, `\cmidrule(lr){1-2}`, `owcolor`, ...), and a row or cell no longer ends inside a group or a nested table.
+  A `longtable`'s repeated head and feet are not rows, and its caption and label go to the table.
+- CSV and Excel cells keep math (`$x^2$`), citations and cross-references; CSV also keeps inline code. They used to come out empty.
+- The confirmation of a `.csv` output with several tables named a file that does not exist: CLI, MCP and GUI report the files written.
+- The context menu entries "to HTML" of a `.html` file always failed, because the output was the source file.
+- A PowerPoint deck made only of level 1 headings without text had no slide: each now gets a title slide.
+- A first slide under a level 2 heading took the title layout with up to two paragraphs: it now needs a single line of at
+  most 80 characters.
 
 ## [0.3.1] - 2026-10-29
 
