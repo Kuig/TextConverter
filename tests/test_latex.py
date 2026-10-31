@@ -5,7 +5,7 @@ Usage: python -m unittest discover -s tests -p "test_latex.py"
 from __future__ import annotations
 
 import textconverter
-from _support import BaseConverterTest, setUpModule, tearDownModule, INPUT_DIR, read
+from _support import BaseConverterTest, setUpModule, tearDownModule
 
 
 class TestLatexParser(BaseConverterTest):

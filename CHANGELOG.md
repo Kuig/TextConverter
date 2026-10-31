@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A link that would run code points to `#` in Markdown and LaTeX too, with a warning; JSON output keeps the address.
 - `embed` on LaTeX acts as `link` with a warning, and `data:` images become files.
 - `Citation.style` keeps the star (`citet*`); JSON output gains `Document.section_root` and `LineBreak.author_separator`.
+- The Markdown, LaTeX and HTML parsers are split by concept: inline syntax, tables and page cleanup have
+  their own modules (`_markdown_inline.py`, `_latex_inline.py`, `_latex_tables.py`, `_html_extract.py`,
+  `_html_tags.py`). Behaviour does not change.
 
 ### Fixed
 

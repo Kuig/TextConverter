@@ -16,7 +16,7 @@ from openpyxl.styles import Font
 import json
 
 from textconverter import ConvertOptions, convert, convert_text, save_to_file
-from textconverter.ast import CodeBlock, Document, Footnote, Heading, Image, Link, Table, Text, walk
+from textconverter.ast import CodeBlock, Footnote, Heading, Image, Link, Table, Text, walk
 from textconverter.formats import OUTPUT_FORMATS, infer_input_format, infer_input_format_from_media_type
 from textconverter.parsers._excel_formulas import compress, expand
 from textconverter.parsers.xlsx_parser import format_value, parse_xlsx

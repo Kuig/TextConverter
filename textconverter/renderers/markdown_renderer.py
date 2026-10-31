@@ -7,7 +7,7 @@ from ..ast import (
     TableCell, Text,
 )
 from ..parsers._latex_macros import REFERENCE_MACROS
-from ..parsers.markdown_parser import emphasis_flanking, trim_bare_url
+from ..parsers._markdown_inline import emphasis_flanking, trim_bare_url
 from ._common import (
     EMPHASIS_STYLES, bibliography_paragraphs, caption_paragraphs, latex_reference_macro, split_spaces, style_extent,
     table_grid, text_runs, text_style,

@@ -507,7 +507,6 @@ class TestDocxRenderer(DocxOutputTest):
             self.assertNotIn(b"<w:sdt>", z.read("word/document.xml"))
 
     def test_a_bibliography_survives(self):
-        from textconverter.ast import Bibliography
         out = self._save("Text \\cite{a}.\n\n\\bibliographystyle{plain}\n\n\\bibliography{refs}\n\n\\bibitem{a} One.\n")
         doc = textconverter.convert(out, "json", textconverter.ConvertOptions(image_handling="link"))
         self.assertIn('"Bibliography"', doc)

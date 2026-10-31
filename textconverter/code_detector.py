@@ -3,9 +3,10 @@ import re
 import string
 
 from textconverter.ast import BlockQuote, CodeBlock, CodeInline, Document, Equation, LineBreak, Node, Paragraph, Text, walk
-from textconverter.logger import log_info, log_action, log_warning
+from textconverter.logger import log_info, log_action
 from textconverter.parsers._office import parse_box_preamble
-from textconverter.parsers.markdown_parser import TABLE_SEPARATOR, parse_inline
+from textconverter.parsers._markdown_inline import parse_inline
+from textconverter.parsers.markdown_parser import TABLE_SEPARATOR
 
 # Characters that code is made of: ASCII punctuation only (accented letters, "★" or
 # typographic quotes in prose are not code).

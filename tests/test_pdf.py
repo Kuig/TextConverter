@@ -10,7 +10,7 @@ from unittest.mock import patch
 import textconverter
 from textconverter.config import AppConfig
 from textconverter.ast import Document, Image, Paragraph, Text
-from _support import BaseConverterTest, setUpModule, tearDownModule, INPUT_DIR, OUTPUT_DIR, read
+from _support import BaseConverterTest, setUpModule, tearDownModule, INPUT_DIR, OUTPUT_DIR
 
 
 class TestPdfParser(BaseConverterTest):

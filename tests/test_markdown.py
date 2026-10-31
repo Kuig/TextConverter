@@ -5,7 +5,7 @@ Usage: python -m unittest discover -s tests -p "test_markdown.py"
 from __future__ import annotations
 
 import textconverter
-from _support import BaseConverterTest, setUpModule, tearDownModule, INPUT_DIR, read
+from _support import BaseConverterTest, setUpModule, tearDownModule, INPUT_DIR
 
 
 class TestMarkdownParser(BaseConverterTest):
@@ -258,7 +258,7 @@ class TestMarkdownBlocks(BaseConverterTest):
         self.assertEqual(_doc(_md(md)), _doc(md))
 
     def test_setext_headings(self):
-        from textconverter.ast import Heading, Paragraph
+        from textconverter.ast import Paragraph
         doc = _doc("Title\n=====\n\nSub\n---\n\ntext\n\n---\n")
         self.assertEqual([(type(n).__name__, getattr(n, "level", None)) for n in doc.children],
                          [("Heading", 1), ("Heading", 2), ("Paragraph", None), ("HorizontalRule", None)])

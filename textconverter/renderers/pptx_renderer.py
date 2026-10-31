@@ -22,7 +22,7 @@ from ..ast import (
 from ..logger import log_warning
 from ..parsers._office import BoxFrame, parse_box_preamble
 from ..parsers._pptx_xml import DEFAULT_SECTION, NS, P, a
-from ._common import figure_image, lower_bibliography, plain_text, table_grid
+from ._common import lower_bibliography, plain_text, table_grid
 from ._office import image_bytes, write_properties
 from ._pptx_writer import (
     EMU_PER_PT, TABLE_SIZE, Line, TextWriter, cell_height, fit, line_size, lines_height, lines_of,

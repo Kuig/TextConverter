@@ -29,6 +29,7 @@ _ONLY_COMMANDS = re.compile(rf'\s*(?:{BIBLIOGRAPHY_COMMAND.pattern}\s*)+$')
 _BIB_ITEM = re.compile(r'\s*\\bibitem(?:\[([^\]\n]*)\])?\{([^{}\n]*)\}\s*')
 _BIB_BEGIN = re.compile(r'\s*\\begin\{thebibliography\}\{([^{}\n]*)\}\s*$')
 _BIB_END = re.compile(r'\s*\\end\{thebibliography\}\s*$')
+ENV_BOUNDARY = re.compile(r'\\(begin|end)\{[^}]*\}')
 
 
 def find_balanced_braces(text: str, start_pos: int) -> tuple[str, int]:
@@ -105,6 +106,18 @@ def extract_macro_args(text: str, macro_name: str, start_pos: int = 0) -> tuple[
             break
             
     return args, pos, idx
+
+
+def strip_macro(text: str, macro_name: str) -> str:
+    """Remove every occurrence of a macro along with its arguments."""
+    pos = 0
+    while True:
+        _, start, end = extract_macro_args(text, macro_name, pos)
+        if start == -1:
+            break
+        text = text[:start] + text[end:]
+        pos = start
+    return text
 
 
 def _optional_args(text: str, idx: int) -> tuple[list[str], int]:
