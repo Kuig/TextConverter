@@ -103,8 +103,8 @@ class TestCsvPipeline(BaseConverterTest):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "x.pdf")
             with patch("textconverter.api.parse_pdf", return_value=Document()):
-                with open(path, "wb"):
-                    pass
+                with open(path, "wb") as f:
+                    f.write(b"%PDF-1.7")
                 with self.assertRaisesRegex(ValueError, "pdf_mode 'raster'"):
                     convert(path, "csv")
                 with self.assertRaisesRegex(ValueError, "did not transcribe"):

@@ -10,7 +10,7 @@ TextConverter converts between PDF, Word (.docx), PowerPoint (.pptx), Excel (.xl
 - **Remote Image Downloading**: Automatically downloads and cleans remote images referenced in webpages, applying OS-safe filename sanitization and exact binary content-based deduplication to prevent duplicate copies on disk.
 - **Image Description**: AI-powered classification and description of embedded images via a configurable provider (Ollama by default).
 - **Code Detection**: Fast deterministic local heuristic analysis to detect and fence code blocks.
-- **LaTeX Parsing**: Extracts the title block, abstract, figure and table captions and labels, and typographic quotes from LaTeX source, rendering them semantically in all output formats.
+- **LaTeX Parsing**: Extracts the title block, abstract, figure and table captions and labels, and typographic quotes from LaTeX source, rendering them semantically in all output formats. Citations, cross-references and the bibliography stay LaTeX macros in every format, so they come back unchanged; `\input` files in the source's folder are included and the author's macros expanded.
 
 ## Installation
 
@@ -48,9 +48,9 @@ The `--image-handling` option (or the `image_handling` parameter in the API) det
 ### Supported Strategies
 
 * **`describe`**: AI-powered analysis and description. Classifies every image, then describes photos, diagrams, charts and the like with the description model, and transcribes text, tables, formulas and page scans with the OCR model (GLM-OCR by default; without one, the description model transcribes them). The calls are grouped by model, so each model is loaded once per conversion, and an image file shown several times is processed once. In the output, each image becomes a reference line followed by its description between `----- Start/End of picture description -----` markers (an image inside a link, a table cell or a heading keeps the reference line there, and its description follows the paragraph, table or heading; a figure's caption follows the description); tables, formulas and formatting in the answer become real tables, equations and text in every format (JSON output keeps the image node with its `description` and `category`).
-* **`embed`**: Base64 inline embedding. Reads local or downloaded images from disk, guesses their MIME types, and encodes their binary data into inline Data URLs (`data:image/...;base64,...`). Perfect for creating self-contained documents (like HTML): downloaded and PDF-extracted images only pass through a temporary folder, so no image folder is left next to the output.
+* **`embed`**: Base64 inline embedding. Reads local or downloaded images from disk, guesses their MIME types, and encodes their binary data into inline Data URLs (`data:image/...;base64,...`). Perfect for creating self-contained documents (like HTML): downloaded and PDF-extracted images only pass through a temporary folder, so no image folder is left next to the output. LaTeX cannot hold an image in its text: there `embed` acts as `link`, with a warning.
 * **`link`**: File-based referencing. Preserves or downloads images, sanitizing their filenames, and references them using standard relative paths (`![alt](path)` in Markdown, `<img>` in HTML, `\includegraphics{...}` in LaTeX). No AI processing is executed.
-* **`discard`**: Total removal. Strips all `Image` nodes from the AST, omitting them entirely from the final rendered output.
+* **`discard`**: Total removal. Strips all `Image` nodes from the AST, with their captions and any link left empty, omitting them entirely from the final rendered output.
 * **`auto_latex`** (internal): Hybrid mode designed for LaTeX/JSON, used automatically by `auto` for those formats (see below). Traverses the document and uses the AI models to classify and transcribe only text/table/formula images, replacing each one with its content (paragraphs, a table, an equation); for drawings, photos, or diagrams, it skips the description to save resources and falls back to rendering standard graphics references. It is not an explicit `--image-handling` CLI choice, and its behavior may change, so avoid setting it directly through the API/MCP `image_handling` parameter.
 
 ### The `auto` Strategy (`image_handling="auto"`)
@@ -117,7 +117,7 @@ textconverter convert DocsInput/document.md DocsOutput/document.docx
 # Any source to PowerPoint (a section is a section, a slide is a level 2 heading; footnotes become speaker notes)
 textconverter convert DocsInput/document.md DocsOutput/slides.pptx
 
-# A presentation to Markdown (text boxes become quotes that give their position on the slide)
+# A presentation to Markdown (text boxes become quotes that give their position on the slide and their font size)
 textconverter convert DocsInput/slides.pptx DocsOutput/slides.md
 
 # A workbook to Markdown (a heading and a table per sheet, formulas as an `excel` code block under each table)

@@ -55,6 +55,38 @@ def _bullet_kind(props: etree._Element | None) -> str | None:
     return next((kind for kind in _BULLET_KINDS if props.find(a(kind)) is not None), None)
 
 
+def _size(props: etree._Element | None) -> float | None:
+    """The size in points that run properties set."""
+    value = props.get("sz") if props is not None else None
+    return int(value) / 100 if value and value.isdigit() else None
+
+
+def dominant_font(body: etree._Element, defaults: list[etree._Element]) -> float | None:
+    """The font size of most of a text body's characters, in points.
+
+    A run tells its size, else the body's list style does, else ``defaults``
+    (the list styles it inherits). None when none of them does.
+    """
+    styles = [body.find(a("lstStyle")), *defaults]
+    sizes: Counter[float] = Counter()
+    for paragraph in body.findall(a("p")):
+        props = paragraph.find(a("pPr"))
+        level = int(props.get("lvl", "0")) if props is not None else 0
+        inherited = next((size for size in (_size(_level_defaults(style, level)) for style in styles) if size), None)
+        for run in paragraph:
+            if isinstance(run.tag, str) and run.tag in (a("r"), a("fld")):
+                text = "".join(t.text or "" for t in run.findall(a("t"))).strip()
+                size = _size(run.find(a("rPr"))) or inherited
+                if text and size:
+                    sizes[size] += len(text)
+    return sizes.most_common(1)[0][0] if sizes else None
+
+
+def _level_defaults(style: etree._Element | None, level: int) -> etree._Element | None:
+    props = level_properties(style, level)
+    return props.find(a("defRPr")) if props is not None else None
+
+
 class TextReader:
     """Reads the text bodies of one part (a slide or its notes), whose relationships resolve the links.
 

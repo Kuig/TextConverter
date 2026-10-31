@@ -112,6 +112,7 @@ class Flow:
         self._lists: list[tuple[ListBlock, object, int]] = []
         self._seen: Counter = Counter()
         self._caption: tuple[list[Node], str | None] | None = None
+        self.language: str | None = None  # of the code group being read
 
     def close(self) -> None:
         """End the open group or list."""
@@ -121,7 +122,8 @@ class Flow:
             if kind == "code":
                 code = "\n".join(items).strip("\n")
                 if code.strip():
-                    self.out.append(CodeBlock(code=code))
+                    self.out.append(CodeBlock(code=code, language=self.language))
+                self.language = None
             elif kind == "quote":
                 self.out.append(BlockQuote(children=items))
             else:

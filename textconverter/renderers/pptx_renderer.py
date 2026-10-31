@@ -20,11 +20,12 @@ from ..ast import (
     Paragraph, Table, Text, walk,
 )
 from ..logger import log_warning
-from ..parsers._pptx_xml import NS, P, a, parse_box_preamble
-from ._common import figure_image, plain_text, table_grid
+from ..parsers._office import BoxFrame, parse_box_preamble
+from ..parsers._pptx_xml import DEFAULT_SECTION, NS, P, a
+from ._common import figure_image, lower_bibliography, plain_text, table_grid
 from ._office import image_bytes, write_properties
 from ._pptx_writer import (
-    EMU_PER_PT, TABLE_SIZE, Line, TextWriter, cell_height, fit, lines_height, lines_of,
+    EMU_PER_PT, TABLE_SIZE, Line, TextWriter, cell_height, fit, line_size, lines_height, lines_of,
 )
 
 SLIDE_WIDTH = 12192000
@@ -39,7 +40,6 @@ _COLUMN_GAP = 300000
 _PICTURE_SHARE = 0.4
 _TITLE_SIZE = 32.0
 _SECTIONS_URI = "{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"
-_DEFAULT_SECTION = "Default Section"
 _LAYOUT_TITLE, _LAYOUT_CONTENT, _LAYOUT_TITLE_ONLY = 0, 1, 5
 # The longest paragraph under a level 2 heading that still reads as a subtitle.
 _SUBTITLE_LENGTH = 80
@@ -105,6 +105,7 @@ class _Deck:
 
     def write(self, doc: Document, output_path: str) -> None:
         write_properties(self.prs.core_properties, doc)
+        lower_bibliography(doc)
         plans, sections = self._plan(doc)
         slides = []
         for index, plan in enumerate(plans):
@@ -223,7 +224,7 @@ class _Deck:
         placed, loose = [], []
         for quote in plan.quotes:
             frame = parse_box_preamble(plain_text(quote.children[0].children)) if _starts_with_paragraph(quote) else None
-            (placed if frame else loose).append((quote, frame))
+            (placed if frame is not None and frame.placed else loose).append((quote, frame))
         loose_lines = [lines_of(_quote_blocks(q, bool(f))) for q, f in loose]
         grids = [table_grid(t) for t in plan.tables]
 
@@ -257,10 +258,12 @@ class _Deck:
         box = slide.shapes.add_textbox(x, y, width, height)
         self.text.fill(box.text_frame, lines, scale)
 
-    def _placed_quote(self, slide, quote: BlockQuote, frame: tuple[int, int, int, int]) -> None:
-        x, y, w, h = (round(v / 100 * total) for v, total in zip(frame, (SLIDE_WIDTH, SLIDE_HEIGHT) * 2))
+    def _placed_quote(self, slide, quote: BlockQuote, frame: BoxFrame) -> None:
+        x, y, w, h = (round(v / 100 * total) for v, total in zip(
+            (frame.x, frame.y, frame.w, frame.h), (SLIDE_WIDTH, SLIDE_HEIGHT) * 2))
         lines = lines_of(_quote_blocks(quote, True))
-        scale = fit(lambda s: lines_height(lines, w, s), max(h, 300000) / EMU_PER_PT)
+        start = frame.font / line_size(lines[0]) if frame.font and lines else 1.0
+        scale = fit(lambda s: lines_height(lines, w, s), max(h, 300000) / EMU_PER_PT, start)
         height = max(h, int(lines_height(lines, w, scale) * EMU_PER_PT))
         self._text_box(slide, lines, x, y, max(w, 300000), height, scale)
 
@@ -333,7 +336,7 @@ class _Deck:
         members: dict[int | None, list[int]] = {}
         for plan, slide in zip(plans, slides):
             members.setdefault(plan.section, []).append(slide.slide_id)
-        groups = ([(_DEFAULT_SECTION, members.get(None, []))] if members.get(None) else [])
+        groups = ([(DEFAULT_SECTION, members.get(None, []))] if members.get(None) else [])
         groups += [(name, members.get(i, [])) for i, name in enumerate(sections)]
         root = self.prs.element
         ext_list = root.find(f"{{{P}}}extLst")

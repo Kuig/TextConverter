@@ -44,6 +44,39 @@ class TestPdfOutput(BaseConverterTest):
         with pymupdf.open(out) as pdf:
             self.assertIn("Fallback text", pdf[0].get_text())
 
+    def _pdf_text(self, source: str, name: str) -> str:
+        path = OUTPUT_DIR / f"{name}.md"
+        path.write_text(source, encoding="utf-8")
+        out = self._out(f"{name}.pdf")
+        with patch("textconverter.renderers.pdf_renderer.find_browser", return_value=None):
+            textconverter.save_to_file(str(path), str(out))
+        with pymupdf.open(out) as pdf:
+            return "".join(page.get_text() for page in pdf)
+
+    def test_notes_are_numbered_and_listed_at_the_end(self):
+        text = self._pdf_text("Text\\footnote{The note body} more[^1].\n\n[^1]: Another note\n", "pdf_notes")
+        self.assertNotIn("\\footnote", text)
+        self.assertLess(text.index("more"), text.index("The note body"))
+        self.assertIn("Another note", text)
+
+    def test_citations_are_keys_in_brackets(self):
+        text = self._pdf_text("See \\cite{a,b} and \\citet*{c} and \\parencite[p. 3]{d}.\n", "pdf_cites")
+        self.assertNotIn("\\cit", text)
+        self.assertIn("[a, b]", text)
+        self.assertIn("[c]", text)
+        self.assertIn("[d]", text)
+
+    def test_references_are_numbers_when_they_can_be_told(self):
+        source = ("# First\n\n## Second \\label{sec:s}\n\nTable: T \\label{tab:t}\n\n| a |\n|---|\n| 1 |\n\n"
+                  "See \\ref{sec:s}, \\ref{tab:t} and \\ref{nowhere}.\n")
+        text = self._pdf_text(source, "pdf_refs")
+        self.assertNotIn("\\ref", text)
+        self.assertIn("See 1.1, 1 and [nowhere].", " ".join(text.split()))
+
+    def test_html_keeps_the_macros(self):
+        html = textconverter.convert_text("See \\cite{a}.\n", "markdown", "html")
+        self.assertIn('<span class="tc-ref">\\cite{a}</span>', html)
+
     def test_unknown_engine_is_rejected(self):
         with self.assertRaises(ValueError):
             render_pdf("<p>x</p>", str(OUTPUT_DIR / "never.pdf"), engine="latex")

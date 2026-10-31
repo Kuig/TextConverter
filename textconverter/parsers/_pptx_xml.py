@@ -1,11 +1,12 @@
 """XML namespaces, slide geometry and shape flattening shared by the PowerPoint parser modules."""
 from __future__ import annotations
 
-import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 from lxml import etree
+
+from ._office import BoxFrame
 
 A = "http://schemas.openxmlformats.org/drawingml/2006/main"
 P = "http://schemas.openxmlformats.org/presentationml/2006/main"
@@ -20,6 +21,8 @@ NS = {
     "dgm": "http://schemas.openxmlformats.org/drawingml/2006/diagram",
 }
 
+# The section the renderer puts the slides before the first heading in: not a section of the document.
+DEFAULT_SECTION = "Default Section"
 # Namespaces an ``mc:Choice`` can require that this parser reads; any other requirement means the Fallback is used.
 _SUPPORTED_REQUIRES = frozenset({"a14", "p14", "p15", "a16"})
 
@@ -144,19 +147,9 @@ def _walk(children: list[etree._Element], transform: _Transform) -> Iterator[Ite
             yield Item(child, transform.apply(*frame) if frame else None)
 
 
-_BOX = "Text box"
-_PREAMBLE = re.compile(rf"^{_BOX} \(x (-?\d+)%, y (-?\d+)%, w (\d+)%, h (\d+)%\)$")
-
-
-def box_preamble(rect: Rect | None, slide_w: float, slide_h: float) -> str:
-    """The first line of the quote a secondary text box becomes: its frame, as percentages of the slide."""
+def slide_frame(rect: Rect | None, slide_w: float, slide_h: float, font: float | None = None) -> BoxFrame:
+    """A shape's frame as percentages of the slide."""
     if rect is None:
-        return _BOX
-    return (f"{_BOX} (x {round(100 * rect.x / slide_w)}%, y {round(100 * rect.y / slide_h)}%, "
-            f"w {round(100 * rect.w / slide_w)}%, h {round(100 * rect.h / slide_h)}%)")
-
-
-def parse_box_preamble(text: str) -> tuple[int, int, int, int] | None:
-    """``(x, y, w, h)`` in percent from a preamble written by ``box_preamble``, else None."""
-    match = _PREAMBLE.match(text.strip())
-    return tuple(int(g) for g in match.groups()) if match else None
+        return BoxFrame(font=font)
+    return BoxFrame(x=round(100 * rect.x / slide_w), y=round(100 * rect.y / slide_h),
+                    w=round(100 * rect.w / slide_w), h=round(100 * rect.h / slide_h), font=font)

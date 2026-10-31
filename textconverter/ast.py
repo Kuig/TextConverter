@@ -54,8 +54,8 @@ class CodeInline(Node):
 
 @dataclass
 class LineBreak(Node):
-    """A line break."""
-    pass
+    """A line break; ``author_separator`` marks the one between two authors (LaTeX ``\\and``)."""
+    author_separator: bool = False
 
 @dataclass
 class Footnote(Node):
@@ -66,17 +66,25 @@ class Footnote(Node):
 class Citation(Node):
     """A citation reference.
 
-    ``options`` holds the optional arguments as written in LaTeX
-    (``\\citep[e.g.][p.~3]{key}`` gives ``["e.g.", "p.~3"]``).
+    ``style`` is the macro as written (``cite``, ``citet*``, ``parencite``, ...)
+    and ``options`` its optional arguments (``\\citep[e.g.][p.~3]{key}`` gives
+    ``["e.g.", "p.~3"]``). For ``\\cites`` each key is one ``{...}`` group.
     """
     keys: list[str]
-    style: str = "cite" # cite, citet, citep
+    style: str = "cite"
     options: list[str] = field(default_factory=list)
 
 @dataclass
 class Reference(Node):
-    """A cross-reference to a label."""
+    """A cross-reference to a label.
+
+    ``style`` is the macro as written (``ref``, ``eqref``, ``cref``, ...) and
+    ``options`` its optional arguments. ``\\hyperref[target]{text}`` keeps
+    ``text`` in ``label`` and the target in ``options``.
+    """
     label: str
+    style: str = "ref"
+    options: list[str] = field(default_factory=list)
 
 @dataclass
 class Label(Node):
@@ -126,6 +134,25 @@ class Appendix(Node):
     pass
 
 @dataclass
+class BibEntry(Node):
+    """An entry of a ``thebibliography``: its key, the optional ``[label]`` and its text."""
+    key: str
+    children: list[InlineElement] = field(default_factory=list)
+    label: str | None = None
+
+@dataclass
+class Bibliography(Node):
+    """The bibliography of a document, kept so that citations can find it again in LaTeX.
+
+    ``commands`` are the macros that point to it, as written
+    (``\\bibliography{refs}``, ``\\printbibliography``, ...); ``entries`` the
+    entries of a ``thebibliography``, whose argument is ``widest``.
+    """
+    commands: list[str] = field(default_factory=list)
+    entries: list[BibEntry] = field(default_factory=list)
+    widest: str = "9"
+
+@dataclass
 class ListItem(Node):
     """An item within a list; ``checked`` is True or False for a task list item."""
     children: list[Node] = field(default_factory=list)
@@ -160,9 +187,9 @@ class Table(Node):
 class Equation(Node):
     """A mathematical equation node.
 
-    ``env`` names the display environment the equation came from (``align``,
-    ``gather*``, ...) when its body depends on it; None means a plain
-    display (or inline) equation.
+    ``env`` names the display environment the equation came from (``equation``,
+    ``align``, ``gather*``, ...); None means a plain, unnumbered display (or an
+    inline) equation.
     """
     code: str
     inline: bool = False
@@ -170,11 +197,16 @@ class Equation(Node):
 
 @dataclass
 class Document(Node):
-    """The root of the AST; ``title``, ``author`` and ``date`` are its metadata (empty when absent)."""
+    """The root of the AST; ``title``, ``author`` and ``date`` are its metadata (empty when absent).
+
+    ``section_root`` is the LaTeX command of a level 1 heading when it is not
+    ``section`` (``chapter`` or ``part``).
+    """
     children: list[Node] = field(default_factory=list)
     title: list[InlineElement] = field(default_factory=list)
     author: list[InlineElement] = field(default_factory=list)
     date: list[InlineElement] = field(default_factory=list)
+    section_root: str | None = None
 
 
 # The Document metadata fields, in the order the renderers write them.
@@ -186,7 +218,7 @@ NODE_TYPES: dict[str, type[Node]] = {
     for cls in (
         Text, Link, Image, CodeInline, LineBreak, Footnote, Citation, Reference, Label,
         Paragraph, Heading, CodeBlock, BlockQuote, Abstract, HorizontalRule, Appendix,
-        ListItem, ListBlock, TableCell, TableRow, Table, Equation, Document,
+        ListItem, ListBlock, TableCell, TableRow, Table, Equation, Document, BibEntry, Bibliography,
     )
 }
 
@@ -199,7 +231,7 @@ DESCRIPTION_END = "----- End of picture description -----"
 # Every attribute through which a node can hold child nodes. A new container
 # node type only needs its child attribute listed here. The main list comes
 # first; captions and document metadata follow it.
-_CHILD_ATTRS = ("children", "content", "items", "headers", "rows", "cells",
+_CHILD_ATTRS = ("children", "content", "items", "headers", "rows", "cells", "entries",
                 "caption", "title", "author", "date")
 
 

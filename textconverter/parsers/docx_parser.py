@@ -25,7 +25,7 @@ from ._docx_blocks import Field, Flow, Inline, ListRef, Numbering, tidy
 from ._docx_xml import NS, M, OFFICE, R, flag, local, val, w, xpath
 from ._latex_macros import lift_macros
 from ._math import split_math_env
-from ._office import MONOSPACE, is_code
+from ._office import MONOSPACE, BoxFrame, box_preamble, is_code
 from ._omml import omml_to_latex
 
 _CODE_STYLES = frozenset({"code", "source code", "preformatted text", "html preformatted", "macro text"})
@@ -35,6 +35,8 @@ _LIST_STYLE = re.compile(r"^List (Bullet|Number)(?: (\d))?$")
 _HYPERLINK_INSTR = re.compile(r'HYPERLINK\s+(?:"([^"]*)")?(?:.*?\\l\s+"([^"]*)")?', re.IGNORECASE)
 # Notes that Word keeps in the notes part but are layout, not content.
 _NOTE_LAYOUT = ("separator", "continuationSeparator", "continuationNotice")
+# The content control around a code block tells its language, which Word has nowhere else to keep.
+LANGUAGE_TAG = "language:"
 
 
 _ALIGNED = re.compile(r"^\\begin\{aligned\} (.*) \\end\{aligned\}$", re.DOTALL)
@@ -88,6 +90,14 @@ def parse_docx(
     except (PackageNotFoundError, zipfile.BadZipFile, KeyError, etree.XMLSyntaxError) as exc:
         raise ValueError(f"Not a readable Word (.docx) document: {file_path} ({exc})") from exc
     return _Reader(document, output_dir, image_dir_name, write_images, keep_indentation).read()
+
+
+def _code_language(p: etree._Element) -> str | None:
+    """The language the content control around a code paragraph tells, if any."""
+    for tag in xpath(p, "ancestor::w:sdt[1]/w:sdtPr/w:tag/@w:val"):
+        if tag.startswith(LANGUAGE_TAG):
+            return tag[len(LANGUAGE_TAG):]
+    return None
 
 
 class _Reader:
@@ -215,6 +225,8 @@ class _Reader:
             nodes, ctx = self._inline_paragraph(el)
             followed_by_table = index + 1 < len(elements) and elements[index + 1].tag == w("tbl")
             list_ref = self._list_ref(el, style)
+            if lowered == "caption" and nodes and self._follows_dropped_image(elements, index):
+                continue
             if lowered == "caption" and nodes:
                 flow.caption(nodes, ctx, followed_by_table)
             elif list_ref is not None:
@@ -233,6 +245,10 @@ class _Reader:
             elif lowered == "abstract" and nodes:
                 flow.group("abstract", Paragraph(children=nodes), ctx.extra)
             elif lowered in _CODE_STYLES or is_code(nodes):
+                language = _code_language(el)
+                if flow.language != language:
+                    flow.close()
+                flow.language = language
                 flow.group("code", self._plain_text(el, keep_tabs=True).rstrip(), ctx.extra)
             elif nodes:
                 flow.leaf(Paragraph(children=nodes), ctx.extra)
@@ -243,6 +259,10 @@ class _Reader:
                 flow.out.extend(ctx.extra)
         flow.close()
         return flow.out
+
+    def _follows_dropped_image(self, elements: list[etree._Element], index: int) -> bool:
+        """Whether a caption is the one of an image left out: it goes with it."""
+        return not self.write_images and index > 0 and bool(xpath(elements[index - 1], ".//a:blip | .//v:imagedata"))
 
     def _flatten(self, nodes: list[Node], ctx: Inline) -> list[Node]:
         """The inline nodes of a paragraph that cannot hold blocks: display equations stay in the text."""
@@ -554,7 +574,7 @@ class _Reader:
             image = self._image(blip.get(f"{{{R}}}embed"), alt)
             if image is not None:
                 ctx.emit(image)
-        self._text_boxes(boxes, ctx)
+        self._text_boxes(boxes, ctx, drawing)
         if not blips and not boxes:
             self.dropped["shape"] += 1
 
@@ -566,14 +586,61 @@ class _Reader:
             image = self._image(data.get(f"{{{R}}}id"), alt)
             if image is not None:
                 ctx.emit(image)
-        self._text_boxes(boxes, ctx)
+        self._text_boxes(boxes, ctx, None)
         if not images and not boxes and any(isinstance(c.tag, str) and local(c) != "shapetype" for c in pict):
             self.dropped["shape"] += 1
 
-    def _text_boxes(self, boxes: list[etree._Element], ctx: Inline) -> None:
+    def _text_boxes(self, boxes: list[etree._Element], ctx: Inline, drawing: etree._Element | None) -> None:
         for box in boxes:
             blocks = self._blocks(box)
             if blocks:
-                ctx.extra.append(BlockQuote(children=blocks))
+                frame = replace(self._frame(drawing), font=self._box_font(box))
+                preamble = Paragraph(children=[Text(content=box_preamble(frame))])
+                ctx.extra.append(BlockQuote(children=[preamble, *blocks]))
+
+    def _frame(self, drawing: etree._Element | None) -> BoxFrame:
+        """A drawing's frame as percentages of the page; a place the page layout decides stays None."""
+        holder = next((c for c in drawing if isinstance(c.tag, str) and local(c) in ("anchor", "inline")), None) \
+            if drawing is not None else None
+        extent = holder.find("wp:extent", NS) if holder is not None else None
+        if extent is None:
+            return BoxFrame()
+        section = self.document.sections[0]
+        width, height = section.page_width or 1, section.page_height or 1
+        left, top = section.left_margin or 0, section.top_margin or 0
+        origins_x = {"page": 0, "leftMargin": 0, "margin": left, "column": left}
+        origins_y = {"page": 0, "topMargin": 0, "margin": top}
+
+        def place(name: str, origins: dict[str, int], total: int) -> int | None:
+            position = holder.find(f"wp:{name}", NS)
+            offset = position.find("wp:posOffset", NS) if position is not None else None
+            origin = origins.get(position.get("relativeFrom")) if position is not None else None
+            if offset is None or origin is None:
+                return None
+            return round(100 * (origin + int(offset.text)) / total)
+
+        return BoxFrame(x=place("positionH", origins_x, width), y=place("positionV", origins_y, height),
+                        w=round(100 * int(extent.get("cx", "0")) / width),
+                        h=round(100 * int(extent.get("cy", "0")) / height))
+
+    def _box_font(self, box: etree._Element) -> float | None:
+        """The font size of most of a text box's characters, in points: from the run, its style, or the defaults."""
+        default = self.document.styles.element.find(f"{w('docDefaults')}/{w('rPrDefault')}/{w('rPr')}/{w('sz')}")
+        sizes: Counter[float] = Counter()
+        for p in box.iter(w("p")):
+            style = self._paragraph_style(p)
+            inherited = int(val(default)) / 2 if default is not None else None
+            while style is not None:
+                if style.font.size is not None:
+                    inherited = style.font.size.pt
+                    break
+                style = style.base_style
+            for run in p.iter(w("r")):
+                text = "".join(t.text or "" for t in run.findall(w("t"))).strip()
+                written = run.find(f"{w('rPr')}/{w('sz')}")
+                size = int(val(written)) / 2 if written is not None else inherited
+                if text and size:
+                    sizes[size] += len(text)
+        return sizes.most_common(1)[0][0] if sizes else None
 
 

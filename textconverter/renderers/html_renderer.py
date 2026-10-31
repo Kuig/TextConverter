@@ -1,18 +1,43 @@
 from __future__ import annotations
 import html
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 
 from ..ast import (
-    Abstract, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote, Heading,
+    Abstract, Bibliography, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote, Heading,
     HorizontalRule, Image, Label, LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Reference,
     Table, TableCell, Text,
 )
-from ._common import figure_image, latex_reference_macro, plain_text, safe_href, table_grid
+from ._common import (
+    bibliography_paragraphs, figure_image, latex_reference_macro, reference_numbers, safe_href, summary_text,
+    table_grid,
+)
 from .templates import get_template
 
 
-def render_html(doc: Document, template_name: str = "plain") -> str:
-    """Renders an AST Document to an HTML string."""
-    parts = [_metadata(doc), *(_render_node(child) for child in doc.children)]
+@dataclass
+class _Printed:
+    """A document rendered for print: what its references stand for, and the notes met so far."""
+    numbers: dict[str, str]
+    notes: list[Footnote] = field(default_factory=list)
+
+
+_PRINTED: ContextVar[_Printed | None] = ContextVar("html_printed", default=None)
+
+
+def render_html(doc: Document, template_name: str = "plain", printed: bool = False) -> str:
+    """Renders an AST Document to an HTML string.
+
+    Reference macros stay visible as LaTeX, in spans the HTML parser reads
+    back. With ``printed`` the page is an end point that nothing reads back
+    (PDF output): notes are numbered and listed at the end, a citation shows its
+    keys, a reference the number of its label when it can be told.
+    """
+    token = _PRINTED.set(_Printed(reference_numbers(doc)) if printed else None)
+    try:
+        parts = [_metadata(doc), *(_render_node(child) for child in doc.children), _notes()]
+    finally:
+        _PRINTED.reset(token)
     body_str = '\n'.join(filter(bool, parts))
     return (get_template(template_name)
             .replace('{{title}}', html.escape(_page_title(doc)))
@@ -37,7 +62,50 @@ def _page_title(doc: Document) -> str:
     """The text of the document title, else of the first level-1 heading, else "Document"."""
     source = doc.title or next(
         (n.children for n in doc.children if isinstance(n, Heading) and n.level == 1), [])
-    return plain_text(source).strip() or "Document"
+    return summary_text(source, " ") or "Document"
+
+
+def _notes() -> str:
+    """The list of notes of a printed page; a note may hold another one, numbered after it."""
+    printed = _PRINTED.get()
+    if printed is None or not printed.notes:
+        return ""
+    lines: list[str] = []
+    while len(lines) < len(printed.notes):
+        lines.append(f"<p><sup>{len(lines) + 1}</sup> {_text_lines(printed.notes[len(lines)].content)}</p>")
+    return '<div class="tc-notes">\n<hr />\n' + '\n'.join(lines) + '\n</div>'
+
+
+def _footnote(node: Footnote) -> str:
+    printed = _PRINTED.get()
+    if printed is None:  # the span marks the macro for the HTML parser
+        return f'<span class="tc-footnote">\\footnote{{{_text_lines(node.content)}}}</span>'
+    printed.notes.append(node)
+    return f"<sup>{len(printed.notes)}</sup>"
+
+
+def _reference(node: Citation | Reference | Label) -> str:
+    """A citation, reference or label: the visible macro, or on a printed page what it stands for."""
+    printed = _PRINTED.get()
+    if printed is None:
+        return f'<span class="tc-ref">{latex_reference_macro(node, _inline, html.escape)}</span>'
+    if isinstance(node, Label):
+        return ""
+    if isinstance(node, Citation):
+        return html.escape(f"[{', '.join(node.keys)}]")
+    if node.style == "hyperref":
+        return html.escape(node.label)
+    number = printed.numbers.get(node.label)
+    return html.escape(number if number else f"[{node.label}]")
+
+
+def _bibliography(node: Bibliography) -> str:
+    """Commands and entries as LaTeX in a marked block; on a printed page, only the entries."""
+    if _PRINTED.get() is None:
+        lines = [_paragraph(p) for p in bibliography_paragraphs(node)]
+        return '<div class="tc-bib">\n' + '\n'.join(lines) + '\n</div>'
+    entries = [f"<p>[{html.escape(e.label or e.key)}] {_text_lines(e.children)}</p>" for e in node.entries]
+    return '\n'.join(entries)
 
 
 def _metadata(doc: Document) -> str:
@@ -183,13 +251,14 @@ _RENDERERS = {
     Link: _link,
     Image: _image,
     CodeInline: lambda node: f"<code>{html.escape(node.code)}</code>",
-    LineBreak: lambda node: "<br />",
+    LineBreak: lambda node: '<br class="tc-and" />' if node.author_separator else "<br />",
     BlockQuote: _block_quote,
     HorizontalRule: lambda node: "<hr />",
     Equation: _equation,
     Abstract: _abstract,
-    # Reference macros stay visible as LaTeX; the span marks them for the HTML parser
-    Footnote: lambda node: f'<span class="tc-footnote">\\footnote{{{_inline(node.content)}}}</span>',
-    **{cls: lambda node: f'<span class="tc-ref">{latex_reference_macro(node, _inline, html.escape)}</span>'
-       for cls in (Citation, Reference, Label)},
+    Bibliography: _bibliography,
+    Footnote: _footnote,
+    Citation: _reference,
+    Reference: _reference,
+    Label: _reference,
 }

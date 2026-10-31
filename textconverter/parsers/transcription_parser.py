@@ -35,14 +35,14 @@ def parse_transcription(text: str) -> Document:
     doc = Document()
     pos = 0
     for match in _HTML_TABLE.finditer(text):
-        doc.children.extend(parse_markdown(text[pos:match.start()]).children)
+        doc.children.extend(parse_markdown(text[pos:match.start()], indented_code=False).children)
         for node in parse_html(match.group(0)).children:
             # OCR models write every row with <td>: the first one is the header
             if isinstance(node, Table) and not node.headers and len(node.rows) > 1:
                 node.headers = node.rows.pop(0).cells
             doc.children.append(node)
         pos = match.end()
-    doc.children.extend(parse_markdown(text[pos:]).children)
+    doc.children.extend(parse_markdown(text[pos:], indented_code=False).children)
     return doc
 
 

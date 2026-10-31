@@ -6,7 +6,9 @@ that hold formulas (see ``parsers._excel_formulas``), written with the cell's
 text as their stored result. A cell's text becomes a number, a boolean, a date
 or a time when that is exactly how the parser would write the value back, else
 it stays text. A footnote in a cell is its comment, a link its hyperlink, an
-image in it is anchored to it. Change it only together with ``xlsx_parser.py``.
+image in it is anchored to it. A quote headed by ``Text box (C4:F8, font 12pt)``
+after a table is a text box over those cells, of one style: XlsxWriter holds no
+more. Change it only together with ``xlsx_parser.py``.
 """
 from __future__ import annotations
 
@@ -15,13 +17,15 @@ import io
 from dataclasses import dataclass, field
 
 import xlsxwriter
+from xlsxwriter.utility import xl_cell_to_rowcol
 
-from ..ast import Footnote, Image, LineBreak, Link, Node, TableCell, Text
+from ..ast import BlockQuote, Footnote, Image, LineBreak, Link, Node, TableCell, Text
 from ..logger import log_warning
 from ..parsers._excel_formulas import expand
+from ..parsers._office import BoxFrame
 from ..parsers.xlsx_parser import format_value
 from ._common import plain_text, table_grid, text_style
-from ._office import image_bytes
+from ._office import image_bytes, property_text
 from ._sheets import Sheet, collect_sheets, literal_text
 
 _PLAIN = (False, False, False, None)
@@ -30,6 +34,9 @@ _MIN_WIDTH = 8
 _EPOCH = datetime.datetime(1899, 12, 30)
 _DATE, _DATETIME, _TIME = "yyyy-mm-dd", "yyyy-mm-dd hh:mm:ss", "hh:mm:ss"
 _MAX_LINK = 2079
+# Excel's default sizes, in pixels.
+_DEFAULT_COLUMN = 64
+_DEFAULT_ROW = 20
 
 
 @dataclass
@@ -146,8 +153,24 @@ class _Writer:
                 widths[c] = max(widths[c], self.cell(ws, r, c, cell, formulas.pop((r + 1, c + 1), None), header))
         for (r, c), formula in formulas.items():
             ws.write_formula(r - 1, c - 1, formula, None, "")
+        columns = {}
         for c, width in enumerate(widths):
-            ws.set_column(c, c, min(max(width + 2, _MIN_WIDTH), _MAX_WIDTH))
+            columns[c] = min(max(width + 2, _MIN_WIDTH), _MAX_WIDTH)
+            ws.set_column(c, c, columns[c])
+        for frame, quote in sheet.boxes:
+            self.box(ws, frame, quote, columns)
+
+    @staticmethod
+    def box(ws, frame: BoxFrame, quote: BlockQuote, columns: dict[int, int]) -> None:
+        """A text box over the cells of its frame, ending one pixel inside the last of them."""
+        first, _, last = frame.cells.partition(":")
+        row, col = xl_cell_to_rowcol(first)
+        end_row, end_col = xl_cell_to_rowcol(last or first)
+        width = sum(int(columns[c] * 7 + 5.5) if c in columns else _DEFAULT_COLUMN for c in range(col, end_col + 1))
+        options = {"width": width - 1, "height": _DEFAULT_ROW * (end_row - row + 1) - 1}
+        if frame.font:
+            options["font"] = {"size": frame.font}
+        ws.insert_textbox(row, col, "\n".join(plain_text([child]) for child in quote.children[1:]), options)
 
     def cell(self, ws, row: int, col: int, node: TableCell, formula: str | None, header: bool) -> int:
         """Write one cell; return the length of its longest line, to size the column."""
@@ -232,7 +255,7 @@ def render_xlsx(doc, path: str, *, base_dir: str | None = None) -> None:
     workbook = xlsxwriter.Workbook(path, {"strings_to_numbers": False, "strings_to_formulas": False,
                                           "strings_to_urls": False})
     try:
-        properties = {"title": plain_text(doc.title).strip(), "author": plain_text(doc.author).strip()}
+        properties = {"title": property_text(doc.title, "title"), "author": property_text(doc.author, "author")}
         try:
             day = datetime.date.fromisoformat(plain_text(doc.date).strip())
             properties["created"] = datetime.datetime(day.year, day.month, day.day)

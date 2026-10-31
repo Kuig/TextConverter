@@ -15,7 +15,7 @@ from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE
 from pptx.opc.package import Part
 from pptx.opc.packuri import PackURI
-from pptx.util import Inches
+from pptx.util import Inches, Pt
 
 import textconverter
 from textconverter.api import convert
@@ -24,7 +24,8 @@ from textconverter.ast import (
     Paragraph, Table, Text, walk,
 )
 from textconverter.formats import infer_input_format, infer_input_format_from_media_type
-from textconverter.parsers._pptx_xml import box_preamble, parse_box_preamble, Rect
+from textconverter.parsers._office import parse_box_preamble
+from textconverter.parsers._pptx_xml import Rect
 from textconverter.parsers.pptx_parser import parse_pptx
 from textconverter.renderers._common import plain_text
 from _support import BaseConverterTest, setUpModule, tearDownModule, INPUT_DIR
@@ -98,8 +99,16 @@ class TestFixtureStructure(PptxFixtureTest):
 
     def test_secondary_text_boxes_are_quotes_with_their_frame(self):
         code = next(q for q in _of(self.doc, BlockQuote) if _of(q, CodeBlock))
-        self.assertEqual(parse_box_preamble(plain_text(code.children[0].children)), (20, 62, 41, 15))
+        frame = parse_box_preamble(plain_text(code.children[0].children))
+        self.assertEqual((frame.x, frame.y, frame.w, frame.h), (20, 62, 41, 15))
         self.assertIn("export LAVORO", _of(code, CodeBlock)[0].code)
+
+    def test_every_text_box_of_the_fixture_tells_its_font(self):
+        frames = [parse_box_preamble(plain_text(q.children[0].children)) for q in _of(self.doc, BlockQuote)
+                  if isinstance(q.children[0], Paragraph)]
+        frames = [f for f in frames if f is not None]
+        self.assertTrue(frames)
+        self.assertTrue(all(f.font for f in frames), [f for f in frames if not f.font])
 
     def test_lists_nest_and_tables_have_headers(self):
         self.assertTrue(any(_of(item, ListBlock) for lst in _of(self.doc, ListBlock) for item in lst.items))
@@ -270,11 +279,35 @@ class TestGeneratedPresentations(BaseConverterTest):
 
 class TestBoxPreamble(BaseConverterTest):
 
-    def test_the_preamble_round_trips(self):
-        text = box_preamble(Rect(1219200, 685800, 3657600, 1371600), 12192000, 6858000)
-        self.assertEqual(text, "Text box (x 10%, y 10%, w 30%, h 20%)")
-        self.assertEqual(parse_box_preamble(text), (10, 10, 30, 20))
-        self.assertIsNone(parse_box_preamble("An ordinary quote"))
+    def _frame(self, text: str):
+        from textconverter.parsers._office import parse_box_preamble as parse
+        return parse(text)
+
+    def test_every_form_reads_and_writes_back(self):
+        from textconverter.parsers._office import BoxFrame, box_preamble as write
+        for text, frame in (
+            ("Text box (x 10%, y 10%, w 30%, h 20%)", BoxFrame(x=10, y=10, w=30, h=20)),
+            ("Text box (x 10%, y 50%, w 30%, h 20%, font 18pt)", BoxFrame(x=10, y=50, w=30, h=20, font=18)),
+            ("Text box (x -5%, y 10%, w 30%, h 20%, font 10.5pt)", BoxFrame(x=-5, y=10, w=30, h=20, font=10.5)),
+            ("Text box (x 35%, w 23%, h 5%, font 11pt)", BoxFrame(x=35, w=23, h=5, font=11)),
+            ("Text box (C4:M13, font 11pt)", BoxFrame(cells="C4:M13", font=11)),
+            ("Text box (C4:M13)", BoxFrame(cells="C4:M13")),
+            ("Text box (font 11pt)", BoxFrame(font=11)),
+        ):
+            with self.subTest(text):
+                self.assertEqual(self._frame(text), frame)
+                self.assertEqual(write(frame), text)
+
+    def test_what_is_not_a_preamble(self):
+        for text in ("An ordinary quote", "Text box", "Text box ()", "Text box (hello)", "A Text box (x 1%)"):
+            with self.subTest(text):
+                self.assertIsNone(self._frame(text))
+
+    def test_a_frame_from_a_rectangle(self):
+        from textconverter.parsers._office import box_preamble as write
+        from textconverter.parsers._pptx_xml import slide_frame
+        frame = slide_frame(Rect(1219200, 685800, 3657600, 1371600), 12192000, 6858000, 24)
+        self.assertEqual(write(frame), "Text box (x 10%, y 10%, w 30%, h 20%, font 24pt)")
 
 
 class TestCodeDetection(BaseConverterTest):
@@ -388,7 +421,8 @@ class TestPptxRenderer(PptxOutputTest):
     def test_a_framed_quote_returns_to_its_frame(self):
         doc = self._roundtrip("## S\n\nbody\n\n> Text box (x 10%, y 50%, w 30%, h 20%)\n>\n> on the side\n")
         quote = _of(doc, BlockQuote)[0]
-        self.assertEqual(parse_box_preamble(plain_text(quote.children[0].children)), (10, 50, 30, 20))
+        frame = parse_box_preamble(plain_text(quote.children[0].children))
+        self.assertEqual((frame.x, frame.y, frame.w, frame.h), (10, 50, 30, 20))
         self.assertEqual(plain_text(quote.children[1].children), "on the side")
 
     def test_a_plain_quote_becomes_a_box_with_a_frame(self):
@@ -435,10 +469,17 @@ class TestPptxRenderer(PptxOutputTest):
 
     def test_sections_default_section_and_the_sections_own_slide(self):
         doc = self._roundtrip("## Before\n\n- x\n\n# A\n\nintro\n\n## In A\n\n# B\n\n## In B\n")
-        self.assertEqual(_headings(doc), [(1, "Default Section"), (2, "Before"), (1, "A"), (2, "In A"),
-                                          (1, "B"), (2, "In B")])
+        path = self._save("## Before\n\n- x\n\n# A\n\nintro\n\n## In A\n\n# B\n\n## In B\n")
+        sections = etree.tostring(Presentation(path).part._element, encoding="unicode")
+        self.assertIn('name="Default Section"', sections)
+        doc = self._read(path)
+        self.assertEqual(_headings(doc), [(2, "Before"), (1, "A"), (2, "In A"), (1, "B"), (2, "In B")])
         a = next(i for i, n in enumerate(doc.children) if isinstance(n, Heading) and plain_text(n.children) == "A")
         self.assertEqual(plain_text(doc.children[a + 1].children), "intro")
+
+    def test_a_section_with_that_name_elsewhere_is_kept(self):
+        doc = self._roundtrip("# A\n\n## One\n\n# Default Section\n\n## Two\n")
+        self.assertIn((1, "Default Section"), _headings(doc))
 
     def test_footnotes_are_speaker_notes(self):
         doc = Document(children=[
@@ -498,6 +539,81 @@ class TestPptxRenderer(PptxOutputTest):
             self.assertEqual(len(_of(before, cls)), len(_of(after, cls)), cls.__name__)
         self.assertEqual(sum(len(b.items) for b in _of(before, ListBlock)),
                          sum(len(b.items) for b in _of(after, ListBlock)))
+
+    def test_a_bibliography_survives(self):
+        path = self._save("## S\n\nText \\cite{a}.\n\n\\bibliography{refs}\n")
+        self.assertIn("\\bibliography{refs}", convert(path, "latex", textconverter.ConvertOptions(image_handling="link")))
+
+
+class TestTextBoxFont(PptxOutputTest):
+    """A text box tells its font size, and the writer starts from it."""
+
+    A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+    def _deck(self, fill) -> str:
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        body = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(2))
+        body.text_frame.text = "The longest text of this slide, so that it is the body and not a box"
+        box = slide.shapes.add_textbox(Inches(1), Inches(4), Inches(2), Inches(1))
+        fill(box.text_frame)
+        path = str(self._out("font_box.pptx"))
+        prs.save(path)
+        return path
+
+    def _font(self, path: str):
+        (quote,) = _of(self._read(path), BlockQuote)
+        return parse_box_preamble(plain_text(quote.children[0].children)).font
+
+    def test_the_size_written_on_the_run(self):
+        def fill(frame):
+            frame.paragraphs[0].add_run().text = "text"
+            frame.paragraphs[0].runs[0].font.size = Pt(24)
+        self.assertEqual(self._font(self._deck(fill)), 24)
+
+    def test_the_size_used_by_most_characters(self):
+        def fill(frame):
+            for text, size in (("a long stretch of text", 12), ("big", 40)):
+                run = frame.paragraphs[0].add_run()
+                run.text = text
+                run.font.size = Pt(size)
+        self.assertEqual(self._font(self._deck(fill)), 12)
+
+    def test_the_size_from_the_list_style_of_the_shape(self):
+        def fill(frame):
+            frame.text = "text"
+            style = frame._txBody.find(f"{self.A_NS}lstStyle")
+            level = etree.SubElement(style, f"{self.A_NS}lvl1pPr")
+            etree.SubElement(level, f"{self.A_NS}defRPr").set("sz", "1600")
+        self.assertEqual(self._font(self._deck(fill)), 16)
+
+    def test_the_size_from_the_defaults_of_the_presentation(self):
+        self.assertEqual(self._font(self._deck(lambda frame: setattr(frame, "text", "text"))), 18)
+
+    def test_the_writer_uses_it(self):
+        doc = self._save("## S\n\nbody\n\n> Text box (x 10%, y 50%, w 80%, h 40%, font 28pt)\n>\n> short\n")
+        sizes = [int(r.get("sz")) for shape in Presentation(doc).slides[0].shapes if shape.has_text_frame
+                 and "short" in shape.text_frame.text for r in shape._element.iter(f"{self.A_NS}rPr")]
+        self.assertEqual(set(sizes), {2800})
+
+    def test_the_writer_still_shrinks_what_does_not_fit(self):
+        text = " ".join(["word"] * 200)
+        doc = self._save(f"## S\n\nbody\n\n> Text box (x 10%, y 50%, w 20%, h 10%, font 28pt)\n>\n> {text}\n")
+        sizes = [int(r.get("sz")) for shape in Presentation(doc).slides[0].shapes if shape.has_text_frame
+                 and "word" in shape.text_frame.text for r in shape._element.iter(f"{self.A_NS}rPr")]
+        self.assertLess(max(sizes), 2800)
+
+    def test_the_font_comes_back(self):
+        doc = self._roundtrip("## S\n\nbody\n\n> Text box (x 10%, y 50%, w 80%, h 40%, font 28pt)\n>\n> short\n")
+        self.assertEqual(parse_box_preamble(plain_text(_of(doc, BlockQuote)[0].children[0].children)).font, 28)
+
+    def test_a_box_without_a_place_on_the_slide_flows_under_the_content(self):
+        for preamble in ("Text box (x 10%, w 30%, h 20%, font 11pt)", "Text box (C4:M13, font 11pt)"):
+            with self.subTest(preamble):
+                path = self._save(f"## S\n\nbody\n\n> {preamble}\n>\n> side note\n")
+                texts = [s.text_frame.text for s in Presentation(path).slides[0].shapes if s.has_text_frame]
+                self.assertIn("side note", texts)
+                self.assertFalse(any("Text box" in t for t in texts))
 
 
 class TestPptxOutputThroughTheApi(BaseConverterTest):

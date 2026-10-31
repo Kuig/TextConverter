@@ -188,3 +188,13 @@ class TestImagePaths(_WebTest):
         self.assertIsNone(resolve_local("data:image/png;base64,AAAA", "x"))
         self.assertIsNone(resolve_local("//host/x.png", "x"))
         self.assertEqual(resolve_local("C:\\img\\a.png", "x"), "C:\\img\\a.png")
+
+    def test_a_path_on_another_drive_uses_forward_slashes(self):
+        src = self._source()
+        out = self.tmp / "B" / "doc.md"
+        out.parent.mkdir()
+        with patch("textconverter.images.os.path.relpath", side_effect=ValueError("different drives")):
+            textconverter.save_to_file(str(src), str(out))
+        md = out.read_text(encoding="utf-8")
+        self.assertIn((src.parent / "img" / "local.png").as_posix(), md)
+        self.assertNotIn("\\", md.split("](")[1].split(")")[0])

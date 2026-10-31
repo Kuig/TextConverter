@@ -1,5 +1,7 @@
 from __future__ import annotations
 import base64
+import html
+import html.entities
 import json
 import re
 import unicodedata
@@ -26,6 +28,9 @@ _FENCED_CODE = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 _FENCE_LINE = re.compile(r'^(`{3,}|~{3,})')
+# A fence that nothing closes: its code runs to the end of the document (read after the closed ones).
+_UNCLOSED_FENCE = re.compile(
+    r'^(?P<indent>[ \t]*)(?P<fence>`{3,}|~{3,})[ \t]*(?P<lang>[^\n`]*)\n(?P<code>.*)\Z', re.MULTILINE | re.DOTALL)
 # A task list item's checkbox: "[ ] text" or "[x] text".
 _TASK = re.compile(r'^\[([ xX])\][ \t]+(.*)$', re.DOTALL)
 _SETEXT_UNDERLINE = re.compile(r'^(?:=+|-+)[ \t]*$')
@@ -47,6 +52,19 @@ _DESCRIBED_IMAGE = re.compile(
     re.MULTILINE | re.DOTALL,
 )
 _PLACEHOLDER = re.compile(r'^<!--(CODEBLOCK|MATHBLOCK|DESCRIBED):([A-Za-z0-9+/=]+)-->$')
+# An HTML comment, unless it is one of the placeholders above; a code span is matched only to keep it.
+_HTML_COMMENT = re.compile(
+    r'(?P<code>(?P<ticks>`+).+?(?P=ticks))'
+    r'|(?P<lead>[ \t]*)<!--(?!CODEBLOCK:|MATHBLOCK:|DESCRIBED:|OCR:).*?-->(?P<trail>[ \t]*)', re.DOTALL)
+# A block of HTML, which the HTML parser reads.
+_HTML_BLOCK = re.compile(
+    r'</?(?:address|article|aside|blockquote|body|center|details|dd|dialog|div|dl|dt|fieldset|figcaption|figure|'
+    r'footer|form|h[1-6]|header|hr|html|img|li|main|nav|ol|p|pre|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)'
+    r'(?=[\s/>])', re.IGNORECASE)
+_HARD_BREAK_END = re.compile(r'(?: {2,}|\t|(?<!\\)\\)$')
+_CLOSING_HASHES = re.compile(r'(?:^|[ \t]+)#+[ \t]*$')
+_ENTITY = re.compile(r'&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]*);')
+_AND = re.compile(r'[ \t]*\\and(?![a-zA-Z])[ \t]*')
 _REF_DEF = re.compile(
     r'^ {0,3}\[([^\]]+)\]:\s+<?([^>\s]+?)>?'
     r'(?:\s+(?:"([^"]*)"|\x27([^\x27]*)\x27|\(([^)]*)\)))?\s*$',
@@ -69,9 +87,15 @@ def _protect_escapes(text: str) -> str:
     return _ESCAPE_RE.sub(lambda m: _TO_SENTINEL[m.group(1)], text)
 
 
+def _decode_entity(m: re.Match) -> str:
+    """The character of an entity; an unknown name stays as written."""
+    name = m.group(0)
+    return html.unescape(name) if name[1] == '#' or name[1:] in html.entities.html5 else name
+
+
 def _unescape(text: str) -> str:
-    """Escaped characters back as literal text."""
-    return _SENTINEL_RE.sub(lambda m: _FROM_SENTINEL[m.group(0)], text)
+    """Literal text: entities decoded and escaped characters back (an escaped ``&`` opens no entity)."""
+    return _SENTINEL_RE.sub(lambda m: _FROM_SENTINEL[m.group(0)], _ENTITY.sub(_decode_entity, text))
 
 
 def _restore_raw(text: str) -> str:
@@ -94,7 +118,7 @@ def _decode_placeholder(line: str) -> tuple[str, dict] | None:
 
 def _placeholder_node(kind: str, payload: dict):
     if kind == 'CODEBLOCK':
-        return CodeBlock(code=payload['code'].strip(), language=payload['lang'] or None)
+        return CodeBlock(code=payload['code'].strip('\n'), language=payload['lang'] or None)
     if kind == 'MATHBLOCK':
         code, env = split_math_env(payload['code'])
         return Equation(code=code, inline=False, env=env)
@@ -207,10 +231,18 @@ def _row_cells(line: str) -> list[str]:
     return [c.strip() for c in cells]
 
 
+def _item_line(line: str) -> tuple[str, bool]:
+    """The text of a line of a list item and whether it ends in a hard break."""
+    hard = bool(_HARD_BREAK_END.search(line))
+    text = line.strip()
+    return (text[:-1].rstrip() if hard and text.endswith('\\') else text), hard
+
+
 def _parse_markdown_list(block_text: str, ref_map: dict | None = None) -> ListBlock:
     lines = block_text.split('\n')
     stack = []
     root_list_block = None
+    hard_break = False  # the line before ended in one
 
     for line in lines:
         if not line.strip():
@@ -221,7 +253,7 @@ def _parse_markdown_list(block_text: str, ref_map: dict | None = None) -> ListBl
             indent = len(m.group(1).replace('\t', '    '))
             ordered = m.group(2)[0].isdigit()
             start = int(m.group(2)[:-1]) if ordered else 1
-            text = m.group(3).strip()
+            text, hard_break = _item_line(m.group(3))
             task = _TASK.match(text)
             if task:
                 text = task.group(2)
@@ -250,7 +282,11 @@ def _parse_markdown_list(block_text: str, ref_map: dict | None = None) -> ListBl
                 active_item.children.append(_placeholder_node(*placeholder))
             elif active_item.children and isinstance(active_item.children[-1], Paragraph):
                 # Continuation line: append to the item's last paragraph
-                active_item.children[-1].children.extend(parse_inline(' ' + line.strip(), ref_map=ref_map))
+                text, next_break = _item_line(line)
+                nodes = active_item.children[-1].children
+                nodes.extend([LineBreak(), *parse_inline(text, ref_map=ref_map)] if hard_break
+                             else parse_inline(' ' + text, ref_map=ref_map))
+                hard_break = next_break
             else:
                 active_item.children.append(Paragraph(children=parse_inline(line.strip(), ref_map=ref_map)))
 
@@ -261,6 +297,7 @@ def parse_markdown(
     text: str,
     code_parsing: bool = False,
     parent_ref_map: dict[str, tuple[str, str | None]] | None = None,
+    indented_code: bool = True,
 ) -> Document:
     """Parses markdown text into an AST Document.
 
@@ -272,6 +309,9 @@ def parse_markdown(
             is re-parsed recursively, so references defined outside the
             blockquote still resolve correctly). Local definitions found in
             ``text`` take precedence over inherited ones with the same label.
+        indented_code: Read a block indented by four spaces as code; off for
+            Markdown written by a program (PDF text, AI transcriptions), whose
+            indentation says nothing.
     """
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     metadata = {}
@@ -306,10 +346,10 @@ def parse_markdown(
     # Fenced code keeps its blank lines: encode it before splitting into blocks.
     def _encode_codeblock(m: re.Match) -> str:
         lines = m.group('code').split('\n')
-        # Strip the indentation common to the code lines
-        indent = next((line[:len(line) - len(line.lstrip())] for line in lines if line.strip()), "")
+        # The fence's own indentation is not part of the code
+        indent = m.group('indent')
         if indent:
-            lines = [line[len(indent):] if line.startswith(indent) else line for line in lines]
+            lines = [line[len(indent):] if line.startswith(indent) else line.lstrip() for line in lines]
         return _encode_placeholder('CODEBLOCK', {"lang": m.group('lang').strip(), "code": '\n'.join(lines),
                                                  "attach": _continues_block(m)})
 
@@ -319,8 +359,15 @@ def parse_markdown(
         # Encode the code blocks the detector fences
         text = _FENCED_CODE.sub(_encode_codeblock, pre_process_markdown_code(text))
 
+    def _encode_unclosed(m: re.Match) -> str:
+        log_warning("A code fence is never closed: the rest of the document is read as code.")
+        return _encode_codeblock(m)
+
+    text = _UNCLOSED_FENCE.sub(_encode_unclosed, text, count=1)
+
     text = _MATH_BLOCK.sub(lambda m: _encode_placeholder(
         'MATHBLOCK', {"code": m.group(1).strip(), "attach": _continues_block(m)}), text)
+    text = _HTML_COMMENT.sub(_drop_comment, text)
 
     def _encode_picture_text(m: re.Match) -> str:
         b64_ocr = base64.b64encode(m.group(2).strip().encode('utf-8')).decode('utf-8')
@@ -330,12 +377,14 @@ def parse_markdown(
 
     doc = Document(**metadata)
     blocks = re.split(r'\n\s*\n', text.strip('\n'))
+    indented: CodeBlock | None = None  # the code block an indented block continues
 
     for raw in blocks:
         block = raw.strip()
         if not block:
             continue
         after_list = bool(doc.children) and isinstance(doc.children[-1], ListBlock)
+        previous_code, indented = indented, None
 
         # 1. Code, math and described-image blocks
         placeholder = _decode_placeholder(block)
@@ -350,15 +399,32 @@ def parse_markdown(
 
         # An indented block after a list continues its last item (a second paragraph, a nested list)
         if after_list and _indent_width(raw) >= 2:
-            inner = parse_markdown(_dedent(raw), code_parsing=code_parsing, parent_ref_map=ref_map)
+            inner = parse_markdown(_dedent(raw), code_parsing=code_parsing, parent_ref_map=ref_map,
+                                   indented_code=indented_code)
             doc.children[-1].items[-1].children.extend(inner.children)
+            continue
+
+        # Four spaces of indentation: code, with what a blank line separates from the block before
+        if indented_code and _indent_width(raw) >= 4:
+            code = _indented_code(raw)
+            if previous_code is not None:
+                previous_code.code += '\n\n' + code
+                indented = previous_code
+            else:
+                indented = CodeBlock(code=code)
+                doc.children.append(indented)
+            continue
+
+        if _HTML_BLOCK.match(block):
+            from .html_parser import parse_html
+            doc.children.extend(parse_html(block).children)
             continue
 
         # 2. Headings (the preprocess put any following text in a block of its own)
         m_heading = re.match(r'^(#{1,6})\s+(.*)$', block)
         if m_heading:
-            doc.children.append(Heading(level=len(m_heading.group(1)),
-                                        children=parse_inline(m_heading.group(2).strip(), ref_map=ref_map)))
+            title = _CLOSING_HASHES.sub('', m_heading.group(2).strip())
+            doc.children.append(Heading(level=len(m_heading.group(1)), children=parse_inline(title, ref_map=ref_map)))
             continue
         lines = block.split('\n')
         if len(lines) > 1 and _SETEXT_UNDERLINE.match(lines[-1].strip()) and _is_text_line(lines[-2]):
@@ -373,15 +439,14 @@ def parse_markdown(
 
         # 4. Blockquote
         if block.startswith(">"):
-            doc.children.append(_parse_blockquote(block, code_parsing, ref_map))
+            doc.children.append(_parse_blockquote(block, code_parsing, ref_map, indented_code))
             continue
 
         # 5. Lists (Ordered and Unordered)
         if _LIST_ITEM.match(block):
             lb = _parse_markdown_list(block, ref_map=ref_map)
             if lb:
-                if (doc.children and isinstance(doc.children[-1], ListBlock)
-                        and doc.children[-1].ordered == lb.ordered):
+                if doc.children and _continues_list(doc.children[-1], lb):
                     doc.children[-1].items.extend(lb.items)
                 else:
                     doc.children.append(lb)
@@ -398,6 +463,30 @@ def parse_markdown(
 
     _attach_captions(doc.children)
     return doc
+
+
+def _drop_comment(m: re.Match) -> str:
+    """Nothing for an HTML comment (one space if there was one on each side); a code span stays."""
+    if m.group('code') is not None:
+        return m.group(0)
+    return ' ' if m.group('lead') and m.group('trail') else m.group('lead') or m.group('trail')
+
+
+def _indented_code(block: str) -> str:
+    """The code of a block indented by four spaces or a tab."""
+    lines = [line.replace('\t', '    ', 1) if line.startswith('\t') else line for line in block.split('\n')]
+    return '\n'.join(line[4:] if line.startswith('    ') else line.lstrip() for line in lines)
+
+
+def _continues_list(previous: Node, new: ListBlock) -> bool:
+    """Whether a list after a blank line goes on from the list before it.
+
+    An ordered one does only if its number follows: that is the one way the
+    text can show two lists in a row.
+    """
+    if not isinstance(previous, ListBlock) or previous.ordered != new.ordered:
+        return False
+    return not new.ordered or new.start == previous.start + len(previous.items)
 
 
 def _continues_block(m: re.Match) -> bool:
@@ -449,7 +538,25 @@ def _front_matter(text: str) -> tuple[str, dict[str, list[InlineElement]]]:
     unknown = sorted(set(fields) - set(METADATA_FIELDS))
     if unknown:
         log_warning(f"Ignoring unknown front matter keys: {', '.join(unknown)}")
-    return text[m.end():], {k: parse_inline(v) for k, v in fields.items() if k in METADATA_FIELDS and v}
+    metadata = {k: parse_inline(v) for k, v in fields.items() if k in METADATA_FIELDS and v}
+    if 'author' in metadata:
+        metadata['author'] = _split_authors(metadata['author'])
+    return text[m.end():], metadata
+
+
+def _split_authors(nodes: list[InlineElement]) -> list[InlineElement]:
+    """Turn the ``\\and`` the renderer writes between two authors into its line break."""
+    out: list[InlineElement] = []
+    for node in nodes:
+        if not isinstance(node, Text):
+            out.append(node)
+            continue
+        first, *rest = _AND.split(node.content)
+        out.extend([replace(node, content=first)] if first else [])
+        for part in rest:
+            out.append(LineBreak(author_separator=True))
+            out.extend([replace(node, content=part)] if part else [])
+    return out
 
 
 def _caption_text(block: Node, prefix: str) -> list[InlineElement] | None:
@@ -496,7 +603,7 @@ def _attach_captions(blocks: list[Node]) -> None:
     blocks[:] = out
 
 
-def _parse_blockquote(block: str, code_parsing: bool, ref_map: dict):
+def _parse_blockquote(block: str, code_parsing: bool, ref_map: dict, indented_code: bool = True):
     """A ``>`` block: a block quote, a GitHub alert, or an abstract."""
     cleaned_lines = []
     for line in block.split('\n'):
@@ -518,7 +625,7 @@ def _parse_blockquote(block: str, code_parsing: bool, ref_map: dict):
     # Recursive parse to support nested elements; inherit the outer
     # document's reference-style link/image definitions so that
     # references defined outside the blockquote still resolve.
-    inner = parse_markdown(quote_text, code_parsing=code_parsing, parent_ref_map=ref_map)
+    inner = parse_markdown(quote_text, code_parsing=code_parsing, parent_ref_map=ref_map, indented_code=indented_code)
     return abstract_from(inner.children) or BlockQuote(children=inner.children, alert_type=alert_type)
 
 
@@ -666,7 +773,7 @@ def _url_pattern(name: str) -> str:
     return rf'(?:<(?P<{name}_b>[^<>\n]*)>|(?P<{name}>(?:[^\s()]|\([^\s()]*\))*))'
 
 
-# Inline HTML read as formatting; any other tag stays text.
+# Inline HTML read as formatting; any other tag is dropped and what it encloses stays.
 _HTML_STYLES = {'sup': ('script', 'sup'), 'sub': ('script', 'sub'), 'strong': ('bold', True), 'b': ('bold', True),
                 'em': ('italic', True), 'i': ('italic', True), 'del': ('strikethrough', True),
                 's': ('strikethrough', True)}
@@ -692,6 +799,8 @@ _INLINE = re.compile(
     rf'\({_url_pattern("li_link_url")}(?:\s+"(?P<li_link_title>[^"]*)")?\))|'
     # Inline link: [text](url "title")
     rf'(?P<inlinelink>(?<!!)(?<!\])\[(?P<link_text>[^\]]+)\]\({_url_pattern("link_url")}(?:\s+"(?P<link_title>[^"]*)")?\))|'
+    # Shortcut reference: [id] (literal text when the id is not defined)
+    r'(?P<shortcut>(?<![!\]])\[(?P<sc_text>[^\[\]]+)\](?![\[(]))|'
     # Code span: as many backticks to close as to open
     r'(?P<codeinline>(?P<ticks>`+)(?P<code_content>.+?)(?<!`)(?P=ticks)(?!`))|'
     r'(?P<mathinline>(?<!\\)\$(?!\s)(?P<math_content>[^$]+?)(?<!\s)(?<!\\)\$)|'
@@ -702,8 +811,14 @@ _INLINE = re.compile(
     # A bare URL (GFM): after a space, "(" or an emphasis character; trailing punctuation is trimmed
     r'(?P<bareurl>(?<![^\s*_~(])(?:https?://|www\.)[^\s<]+)|'
     r'(?P<linebreak><br\s*/?>)|'
-    rf'(?P<html>(?i:<(?P<tag>{"|".join(_HTML_STYLES)}|kbd)>)(?P<html_content>.*?)(?i:</(?P=tag)>))'
+    rf'(?P<html>(?i:<(?P<tag>{"|".join(_HTML_STYLES)}|kbd)>)(?P<html_content>.*?)(?i:</(?P=tag)>))|'
+    # Any other tag; "a < b" and "<3" are not tags
+    r'(?P<anytag></?[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][\w:.-]*(?:\s*=\s*(?:"[^"]*"|\x27[^\x27]*\x27|[^\s"\x27=<>`]+))?)*\s*/?>)'
 )
+
+
+def _title(value: str | None) -> str | None:
+    return _unescape(value) if value else value
 
 
 def _url(g: dict, name: str) -> str:
@@ -733,7 +848,7 @@ def parse_inline(text: str, ref_map: dict | None = None, autolinks: bool = True)
         autolinks: Whether bare URLs become links (not inside a link's own text).
     """
     # A hard break (two trailing spaces or a backslash) is a "\n"; any other line break is a space
-    text = re.sub(r'(?:[ \t]{2,}|[ \t]*\\)\n', _HARD_BREAK, text)
+    text = re.sub(r'(?:[ \t]{2,}|[ \t]*\\)\n[ \t]*', _HARD_BREAK, text)
     text = re.sub(r'[ \t]*\n[ \t]*', ' ', text).replace(_HARD_BREAK, '\n')
     text = _protect_escapes(text)
     ref_map = ref_map or {}
@@ -781,13 +896,23 @@ def parse_inline(text: str, ref_map: dict | None = None, autolinks: bool = True)
         elif g['inlineimg'] is not None:
             ocr_text = base64.b64decode(g['ocr_b64']).decode('utf-8') if g['ocr_b64'] else None
             items.append(Image(src=_url(g, 'img_url'), alt=_unescape(g['img_alt'] or ''),
-                               title=g['img_title'], extracted_text=ocr_text))
+                               title=_title(g['img_title']), extracted_text=ocr_text))
         elif g['linkedimg'] is not None:
-            img = Image(src=_url(g, 'li_img_url'), alt=_unescape(g['li_alt'] or ''), title=g['li_img_title'])
-            items.append(Link(url=_url(g, 'li_link_url'), title=g['li_link_title'], content=[img]))
+            img = Image(src=_url(g, 'li_img_url'), alt=_unescape(g['li_alt'] or ''), title=_title(g['li_img_title']))
+            items.append(Link(url=_url(g, 'li_link_url'), title=_title(g['li_link_title']), content=[img]))
         elif g['inlinelink'] is not None:
-            items.append(Link(url=_url(g, 'link_url'), title=g['link_title'],
+            items.append(Link(url=_url(g, 'link_url'), title=_title(g['link_title']),
                               content=parse_inline(g['link_text'], ref_map=ref_map, autolinks=False)))
+        elif g['shortcut'] is not None:
+            label = _unescape(g['sc_text']).lower().strip()
+            if label in ref_map:
+                url, title = ref_map[label]
+                items.append(Link(url=url, title=title,
+                                  content=parse_inline(g['sc_text'], ref_map=ref_map, autolinks=False)))
+            else:
+                # Only the bracket is literal: what follows may hold inline syntax
+                pos = m.start() + 1
+                _scan_text(text, m.start(), pos, items)
         elif g['codeinline'] is not None:
             code = g['code_content']
             if len(code) > 2 and code.startswith(' ') and code.endswith(' ') and code.strip():
@@ -811,6 +936,10 @@ def parse_inline(text: str, ref_map: dict | None = None, autolinks: bool = True)
                 _scan_text(text, m.start(), pos, items)
         elif g['linebreak'] is not None:
             items.append(LineBreak())
+        elif g['anytag'] is not None:
+            if g['anytag'][1:4].lower() == 'img':
+                from .html_parser import parse_html
+                items.extend(n for block in parse_html(g['anytag']).children for n in getattr(block, 'children', []))
         elif g['tag'].lower() == 'kbd':
             items.append(CodeInline(code=_unescape(g['html_content'])))
         else:

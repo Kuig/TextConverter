@@ -9,11 +9,26 @@ import re
 from collections.abc import Callable
 from dataclasses import replace
 
-from ..ast import Citation, Footnote, Label, Node, Reference, Text
+from ..ast import BibEntry, Bibliography, Citation, Document, Footnote, Label, Node, Paragraph, Reference, Text
 
-# Macros kept as AST nodes; a trailing "*" (\citet*) is accepted and ignored.
-REFERENCE_MACROS = ("footnote", "cite", "citet", "citep", "ref", "label")
+# The citation macros of LaTeX, natbib and biblatex.
+CITATION_MACROS = (
+    "cite", "citet", "citep", "citealt", "citealp", "citeauthor", "citeyear", "citeyearpar", "citetitle", "nocite",
+    "cites", "Cite", "Citet", "Citep", "parencite", "Parencite", "autocite", "Autocite", "textcite", "Textcite",
+    "footcite",
+)
+# The cross-reference macros of LaTeX, amsmath, hyperref, cleveref and varioref.
+REFERENCE_FAMILY = ("ref", "eqref", "pageref", "autoref", "cref", "Cref", "nameref", "vref", "hyperref")
+# Macros kept as AST nodes, stars included: \citet* comes back as \citet*.
+REFERENCE_MACROS = ("footnote", *CITATION_MACROS, *REFERENCE_FAMILY, "label")
 REFERENCE_MACRO = re.compile(rf'\\(?:{"|".join(REFERENCE_MACROS)})\*?(?![a-zA-Z])')
+# The commands that point to a bibliography, as they stand on a line of their own.
+BIBLIOGRAPHY_COMMAND = re.compile(
+    r'\\(?:bibliographystyle|bibliography|addbibresource|printbibliography)(?![a-zA-Z])(?:\[[^\]\n]*\])?(?:\{[^{}\n]*\})?')
+_ONLY_COMMANDS = re.compile(rf'\s*(?:{BIBLIOGRAPHY_COMMAND.pattern}\s*)+$')
+_BIB_ITEM = re.compile(r'\s*\\bibitem(?:\[([^\]\n]*)\])?\{([^{}\n]*)\}\s*')
+_BIB_BEGIN = re.compile(r'\s*\\begin\{thebibliography\}\{([^{}\n]*)\}\s*$')
+_BIB_END = re.compile(r'\s*\\end\{thebibliography\}\s*$')
 
 
 def find_balanced_braces(text: str, start_pos: int) -> tuple[str, int]:
@@ -92,8 +107,8 @@ def extract_macro_args(text: str, macro_name: str, start_pos: int = 0) -> tuple[
     return args, pos, idx
 
 
-def _optional_args(text: str, idx: int) -> list[str]:
-    """The ``[...]`` arguments starting at ``idx``, as written."""
+def _optional_args(text: str, idx: int) -> tuple[list[str], int]:
+    """The ``[...]`` arguments starting at ``idx``, as written, and the position after them."""
     options = []
     while idx < len(text) and text[idx] == '[':
         close = text.find(']', idx)
@@ -101,7 +116,7 @@ def _optional_args(text: str, idx: int) -> list[str]:
             break
         options.append(text[idx + 1:close])
         idx = close + 1
-    return options
+    return options, idx
 
 
 def parse_reference_macro(
@@ -119,18 +134,76 @@ def parse_reference_macro(
         ``(node, end)``; ``node`` is None when the macro has no argument, and
         ``end`` then points just past the macro name.
     """
-    base = cmd_name[1:].rstrip("*")
+    style = cmd_name[1:]
+    base = style.rstrip("*")
     args, start, end = extract_macro_args(text, cmd_name, pos)
     if start != pos or not args:
         return None, pos + len(cmd_name)
+    options, idx = _optional_args(text, pos + len(cmd_name))
+    if base != "cites":  # a {...} after the argument is the text's own
+        end = find_balanced_braces(text, idx)[1]
     if base == "footnote":
         return Footnote(content=parse_inline(args[0])), end
-    if base in ("cite", "citet", "citep"):
-        return Citation(keys=[k.strip() for k in args[0].split(",") if k.strip()], style=base,
-                        options=_optional_args(text, pos + len(cmd_name))), end
-    if base == "ref":
-        return Reference(label=args[0].strip()), end
-    return Label(name=args[0].strip()), end
+    if base == "label":
+        return Label(name=args[0].strip()), end
+    if base == "cites":
+        return Citation(keys=[a.strip() for a in args], style=style, options=options), end
+    if base in CITATION_MACROS:
+        return Citation(keys=[k.strip() for k in args[0].split(",") if k.strip()], style=style, options=options), end
+    return Reference(label=args[0].strip(), style=style, options=options), end
+
+
+def _plain(block: Node) -> str | None:
+    """The text of a paragraph made of plain text only, else None."""
+    if isinstance(block, Paragraph) and block.children and all(isinstance(n, Text) for n in block.children):
+        return "".join(n.content for n in block.children)
+    return None
+
+
+def _entry(block: Node) -> BibEntry | None:
+    """The ``\\bibitem`` a paragraph opens with, as an entry."""
+    if not isinstance(block, Paragraph) or not block.children or not isinstance(block.children[0], Text):
+        return None
+    first = block.children[0]
+    m = _BIB_ITEM.match(first.content)
+    if m is None:
+        return None
+    rest = first.content[m.end():]
+    return BibEntry(key=m.group(2), label=m.group(1),
+                    children=[*([replace(first, content=rest)] if rest else []), *block.children[1:]])
+
+
+def lift_bibliography(doc: Document) -> None:
+    """Rebuild a ``Bibliography`` from the paragraphs of macros the renderers write for it.
+
+    Formats without a construct of their own keep the bibliography visible as
+    LaTeX, one command or entry per paragraph; a run of them becomes one node.
+    """
+    out: list[Node] = []
+    current: Bibliography | None = None
+    in_entries = False
+    for block in doc.children:
+        text = _plain(block)
+        begin = _BIB_BEGIN.match(text) if text is not None else None
+        if begin:
+            current = current or Bibliography()
+            current.widest = begin.group(1)
+            in_entries = True
+            if not out or out[-1] is not current:
+                out.append(current)
+        elif in_entries and text is not None and _BIB_END.match(text):
+            in_entries = False
+        elif in_entries and (entry := _entry(block)) is not None:
+            current.entries.append(entry)
+        elif text is not None and _ONLY_COMMANDS.match(text):
+            current = current or Bibliography()
+            current.commands.extend(m.group(0) for m in BIBLIOGRAPHY_COMMAND.finditer(text))
+            if not out or out[-1] is not current:
+                out.append(current)
+        else:
+            current, in_entries = None, False
+            out.append(block)
+    doc.children[:] = out
 
 
 def lift_macros(nodes: list[Node]) -> list[Node]:

@@ -4,8 +4,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from ..ast import Citation, CodeBlock, CodeInline, Document, Equation, Heading, Node, Reference, Table, walk
+from ..ast import (
+    BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Heading, Node, Paragraph, Reference, Table, walk,
+)
 from ..parsers._excel_formulas import FORMULA_LANGUAGE
+from ..parsers._office import BoxFrame, parse_box_preamble
 from ._common import latex_reference_macro, plain_text
 
 _MAX_NAME = 31
@@ -14,10 +17,11 @@ _INVALID = re.compile(r"[\[\]:*?/\\]")
 
 @dataclass
 class Sheet:
-    """A table with the name of its sheet and the formula lines written under it."""
+    """A table with the name of its sheet, the formula lines written under it and the text boxes after it."""
     name: str
     table: Table
     formulas: list[str] = field(default_factory=list)
+    boxes: list[tuple[BoxFrame, BlockQuote]] = field(default_factory=list)
 
 
 def literal_text(node: Node) -> str | None:
@@ -29,6 +33,13 @@ def literal_text(node: Node) -> str | None:
     if isinstance(node, (Citation, Reference)):
         return latex_reference_macro(node, plain_text)
     return None
+
+
+def _cells_frame(quote: BlockQuote) -> BoxFrame | None:
+    """The frame of a quote that is a text box placed on cells."""
+    first = quote.children[0] if quote.children else None
+    frame = parse_box_preamble(plain_text(first.children)) if isinstance(first, Paragraph) else None
+    return frame if frame is not None and frame.cells else None
 
 
 def _clean(name: str) -> str:
@@ -50,7 +61,8 @@ def collect_sheets(doc: Document) -> list[Sheet]:
 
     A table without a heading above it is ``Sheet<n>``. A code block in the
     ``excel`` language after a table, before the next table or heading, holds
-    that table's formulas, one per line.
+    that table's formulas, one per line; a quote there that is a text box placed
+    on cells belongs to its sheet.
 
     Raises:
         ValueError: If the document has no table.
@@ -69,6 +81,8 @@ def collect_sheets(doc: Document) -> list[Sheet]:
             sheets.append(current)
         elif isinstance(node, CodeBlock) and current is not None and node.language == FORMULA_LANGUAGE:
             current.formulas.extend(line for line in node.code.splitlines() if line.strip())
+        elif isinstance(node, BlockQuote) and current is not None and (frame := _cells_frame(node)) is not None:
+            current.boxes.append((frame, node))
     if not sheets:
         raise ValueError("The document has no table to write as a spreadsheet.")
     return sheets

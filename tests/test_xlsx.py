@@ -317,9 +317,107 @@ class TestXlsxRenderer(BaseConverterTest):
         with self.assertRaises(ValueError):
             convert_text(ONE_TABLE, "markdown", "xlsx")
 
+    def test_long_metadata_is_cut(self):
+        title = " ".join(f"Word{i}" for i in range(60))
+        props = load_workbook(self._save(f'---\ntitle: "{title}"\n---\n\n' + ONE_TABLE)).properties
+        self.assertLessEqual(len(props.title), 255)
+
     def test_csv_to_xlsx_and_back(self):
         out, back = self._out("data.xlsx"), self._out("data.csv")
         save_to_file(str(INPUT_DIR / "Test_data.csv"), str(out))
         save_to_file(str(out), str(back))
         self.assertEqual(back.read_bytes().decode("utf-8-sig"),
                          'Name,Qty,Note\r\nApple,3,"two\nlines"\r\nPear,5,\r\n')
+
+
+class TestXlsxTextBoxes(BaseConverterTest):
+    """Text boxes, which openpyxl does not load, are read from the drawing parts and written back."""
+
+    def _book(self, name: str = "boxes.xlsx", **sheets):
+        import xlsxwriter
+        path = self._out(name)
+        book = xlsxwriter.Workbook(str(path))
+        for title, (rows, boxes) in sheets.items():
+            ws = book.add_worksheet(title)
+            for r, row in enumerate(rows):
+                ws.write_row(r, 0, row)
+            for row, col, text, options in boxes:
+                ws.insert_textbox(row, col, text, options)
+        book.close()
+        return path
+
+    def _boxes(self, doc) -> list[tuple[str, str]]:
+        from textconverter.ast import BlockQuote
+        return [(plain_text(q.children[0].children), "\n".join(plain_text(p.children) for p in q.children[1:]))
+                for q in walk(doc) if isinstance(q, BlockQuote)]
+
+    def test_a_box_is_a_quote_after_the_table_of_its_sheet(self):
+        path = self._book(A=([["x"], [1]], [(3, 2, "A note", {"font": {"size": 14}, "width": 200, "height": 60})]))
+        doc = parse_xlsx(str(path), write_images=False)
+        self.assertIsInstance(doc.children[0], Table)
+        ((preamble, text),) = self._boxes(doc)
+        self.assertRegex(preamble, r"^Text box \(C4:[A-Z]+\d+, font 14pt\)$")
+        self.assertEqual(text, "A note")
+
+    def test_each_sheet_keeps_its_own(self):
+        path = self._book(A=([["x"]], [(1, 0, "first", {})]), B=([["y"]], [(1, 0, "second", {})]))
+        doc = parse_xlsx(str(path), write_images=False)
+        kinds = [type(n).__name__ for n in doc.children]
+        self.assertEqual(kinds, ["Heading", "Table", "BlockQuote", "Heading", "Table", "BlockQuote"])
+        self.assertEqual([t for _, t in self._boxes(doc)], ["first", "second"])
+
+    def test_a_hidden_sheet_stays_out(self):
+        import xlsxwriter
+        path = self._out("hidden_box.xlsx")
+        book = xlsxwriter.Workbook(str(path))
+        book.add_worksheet("A").write(0, 0, "x")
+        hidden = book.add_worksheet("B")
+        hidden.write(0, 0, "y")
+        hidden.insert_textbox(1, 0, "secret")
+        hidden.hide()
+        book.close()
+        self.assertEqual(self._boxes(parse_xlsx(str(path), write_images=False)), [])
+
+    def test_a_sheet_with_only_a_box_is_not_lost(self):
+        path = self._book(A=([["x"]], []), B=([], [(1, 1, "alone", {})]))
+        doc = parse_xlsx(str(path), write_images=False)
+        self.assertEqual([t for _, t in self._boxes(doc)], ["alone"])
+        self.assertIn(Heading(level=1, children=[Text("B")]), doc.children)
+
+    def test_a_workbook_with_several_lines(self):
+        path = self._book(A=([["x"]], [(1, 0, "one\ntwo", {})]))
+        self.assertEqual(self._boxes(parse_xlsx(str(path), write_images=False))[0][1], "one\ntwo")
+
+    def test_a_shape_without_text_is_ignored(self):
+        path = self._book(A=([["x"]], [(1, 0, "", {})]))
+        self.assertEqual(self._boxes(parse_xlsx(str(path), write_images=False)), [])
+
+    def test_the_round_trip_is_identical(self):
+        options = ConvertOptions(image_handling="discard")
+        path = self._book(A=([["x", "y"], [1, 2]], [(3, 2, "A note", {"font": {"size": 14}, "width": 300, "height": 90}),
+                                                    (9, 0, "one\ntwo", {})]),
+                          B=([["z"]], [(0, 3, "other", {"font": {"size": 9}, "width": 100, "height": 40})]))
+        out = self._out("boxes_again.xlsx")
+        save_to_file(str(path), str(out), options)
+        self.assertEqual(json.loads(convert(str(out), "json", options)), json.loads(convert(str(path), "json", options)))
+
+    def test_markdown_writes_a_box(self):
+        src, out = self._out("box.md"), self._out("box.xlsx")
+        src.write_text("| a |\n|---|\n| 1 |\n\n> Text box (C4:F8, font 12pt)\n>\n> Note\n\n> ordinary\n", encoding="utf-8")
+        save_to_file(str(src), str(out))
+        self.assertEqual(self._boxes(parse_xlsx(str(out), write_images=False)), [("Text box (C4:F8, font 12pt)", "Note")])
+
+    def test_a_box_placed_on_a_slide_is_not_written(self):
+        src, out = self._out("slide_box.md"), self._out("slide_box.xlsx")
+        src.write_text("| a |\n|---|\n| 1 |\n\n> Text box (x 10%, y 10%, w 30%, h 20%)\n>\n> Note\n", encoding="utf-8")
+        save_to_file(str(src), str(out))
+        self.assertEqual(self._boxes(parse_xlsx(str(out), write_images=False)), [])
+
+    def test_csv_ignores_boxes(self):
+        path = self._book(A=([["x"], [1]], [(3, 2, "A note", {})]))
+        out = self._out("boxes.csv")
+        save_to_file(str(path), str(out), ConvertOptions(image_handling="discard"))
+        self.assertNotIn("note", out.read_text(encoding="utf-8-sig"))
+
+    def test_the_fixture_has_none(self):
+        self.assertEqual(self._boxes(parse_xlsx(str(FIXTURE), write_images=False)), [])

@@ -350,13 +350,17 @@ def _plain(char: str) -> str:
     return {"-": "\u2212", "'": "\u2032", "~": "\u00a0"}.get(char, char)
 
 
+# Display environments that hold one formula, not an array of them.
+_ONE_LINE_ENVS = ("equation", "equation*", "displaymath")
+
+
 def latex_to_omml(code: str, env: str | None = None) -> etree._Element:
     """The ``m:oMath`` element for a LaTeX formula.
 
     Args:
         code: The formula without delimiters. A top-level ``\\\\`` starts a new line.
-        env: The display environment it came from (``align``...); a formula with
-            one is written as an equation array.
+        env: The display environment it came from; ``align`` and its kin are
+            written as an equation array.
 
     Raises:
         UnsupportedMath: If the formula uses a command or construct not translated.
@@ -369,7 +373,7 @@ def latex_to_omml(code: str, env: str | None = None) -> etree._Element:
     if parser.peek() is not None:
         raise UnsupportedMath("unbalanced formula")
     root = etree.Element(_m("oMath"), nsmap={"m": M_NS, "w": W_NS})
-    if env or len(lines) > 1:
+    if (env and env not in _ONE_LINE_ENVS) or len(lines) > 1:
         root.append(parser.equation_array([[line] for line in lines]))
     else:
         root.extend(lines[0])

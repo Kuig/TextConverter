@@ -113,9 +113,9 @@ def cell_height(nodes: list[Node], width_emu: float, scale: float) -> float:
     return _wrapped(chars, size, width_emu / EMU_PER_PT - 14.4, False) * size * _LINE_HEIGHT + 14.4
 
 
-def fit(measure: Callable[[float], float], available: float) -> float:
-    """The font scale (between ``MIN_SCALE`` and 1) at which ``measure(scale)`` points fit in ``available``."""
-    scale = 1.0
+def fit(measure: Callable[[float], float], available: float, start: float = 1.0) -> float:
+    """The font scale, from ``start`` down to ``MIN_SCALE``, at which ``measure(scale)`` points fit in ``available``."""
+    scale = start
     for _ in range(5):
         height = measure(scale)
         if height <= available or scale <= MIN_SCALE:

@@ -2,14 +2,15 @@ from __future__ import annotations
 import re
 from contextvars import ContextVar
 from ..ast import (
-    METADATA_FIELDS, Abstract, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote,
+    METADATA_FIELDS, Abstract, Bibliography, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote,
     Heading, HorizontalRule, Image, Label, LineBreak, Link, ListBlock, Node, Paragraph, Reference, Table,
     TableCell, Text,
 )
+from ..parsers._latex_macros import REFERENCE_MACROS
 from ..parsers.markdown_parser import emphasis_flanking, trim_bare_url
 from ._common import (
-    EMPHASIS_STYLES, caption_paragraphs, latex_reference_macro, split_spaces, style_extent, table_grid,
-    text_runs, text_style,
+    EMPHASIS_STYLES, bibliography_paragraphs, caption_paragraphs, latex_reference_macro, split_spaces, style_extent,
+    table_grid, text_runs, text_style,
 )
 
 # The footnotes met while rendering one document, numbered in order.
@@ -17,11 +18,13 @@ _FOOTNOTES: ContextVar[list[Footnote] | None] = ContextVar("markdown_footnotes",
 
 # Characters of literal text that Markdown would read as markup (see _escape).
 _MD_SPECIAL = re.compile(
-    r'\\(?=[!-/:-@\[-`{-~]|(?:footnote|citet|citep|cite|ref|label)(?![a-zA-Z])|$)'
+    rf'\\(?=[!-/:-@\[-`{{-~]|(?:{"|".join(REFERENCE_MACROS)})(?![a-zA-Z])|$)'
     r'|[*`\[\]$]'
     r'|_+'
     r'|~(?=~)|(?<=~)~|^~|~$'
     r'|<(?=[A-Za-z/!?])'
+    # What would read as an entity
+    r'|&(?=#?[0-9A-Za-z]+;)'
     # What would start a bare URL (GFM) in text: "http://", "https://", "www."
     r'|(?<=http):(?=//)|(?<=https):(?=//)|(?<=(?<![\w.-])www)\.'
 )
@@ -63,9 +66,11 @@ def render_markdown(doc: Document) -> str:
     references with their definitions at the end.
     """
     footnotes: list[Footnote] = []
+    # The front matter is read before any [^n] definition: a note there stays a macro
+    metadata = _front_matter(doc)
     token = _FOOTNOTES.set(footnotes)
     try:
-        blocks = [_front_matter(doc), *(_render_node(child) for child in doc.children)]
+        blocks = [metadata, *(_render_node(child) for child in doc.children)]
         definitions = []
         # A note's content may hold another note, numbered after it
         while len(definitions) < len(footnotes):
@@ -274,9 +279,10 @@ def _escape(text: str) -> str:
 
     Escapes ``*``, `````, ``[``, ``]``, ``$``, an underscore run that could
     open or close emphasis (one inside a word cannot), doubled ``~`` and one at
-    either end, a ``<`` that would start a tag or an autolink, and a backslash
-    that would start an escape or a reference macro. Block markers at the start
-    of a line are escaped per paragraph (see ``_paragraph``).
+    either end, a ``<`` that would start a tag or an autolink, a ``&`` that
+    would start an entity, and a backslash that would start an escape or a
+    reference macro. Block markers at the start of a line are escaped per
+    paragraph (see ``_paragraph``).
     """
     def escape(m: re.Match) -> str:
         run = m.group(0)
@@ -375,11 +381,13 @@ _RENDERERS = {
     Image: _image,
     CodeInline: _code_inline,
     # The enclosing paragraph turns every "\n" into a hard break ("  \n")
-    LineBreak: lambda node: "\n",
+    LineBreak: lambda node: " \\and " if node.author_separator else "\n",
     BlockQuote: _block_quote,
     HorizontalRule: lambda node: "---",
     Equation: _equation,
     Abstract: _abstract,
     Footnote: _footnote,
+    # Commands and entries stay visible as LaTeX, one per paragraph
+    Bibliography: lambda node: '\n\n'.join(_paragraph(p) for p in bibliography_paragraphs(node)),
     **{cls: lambda node: latex_reference_macro(node, _inline) for cls in (Citation, Reference, Label)},
 }

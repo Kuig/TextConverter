@@ -20,9 +20,10 @@ from ..ast import BlockQuote, Document, Footnote, Heading, Image, LineBreak, Nod
 from ..images import ImageStore
 from ..logger import log_warning
 from ._docx_blocks import Flow, tidy
+from ._office import box_preamble
 from ._pptx_objects import read_chart, read_diagram, read_table, relationship_id
-from ._pptx_text import TextReader, plain_text, single_line
-from ._pptx_xml import R, Item, a, box_preamble, iter_items, p, xpath
+from ._pptx_text import TextReader, dominant_font, plain_text, single_line
+from ._pptx_xml import DEFAULT_SECTION, R, Item, a, iter_items, p, slide_frame, xpath
 
 _TITLE_TYPES = frozenset({"title", "ctrTitle"})
 # Placeholders for the slide number, date, footer and header: the layout, not the content.
@@ -138,6 +139,8 @@ class _Reader:
             ids = [int(i) for i in xpath(section, "p14:sldIdLst/p14:sldId/@id")]
             result.append((section.get("name", ""), [by_id[i] for i in ids if i in by_id]))
             used.update(ids)
+        if result[0][0] == DEFAULT_SECTION:  # the renderer's, for the slides before the first section
+            result[0] = (None, result[0][1])
         rest = [s for s in slides if s.slide_id not in used]
         return result + [(None, rest)] if rest else result
 
@@ -244,7 +247,8 @@ class _Reader:
         flow.close()
         if is_main:
             return flow.out
-        preamble = Paragraph(children=[Text(content=box_preamble(item.rect, self.width, self.height))])
+        font = dominant_font(el.find(p("txBody")), xpath(self.presentation.element, "p:defaultTextStyle"))
+        preamble = Paragraph(children=[Text(content=box_preamble(slide_frame(item.rect, self.width, self.height, font)))])
         return [BlockQuote(children=[preamble, *flow.out])]
 
     @staticmethod

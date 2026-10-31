@@ -24,7 +24,7 @@ from .ast import (
     LineBreak, Link, ListItem, Node, Paragraph, Text, child_lists, walk,
 )
 from .logger import log_action, log_warning
-from .renderers._common import caption_paragraphs
+from .renderers._common import caption_paragraphs, safe_href
 
 
 # Content types that say nothing about the payload: a download with one of
@@ -89,6 +89,12 @@ def _same_content(path: str, data: bytes) -> bool:
     except OSError as exc:
         log_warning(f"Could not read {path} to compare with a downloaded image: {exc}")
         return False
+
+
+def data_url_bytes(src: str) -> bytes:
+    """The bytes a ``data:`` URL holds."""
+    header, _, data = src.partition(",")
+    return base64.b64decode(data) if header.endswith(";base64") else urllib.parse.unquote_to_bytes(data)
 
 
 def store_image(data: bytes, target_dir: str, basename: str) -> str:
@@ -207,11 +213,22 @@ class ImagePaths:
                 log_warning(f"Could not save image {url}: {exc}")
                 self._rewrite(node, url)
 
+    def save_data_images(self, doc: Node, target_dir: str) -> None:
+        """Write the images held in ``data:`` URLs to ``target_dir``, for a format that needs files."""
+        for node in walk(doc):
+            if not isinstance(node, Image) or not node.src.startswith("data:"):
+                continue
+            mime = node.src[len("data:"):].partition(",")[0].partition(";")[0]
+            data = data_url_bytes(node.src)
+            name = f"image_{hashlib.sha1(data).hexdigest()[:8]}{mimetypes.guess_extension(mime) or '.png'}"
+            self._rewrite(node, store_image(data, target_dir, name))
+
     def relativize(self, doc: Node, base_dir: str) -> None:
         """Make the paths this object rewrote relative to ``base_dir``.
 
         A path that resolves to the same file as the original source keeps
-        the original spelling; one on another drive stays absolute.
+        the original spelling; one on another drive stays absolute, with
+        forward slashes, which Markdown and LaTeX read as they stand.
         """
         base_dir = os.path.abspath(base_dir)
         for node in walk(doc):
@@ -223,6 +240,7 @@ class ImagePaths:
             try:
                 rel = os.path.relpath(node.src, base_dir).replace(os.sep, "/")
             except ValueError:
+                node.src = node.src.replace(os.sep, "/")
                 continue
             same = (not is_remote(original) and not _has_scheme(original)
                     and os.path.normpath(original) == os.path.normpath(rel))
@@ -406,11 +424,23 @@ def lower_image_descriptions(doc: Node) -> None:
 
 
 def remove_images(node: Node) -> None:
-    """Recursively drop every Image node from the tree; a figure's caption stays as text."""
+    """Recursively drop every Image node from the tree, with its caption and a link left with nothing in it."""
     for lst in child_lists(node):
-        lst[:] = [k for c in lst for k in (c.caption if isinstance(c, Image) else [c])]
+        lst[:] = [c for c in lst if not isinstance(c, Image)]
         for c in lst:
             remove_images(c)
+        lst[:] = [c for c in lst if not (isinstance(c, Link) and not c.content)]
+
+
+def neutralize_links(doc: Node) -> None:
+    """Point every link that would run code (``javascript:`` and the like) to ``#``; its text stays."""
+    count = 0
+    for node in walk(doc):
+        if isinstance(node, Link) and safe_href(node.url) != node.url:
+            node.url = safe_href(node.url)
+            count += 1
+    if count:
+        log_warning(f"{count} link(s) that would run code when clicked were neutralized.")
 
 
 def discard_links(node: Node) -> None:

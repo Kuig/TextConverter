@@ -86,7 +86,7 @@ def parse_pdf(
         md_text = re.sub(r'\*\*==>\s*picture.*?<==\*\*\n?', '', md_text)
 
     # Re-parse through our own Markdown parser to keep the AST consistent
-    doc = parse_markdown(md_text, code_parsing=code_parsing)
+    doc = parse_markdown(md_text, code_parsing=code_parsing, indented_code=False)
 
     # Strip the directory prefix from image paths so references stay relative to the document
     for node in walk(doc):

@@ -72,7 +72,9 @@ class TestInlineFeatures(BaseConverterTest):
         self.assertIn("\\begin{align*}\na &= b\n\\end{align*}", tex)
         tex = render_latex(_doc(Equation(code="a &= b \\\\ c &= d")))
         self.assertIn("\\begin{aligned}", tex)
-        self.assertIn("\\begin{equation}\nx\n\\end{equation}", render_latex(_doc(Equation(code="x"))))
+        self.assertIn("\\[\nx\n\\]", render_latex(_doc(Equation(code="x"))))
+        self.assertIn("\\begin{equation}\nx\n\\end{equation}", render_latex(_doc(Equation(code="x", env="equation"))))
+        self.assertIn("\\begin{equation}\n\\label{a} x\n\\end{equation}", render_latex(_doc(Equation(code="\\label{a} x"))))
 
     def test_latex_link_urls(self):
         doc = _doc(Paragraph(children=[Link(url="https://x.org/~u/a_b?q=1&r=50%#top", content=[Text(content="l")])]))

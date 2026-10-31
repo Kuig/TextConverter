@@ -5,6 +5,7 @@ import pathlib
 import re
 import tempfile
 import urllib.parse
+import zipfile
 from collections.abc import Callable
 from dataclasses import replace
 from typing import Any
@@ -12,9 +13,12 @@ from typing import Any
 from . import _net
 from .ast import Document, Table, walk
 from .code_detector import fence_code_paragraphs
-from .images import ImagePaths, discard_links, embed_images, lower_image_descriptions, remove_images
+from .images import (
+    ImagePaths, discard_links, embed_images, lower_image_descriptions, neutralize_links, remove_images,
+)
 from .logger import log_action, log_warning
 
+from .parsers._latex_macros import lift_bibliography
 from .parsers.markdown_parser import parse_markdown
 from .parsers.html_parser import parse_html
 from .parsers.latex_parser import parse_latex
@@ -43,6 +47,12 @@ from .options import ConvertOptions
 # HTML template that PDF output is printed from.
 PDF_TEMPLATE = "light"
 
+# The formats that have no bibliography of their own: they show it as LaTeX macros.
+_MACRO_BIBLIOGRAPHY = ("markdown", "html", "docx", "pptx")
+# What a file of a binary format holds: the start of a PDF, the top folder of an Office package.
+_PDF_MAGIC = b"%PDF-"
+_PACKAGE_FOLDERS = {"docx": "word/", "pptx": "ppt/", "xlsx": "xl/"}
+
 # Turns the transformed document into the conversion's result (a string for the text formats).
 Render = Callable[[Document], Any]
 
@@ -64,6 +74,22 @@ def _read_text(path: str, from_format: str) -> str:
         return f.read()
 
 
+def _check_file_format(path: str, from_format: str) -> None:
+    """Raise ValueError when a file is not what ``from_format`` says, before a parser fails in its own words."""
+    if from_format == "pdf":
+        with open(path, "rb") as f:
+            valid = _PDF_MAGIC in f.read(1024)
+    elif from_format in _PACKAGE_FOLDERS:
+        valid = zipfile.is_zipfile(path)
+        if valid:
+            with zipfile.ZipFile(path) as package:
+                valid = any(name.startswith(_PACKAGE_FOLDERS[from_format]) for name in package.namelist())
+    else:
+        return
+    if not valid:
+        raise ValueError(f"{path} is not a valid {from_format} file.")
+
+
 def _parse(
     from_format: str,
     options: ConvertOptions,
@@ -74,6 +100,29 @@ def _parse(
     output_dir: str | None = None,
     image_dir_name: str | None = None,
     source_url: str | None = None,
+    source_path: str | None = None,
+) -> Document:
+    """Parse a source; a bibliography shown as macros becomes a node, as a LaTeX source gives it."""
+    if path is not None:
+        _check_file_format(path, from_format)
+    doc = _read_source(from_format, options, config, text=text, path=path, output_dir=output_dir,
+                       image_dir_name=image_dir_name, source_url=source_url, source_path=source_path)
+    if from_format in _MACRO_BIBLIOGRAPHY:
+        lift_bibliography(doc)
+    return doc
+
+
+def _read_source(
+    from_format: str,
+    options: ConvertOptions,
+    config: AppConfig,
+    *,
+    text: str | None,
+    path: str | None,
+    output_dir: str | None,
+    image_dir_name: str | None,
+    source_url: str | None,
+    source_path: str | None,
 ) -> Document:
     """Run the parser for ``from_format``: binary formats read ``path``, the others ``text``."""
     if from_format == "pdf":
@@ -106,7 +155,7 @@ def _parse(
         )
         return parse_html(text, extract_html=options.extract_html, profiles=profiles)
     if from_format == "latex":
-        return parse_latex(text)
+        return parse_latex(text, source=source_path)
     return parse_json(text)
 
 
@@ -125,9 +174,14 @@ def _text_render(to_format: str, options: ConvertOptions) -> Render:
 
 
 def _image_handling(options: ConvertOptions, to_format: str) -> str:
-    """The image handling a conversion uses: ``auto`` resolved by the target format."""
+    """The image handling a conversion uses: ``auto`` resolved by the target format.
+
+    LaTeX cannot hold an image in the text, so ``embed`` there means ``link``.
+    """
     if options.image_handling == "auto":
         return OUTPUT_FORMATS[to_format].auto_images
+    if options.image_handling == "embed" and to_format == "latex":
+        return "link"
     return options.image_handling
 
 
@@ -183,6 +237,8 @@ def _transform_and_render(
     ``_image_folder``), else under the output directory.
     """
     handling = _image_handling(options, to_format)
+    if options.image_handling == "embed" and handling == "link":
+        log_warning("LaTeX cannot embed images: they are written to files and linked.")
 
     if from_format != "json":
         if handling == "discard":
@@ -192,7 +248,10 @@ def _transform_and_render(
             out_dir = output_dir or _doc_dir(from_format, None, source_path)
             paths = ImagePaths(doc_dir)
             # Download first: on a web page, relative sources are remote.
-            paths.download(doc, os.path.join(image_parent or out_dir, image_dir_name or ""), source_url)
+            image_folder = os.path.join(image_parent or out_dir, image_dir_name or "")
+            paths.download(doc, image_folder, source_url)
+            if to_format == "latex":
+                paths.save_data_images(doc, image_folder)
             paths.absolutize(doc)
             # Image sources and raster PDF pages have been through the AI already.
             transcribed = from_format == "image" or (from_format == "pdf" and options.pdf_mode == "raster")
@@ -207,6 +266,7 @@ def _transform_and_render(
         discard_links(doc)
 
     if to_format != "json":
+        neutralize_links(doc)
         lower_image_descriptions(doc)
     if to_format in ("csv", "xlsx"):
         _require_table(doc, from_format, options)
@@ -349,7 +409,7 @@ def _convert(
         if INPUT_FORMATS[from_format].binary:
             doc = _parse(from_format, options, config, path=source, output_dir=parent, image_dir_name=name)
         else:
-            doc = _parse(from_format, options, config, text=_read_text(source, from_format))
+            doc = _parse(from_format, options, config, text=_read_text(source, from_format), source_path=source)
         return _transform_and_render(doc, from_format, to_format, options, config,
                                      output_dir=output_dir, image_parent=parent, image_dir_name=name,
                                      source_url=None, source_path=source, render=render)
@@ -446,8 +506,6 @@ def _save_office(
 ) -> None:
     """Write the converted ``source`` as a Word, PowerPoint or Excel file; the file appears only once complete."""
     write = _office_writer(to_format)
-    if from_format is not None:
-        check_choice("from_format", from_format, INPUT_FORMATS)
     handling = "embed" if options.image_handling in ("auto", "link") else options.image_handling
     office_options = replace(options, image_handling=handling)
     directory = os.path.dirname(os.path.abspath(output_path))
@@ -461,6 +519,24 @@ def _save_office(
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+def _save_pdf(
+    source: str,
+    output_path: str,
+    options: ConvertOptions,
+    from_format: str | None,
+    config: AppConfig | None,
+) -> None:
+    """Print the converted ``source`` as a PDF: nothing reads it back, so references show what they stand for."""
+    from .renderers.pdf_renderer import render_pdf
+    handling = "embed" if options.image_handling in ("auto", "link") else options.image_handling
+    pdf_options = replace(options, template=PDF_TEMPLATE, image_handling=handling)
+    with tempfile.TemporaryDirectory(prefix="textconverter_pdf_") as tmp:
+        html = _convert(source, "html", pdf_options, config or load_config(), from_format=from_format,
+                        output_dir=tmp, image_dir_name="images",
+                        render=lambda doc: render_html(doc, template_name=PDF_TEMPLATE, printed=True))
+        render_pdf(html, output_path, base_dir=tmp)
 
 
 def _save_csv(
@@ -500,11 +576,13 @@ def save_to_file(
 
     The output format comes from the extension of ``output_path``; images are
     written to a ``<output stem>_images`` folder next to it, unless they are
-    embedded (``embed``, or ``auto`` for HTML and Word), which leaves no folder. A ``.pdf`` output
+    embedded (``embed``, or ``auto`` for HTML and Word), which leaves no folder. A folder
+    of ``output_path`` that is missing is created first. A ``.pdf`` output
     is the HTML rendering with the light template, printed by
-    ``renderers.pdf_renderer.render_pdf``: ``options.template`` is ignored and
+    ``renderers.pdf_renderer.render_pdf``: ``options.template`` is ignored,
     images are embedded (``auto`` and ``link`` both act as ``embed``), so the
-    PDF is self-contained and no image folder is left next to it. A ``.docx``
+    PDF is self-contained and no image folder is left next to it, and notes,
+    citations and cross-references show what they stand for. A ``.docx``
     output is the document written by ``renderers.docx_renderer.render_docx``,
     with the same image rules and no template; so are ``.pptx`` and ``.xlsx``
     (the latter keeps only the tables, one sheet each). A ``.csv`` output holds the
@@ -526,6 +604,7 @@ def save_to_file(
         ValueError: If the output format cannot be inferred, the output path
             is the source file itself, or a ``.csv`` or ``.xlsx`` output has no
             table to write.
+        OSError: If the output folder cannot be created.
         FileNotFoundError, RuntimeError, ImportError: As ``convert``.
     """
     options = options or ConvertOptions()
@@ -535,21 +614,21 @@ def save_to_file(
     if (not _is_url(source) and os.path.exists(source) and os.path.exists(output_path)
             and os.path.samefile(source, output_path)):
         raise ValueError(f"The output path is the source file itself: {output_path}")
+    if from_format is not None:
+        check_choice("from_format", from_format, INPUT_FORMATS)
 
     out_path = pathlib.Path(output_path)
+    try:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OSError(f"Cannot create the output folder {out_path.parent}: {exc}") from exc
     if to_format == "csv":
         return _save_csv(source, output_path, options, from_format, config)
     if to_format in ("docx", "pptx", "xlsx"):
         _save_office(source, output_path, to_format, options, from_format, config)
         return [output_path]
     if to_format == "pdf":
-        from .renderers.pdf_renderer import render_pdf
-        handling = "embed" if options.image_handling in ("auto", "link") else options.image_handling
-        pdf_options = replace(options, template=PDF_TEMPLATE, image_handling=handling)
-        with tempfile.TemporaryDirectory(prefix="textconverter_pdf_") as tmp:
-            html = convert(source, "html", pdf_options, from_format=from_format,
-                           output_dir=tmp, image_dir_name="images", config=config)
-            render_pdf(html, output_path, base_dir=tmp)
+        _save_pdf(source, output_path, options, from_format, config)
         return [output_path]
 
     result = convert(source, to_format, options, from_format=from_format,

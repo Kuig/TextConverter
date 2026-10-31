@@ -196,9 +196,9 @@ class TestHtmlStructures(BaseConverterTest):
         self.assertEqual(_parse(out), doc)
         self.assertIn("Figure: The **caption**", _md(html))
 
-    def test_discarded_figure_keeps_its_caption(self):
-        md = _md('<figure><img src="f.png"><figcaption>Cap</figcaption></figure>', image_handling="discard")
-        self.assertEqual(md.strip(), "Cap")
+    def test_a_discarded_figure_takes_its_caption_with_it(self):
+        md = _md('<figure><img src="f.png"><figcaption>Cap</figcaption></figure><p>after</p>', image_handling="discard")
+        self.assertEqual(md.strip(), "after")
 
     def test_anchor_without_href_is_plain_text(self):
         self.assertEqual(_md("<p>x <a name='top'>anchor</a> y</p>").strip(), "x anchor y")
@@ -279,3 +279,37 @@ class TestHtmlReferenceMacros(BaseConverterTest):
         self.assertIn(r"\cite{no}", textconverter.convert_text(ours, "html", "markdown"))
         (other,) = _parse("<html><body>" + body).children
         self.assertFalse(any(isinstance(n, (Citation, Footnote)) for n in other.children))
+
+
+class TestHtmlTableHeaders(BaseConverterTest):
+
+    def _grid(self, html: str) -> tuple[list[str], list[list[str]]]:
+        from textconverter.renderers._common import plain_text
+        (table,) = _parse(html).children
+        return ([plain_text(c.children) for c in table.headers],
+                [[plain_text(c.children) for c in row.cells] for row in table.rows])
+
+    def test_a_second_head_row_opens_the_body(self):
+        html = "<table><thead><tr><th>A</th></tr><tr><th>B</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table>"
+        self.assertEqual(self._grid(html), (["A"], [["B"], ["1"]]))
+
+    def test_a_first_row_of_spanning_headers_is_the_header(self):
+        html = "<table><tr><th colspan=2>A</th><th>B</th></tr><tr><td>1</td><td>2</td><td>3</td></tr></table>"
+        self.assertEqual(self._grid(html), (["A", "", "B"], [["1", "2", "3"]]))
+
+    def test_a_nested_table_is_the_text_of_its_cell(self):
+        html = ("<table><tr><th>A</th></tr><tr><td><table><tr><td>x</td><td>y</td></tr><tr><td>z</td></tr></table></td></tr></table>")
+        (table,) = _parse(html).children
+        from textconverter.ast import Table, walk
+        self.assertEqual(sum(isinstance(n, Table) for n in walk(table)), 1)
+        self.assertEqual(self._grid(html)[1], [["x y\nz"]])
+        self.assertIn("| x y<br>z |", textconverter.convert_text(html, "html", "markdown"))
+
+
+class TestHtmlBibliography(BaseConverterTest):
+
+    def test_it_is_marked_and_read_back(self):
+        tex = "\\begin{document}\n\\begin{thebibliography}{9}\n\\bibitem{a} A.\n\\end{thebibliography}\n\\end{document}"
+        html = textconverter.convert_text(tex, "latex", "html")
+        self.assertIn('class="tc-bib"', html)
+        self.assertIn('"type": "Bibliography"', textconverter.convert_text(html, "html", "json"))

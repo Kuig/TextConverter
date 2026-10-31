@@ -10,7 +10,7 @@ from ..ast import (
     Table, TableCell, TableRow, Text, abstract_from, child_lists, walk,
 )
 from ._latex_macros import REFERENCE_MACRO, lift_macros, parse_reference_macro
-from ._math import strip_displaystyle, unwrap_math
+from ._math import split_math_env, strip_displaystyle, unwrap_math
 
 if TYPE_CHECKING:
     from ..site_profiles.base import SiteProfile
@@ -210,7 +210,7 @@ class ASTHTMLParser(HTMLParser):
             self._image(attr_dict, classes)
             return
         if tag == 'br':
-            self._append_to_parent(LineBreak())
+            self._append_to_parent(LineBreak(author_separator='tc-and' in classes))
             return
         if tag == 'hr':
             self._append_to_parent(HorizontalRule())
@@ -416,6 +416,7 @@ class ASTHTMLParser(HTMLParser):
 
     def _end_math(self, tag: str) -> None:
         math = self._math
+        env = None
         if math.kind == 'mathml':
             if tag == 'annotation':
                 math.in_annotation = False
@@ -438,20 +439,20 @@ class ASTHTMLParser(HTMLParser):
             math.depth -= 1
             if math.depth > 0:
                 return
-            code = math.code.strip()
-            code = strip_displaystyle(unwrap_math(code) or code)
+            code, env = split_math_env(math.code.strip())
+            if env is None:
+                code = strip_displaystyle(unwrap_math(code) or code)
         self._math = None
-        self._append_to_parent(Equation(code=code, inline=math.inline))
+        self._append_to_parent(Equation(code=code, inline=math.inline, env=env))
 
     def _finish(self, node: Node) -> Node:
         """Attach a node just popped from the stack to its parent; return what was attached."""
         parent = self.stack[-1]
         if isinstance(node, TableRow):
+            # Read before the spans add their blank cells. The AST has one header row: the others open the body
+            header_row = isinstance(parent, Table) and not parent.headers and (self.in_thead or (
+                not parent.rows and bool(node.cells) and all(id(c) in self._header_cells for c in node.cells)))
             self._resolve_row_spans(node)
-            header_row = self.in_thead or (
-                not parent.headers and not parent.rows and node.cells
-                and all(id(c) in self._header_cells for c in node.cells)
-            ) if isinstance(parent, Table) else False
             if header_row:
                 parent.headers = node.cells
                 return node
@@ -469,6 +470,9 @@ class ASTHTMLParser(HTMLParser):
         elif isinstance(node, Table):
             for block in self._fostered.pop(id(node), []):
                 self._append_to_parent(block, force_parent=parent)
+            if isinstance(parent, TableCell):
+                parent.children.extend(_table_text(node))
+                return node
             if self._figures:
                 self._figures[-1]['target'] = node
         if id(node) in self._meta:
@@ -704,6 +708,17 @@ class ASTHTMLParser(HTMLParser):
             for node in list(walk(self.doc)):
                 for lst in child_lists(node):
                     lst[:] = lift_macros(lst)
+
+
+def _table_text(table: Table) -> list[Node]:
+    """A table inside a cell, which the AST cannot hold, as text: one line per row."""
+    out: list[Node] = []
+    for row in ([TableRow(cells=table.headers)] if table.headers else []) + table.rows:
+        out.extend([Text(content="\n")] if out else [])
+        for k, cell in enumerate(row.cells):
+            out.extend([Text(content=" ")] if k else [])
+            out.extend(cell.children)
+    return out
 
 
 def _reference_node(raw: str) -> Node:

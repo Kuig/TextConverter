@@ -18,8 +18,10 @@ from ..ast import (
 from ..logger import log_warning
 from lxml import etree
 
+from ..parsers._office import BoxFrame, parse_box_preamble
 from ..parsers._omml import M_NS
-from ._common import figure_image, latex_reference_macro, plain_text, safe_href, table_grid, text_runs
+from ..parsers.docx_parser import LANGUAGE_TAG
+from ._common import figure_image, latex_reference_macro, lower_bibliography, plain_text, safe_href, table_grid, text_runs
 from ._office import image_bytes, write_properties
 from ._omml import UnsupportedMath, latex_to_omml
 
@@ -31,6 +33,28 @@ _NUMBER_FORMATS = ("decimal", "lowerLetter", "lowerRoman")
 _FOOTNOTES_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_DEFAULT_DPI = 72
+# A floating text box, the form Word itself writes.
+_TEXT_BOX = (
+    '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+    '<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
+    '<mc:Choice xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" Requires="wps"><w:drawing>'
+    '<wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="45720" '
+    'distB="45720" distL="114300" distR="114300" simplePos="0" relativeHeight="{order}" behindDoc="0" locked="0" '
+    'layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+    '<wp:positionH relativeFrom="{from_x}"><wp:posOffset>{x}</wp:posOffset></wp:positionH>'
+    '<wp:positionV relativeFrom="{from_y}"><wp:posOffset>{y}</wp:posOffset></wp:positionV>'
+    '<wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapSquare wrapText="bothSides"/>'
+    '<wp:docPr id="{id}" name="Text Box {id}"/><wp:cNvGraphicFramePr/>'
+    '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+    '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp>'
+    '<wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill>'
+    '<a:ln w="9525"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></wps:spPr>'
+    '<wps:txbx><w:txbxContent/></wps:txbx><wps:bodyPr rot="0" vert="horz" wrap="square" lIns="91440" tIns="45720" '
+    'rIns="91440" bIns="45720" anchor="t" anchorCtr="0"><a:spAutoFit/></wps:bodyPr></wps:wsp></a:graphicData>'
+    '</a:graphic></wp:anchor></w:drawing></mc:Choice></mc:AlternateContent></w:r>'
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +81,7 @@ def render_docx(doc: Document, output_path: str, base_dir: str | None = None) ->
             (the current directory when None).
     """
     import docx
+    lower_bibliography(doc)
     _Writer(docx.Document(), base_dir or os.getcwd()).write(doc, output_path)
 
 
@@ -141,8 +166,7 @@ class _Writer:
         elif isinstance(node, Paragraph):
             self._paragraph(node, depth)
         elif isinstance(node, CodeBlock):
-            for line in node.code.split("\n"):
-                self.document.add_paragraph(line, style="Code")
+            self._code(node)
         elif isinstance(node, BlockQuote):
             self._quote(node, depth)
         elif isinstance(node, Abstract):
@@ -172,7 +196,60 @@ class _Writer:
         for image in figures:
             self._caption("Figure", image.caption, image.label)
 
+    def _code(self, node: CodeBlock) -> None:
+        paragraphs = [self.document.add_paragraph(line, style="Code")._p for line in node.code.split("\n")]
+        if not node.language:
+            return
+        control = self._parse(f'<w:sdt {self._nsdecls("w")}><w:sdtPr><w:tag w:val=""/></w:sdtPr><w:sdtContent/></w:sdt>')
+        control.find(self._qn("w:sdtPr")).find(self._qn("w:tag")).set(self._qn("w:val"), LANGUAGE_TAG + node.language)
+        paragraphs[0].addprevious(control)
+        content = control.find(self._qn("w:sdtContent"))
+        for paragraph in paragraphs:
+            content.append(paragraph)
+
+    def _box_frame(self, node: BlockQuote) -> BoxFrame | None:
+        """The frame of a quote that is a text box; a range of cells or a frame without a size is not a place here."""
+        first = node.children[0] if node.children else None
+        frame = parse_box_preamble(plain_text(first.children)) if isinstance(first, Paragraph) else None
+        return frame if frame is not None and None not in (frame.x, frame.w, frame.h) else None
+
+    def _text_box(self, node: BlockQuote, frame: BoxFrame) -> None:
+        """A floating text box: its blocks are written in the body like any others, then moved into the box."""
+        body = self.document.element.body
+        first_new = len(body) - 1  # the last child is the section properties
+        for child in node.children[1:]:
+            self._block(child)
+        blocks = list(body)[first_new:-1]
+        if frame.font:
+            self._set_font(blocks, frame.font)
+        section = self.document.sections[0]
+        anchor = self.document.add_paragraph()
+        drawing = self._parse(_TEXT_BOX.format(
+            order=251659264 + first_new, id=self.document.part.next_id,
+            from_x="page", x=round(frame.x / 100 * section.page_width),
+            from_y="page" if frame.y is not None else "paragraph",
+            y=round((frame.y or 0) / 100 * section.page_height),
+            cx=round(frame.w / 100 * section.page_width), cy=round(frame.h / 100 * section.page_height)))
+        anchor._p.append(drawing)
+        content = next(drawing.iter(self._qn("w:txbxContent")))
+        for block in blocks:
+            content.append(block)
+        if not blocks:
+            content.append(self._new("w:p"))
+
+    @staticmethod
+    def _set_font(blocks: list, size: float) -> None:
+        from docx.shared import Pt
+        from docx.text.run import Run
+        for block in blocks:
+            for run in block.iter("{" + _W + "}r"):
+                Run(run, None).font.size = Pt(size)
+
     def _quote(self, node: BlockQuote, depth: int) -> None:
+        frame = self._box_frame(node) if not depth and not node.alert_type else None
+        if frame is not None:
+            self._text_box(node, frame)
+            return
         if node.alert_type:
             from docx.shared import Cm
             p = self.document.add_paragraph(style="Quote")
@@ -416,6 +493,14 @@ class _Writer:
 
     # ---- images ---------------------------------------------------------
 
+    def _picture_size(self, info) -> tuple[int, int]:
+        """The size of a picture on the page, its own unless wider than the text; a JPEG may tell 0 dpi."""
+        from docx.shared import Inches
+        width = Inches(info.px_width / (info.horz_dpi or _DEFAULT_DPI))
+        height = Inches(info.px_height / (info.vert_dpi or _DEFAULT_DPI))
+        scale = min(1.0, self._text_width / width) if width else 1.0
+        return round(width * scale), round(height * scale)
+
     @staticmethod
     def _picture_info(blob: bytes):
         """The blob and python-docx's view of it; formats it cannot embed (WebP) are converted to PNG."""
@@ -436,7 +521,8 @@ class _Writer:
             try:
                 blob, info = self._picture_info(blob)
                 run = self._add_run(paragraph, "", container)
-                run.add_picture(io.BytesIO(blob), width=min(info.width, self._text_width))
+                width, height = self._picture_size(info)
+                run.add_picture(io.BytesIO(blob), width=width, height=height)
             except Exception as exc:
                 log_warning(f"Image not embedded in the Word file ({exc}): {node.src[:80]}")
                 if run is not None:

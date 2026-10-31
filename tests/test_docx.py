@@ -123,11 +123,18 @@ class TestFixtureStructure(DocxFixtureTest):
         self.assertFalse(any("\t" in t.content for t in _of(self.doc, Text)))
 
     def test_quote_and_text_box(self):
-        quotes = [plain_text(q.children[0].children) if isinstance(q.children[0], Paragraph) else ""
+        firsts = [plain_text(q.children[0].children) if isinstance(q.children[0], Paragraph) else ""
                   for q in _of(self.doc, BlockQuote)]
-        self.assertIn("Nuovo paragrafo come stile citazione", quotes)
-        box = [q for q in quotes if q.startswith("Casella di testo")]
-        self.assertEqual(len(box), 1, "the text box is read once, not once per AlternateContent branch")
+        self.assertIn("Nuovo paragrafo come stile citazione", firsts)
+        boxes = [q for q in _of(self.doc, BlockQuote) if len(q.children) > 1
+                 and plain_text(q.children[1].children).startswith("Casella di testo")]
+        self.assertEqual(len(boxes), 1, "the text box is read once, not once per AlternateContent branch")
+
+    def test_a_text_box_gives_its_frame_and_font(self):
+        (box,) = [q for q in _of(self.doc, BlockQuote) if len(q.children) > 1
+                  and plain_text(q.children[1].children).startswith("Casella di testo")]
+        # The fixture anchors it to a paragraph, so its height on the page is not known
+        self.assertEqual(plain_text(box.children[0].children), "Text box (x 44%, w 23%, h 4%, font 11pt)")
 
     def test_code_block_and_inline_code(self):
         blocks = _of(self.doc, CodeBlock)
@@ -473,6 +480,178 @@ class TestDocxRenderer(DocxOutputTest):
         out = self._save(f"![cap]({_data_url(_png().getvalue())})", image_handling="discard")
         with zipfile.ZipFile(out) as z:
             self.assertFalse([n for n in z.namelist() if n.startswith("word/media")])
+
+    def test_a_jpeg_without_a_resolution_is_embedded(self):
+        """JFIF allows 0 dpi; python-docx then divides by zero when it sizes the picture."""
+        from PIL import Image as PilImage
+        buffer = io.BytesIO()
+        PilImage.new("RGB", (8, 8), "blue").save(buffer, "JPEG")
+        blob = bytearray(buffer.getvalue())
+        blob[13:18] = b"\x01\x00\x00\x00\x00"  # units: dpi, density: 0 by 0
+        blob = bytes(blob)
+        from docx.image.image import Image as DocxImage
+        self.assertEqual(DocxImage.from_blob(blob).horz_dpi, 0)
+        with patch("textconverter.renderers.docx_renderer.log_warning") as warn:
+            doc = self._roundtrip(f"![j]({_data_url(blob, 'image/jpeg')})")
+        warn.assert_not_called()
+        self.assertEqual(len(_of(doc, Image)), 1)
+
+    def test_code_language_survives(self):
+        for language in ("python", "excel"):
+            with self.subTest(language):
+                (block,) = _of(self._roundtrip(f"```{language}\nx = 1\ny = 2\n```\n"), CodeBlock)
+                self.assertEqual((block.code, block.language), ("x = 1\ny = 2", language))
+
+    def test_code_without_language_has_no_control(self):
+        with zipfile.ZipFile(self._save("```\nx = 1\n```\n")) as z:
+            self.assertNotIn(b"<w:sdt>", z.read("word/document.xml"))
+
+    def test_a_bibliography_survives(self):
+        from textconverter.ast import Bibliography
+        out = self._save("Text \\cite{a}.\n\n\\bibliographystyle{plain}\n\n\\bibliography{refs}\n\n\\bibitem{a} One.\n")
+        doc = textconverter.convert(out, "json", textconverter.ConvertOptions(image_handling="link"))
+        self.assertIn('"Bibliography"', doc)
+        self.assertIn("\\bibliography{refs}", textconverter.convert(out, "latex", textconverter.ConvertOptions(image_handling="link")))
+
+
+class TestDocxTextBoxes(DocxOutputTest):
+    """A quote headed by a frame is a floating text box; reading it gives the same quote."""
+
+    SOURCE = "Before\n\n> Text box (x 10%, y 50%, w 30%, h 20%, font 14pt)\n>\n> **Side** text\n>\n> Second\n\nAfter\n"
+
+    def _xml(self, path: str) -> str:
+        with zipfile.ZipFile(path) as z:
+            return z.read("word/document.xml").decode("utf-8")
+
+    def test_it_is_a_real_text_box(self):
+        xml = self._xml(self._save(self.SOURCE))
+        self.assertIn("<w:txbxContent", xml)
+        self.assertIn('relativeFrom="page"', xml)
+        self.assertIn('txBox="1"', xml)
+        self.assertNotIn("Text box (", xml)
+        self.assertRegex(xml, r'<wp:docPr id="\d+"')
+
+    def test_the_font_size_is_applied(self):
+        self.assertIn('<w:sz w:val="28"/>', self._xml(self._save(self.SOURCE)))
+
+    def test_the_round_trip_is_identical(self):
+        from textconverter.parsers._office import parse_box_preamble
+        doc = self._roundtrip(self.SOURCE)
+        (quote,) = _of(doc, BlockQuote)
+        frame = parse_box_preamble(plain_text(quote.children[0].children))
+        self.assertEqual((frame.x, frame.y, frame.w, frame.h, frame.font), (10, 50, 30, 20, 14))
+        self.assertEqual(plain_text(quote.children[1].children), "Side text")
+        self.assertEqual(plain_text(quote.children[2].children), "Second")
+        self.assertEqual([type(n) for n in doc.children], [Paragraph, BlockQuote, Paragraph])
+
+    def test_a_box_without_a_page_height_stays_at_its_paragraph(self):
+        xml = self._xml(self._save("Before\n\n> Text box (x 10%, w 30%, h 20%, font 11pt)\n>\n> text\n"))
+        self.assertIn('<wp:positionV relativeFrom="paragraph">', xml)
+        self.assertEqual(plain_text(_of(self._roundtrip("Before\n\n> Text box (x 10%, w 30%, h 20%, font 11pt)\n>\n> text\n"),
+                                        BlockQuote)[0].children[0].children),
+                         "Text box (x 10%, w 30%, h 20%, font 11pt)")
+
+    def test_a_box_at_the_start_of_the_document(self):
+        doc = self._roundtrip("> Text box (x 10%, y 50%, w 30%, h 20%)\n>\n> first\n")
+        self.assertEqual(len(_of(doc, BlockQuote)), 1)
+
+    def test_a_box_of_cells_stays_a_quote(self):
+        xml = self._xml(self._save("> Text box (C4:M13, font 11pt)\n>\n> from a sheet\n"))
+        self.assertNotIn("<w:txbxContent", xml)
+        self.assertIn("from a sheet", xml)
+
+    def test_an_ordinary_quote_stays_a_quote(self):
+        self.assertNotIn("<w:txbxContent", self._xml(self._save("> quoted\n")))
+
+    def test_lists_and_tables_go_inside_the_box(self):
+        doc = self._roundtrip("> Text box (x 10%, y 50%, w 30%, h 20%)\n>\n> - a\n> - b\n>\n> | x |\n> |---|\n> | 1 |\n")
+        (quote,) = _of(doc, BlockQuote)
+        self.assertEqual(len(_of(quote, ListBlock)), 1)
+        self.assertEqual(len(_of(quote, Table)), 1)
+        self.assertEqual(len(_of(doc, Table)), 1)
+
+    def test_the_font_comes_from_the_style_when_runs_do_not_tell(self):
+        from textconverter.parsers._office import parse_box_preamble
+        with tempfile.TemporaryDirectory() as tmp:
+            first = parse_docx(str(FIXTURE), output_dir=tmp, image_dir_name="img")
+        box = next(q for q in _of(first, BlockQuote) if len(q.children) > 1
+                   and plain_text(q.children[1].children).startswith("Casella"))
+        self.assertEqual(parse_box_preamble(plain_text(box.children[0].children)).font, 11)
+
+    def test_the_dominant_size_wins(self):
+        document = docx.Document()
+        document.add_paragraph("a")
+        path = None
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "in.md")
+            with open(source, "w", encoding="utf-8") as f:
+                f.write(self.SOURCE)
+            path = os.path.join(tmp, "box.docx")
+            textconverter.save_to_file(source, path)
+            edited = docx.Document(path)
+            run = edited.element.body.xpath(".//w:txbxContent//w:r")[0]
+            from docx.oxml import OxmlElement
+            from docx.oxml.ns import qn
+            props = run.get_or_add_rPr()
+            for old in props.findall(qn("w:sz")):
+                props.remove(old)
+            size = OxmlElement("w:sz")
+            size.set(qn("w:val"), "72")
+            props.append(size)
+            edited.save(path)
+            doc = parse_docx(path, output_dir=tmp, image_dir_name="img")
+        from textconverter.parsers._office import parse_box_preamble
+        self.assertEqual(parse_box_preamble(plain_text(_of(doc, BlockQuote)[0].children[0].children)).font, 14)
+
+
+class TestDocxProperties(DocxOutputTest):
+
+    def _props(self, source: str):
+        return docx.Document(self._save(source)).core_properties
+
+    def test_long_metadata_is_cut_at_a_word(self):
+        author = " ".join(f"Author{i}" for i in range(60))
+        with patch("textconverter.renderers._office.log_warning") as warn:
+            props = self._props(f'---\ntitle: "{author}"\nauthor: "{author}"\n---\n\ntext\n')
+        self.assertLessEqual(len(props.author), 255)
+        self.assertLessEqual(len(props.title), 255)
+        self.assertTrue(author.startswith(props.author + " "))
+        warn.assert_called()
+
+    def test_the_fixture_that_crashed_is_converted(self):
+        from textconverter import ConvertOptions, save_to_file
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "weird.docx")
+            save_to_file(str(INPUT_DIR / "Weird Journal TEX.tex"), out, ConvertOptions(image_handling="discard"))
+            self.assertLessEqual(len(docx.Document(out).core_properties.author), 255)
+
+    def test_lines_formulas_and_notes(self):
+        tex = ("\\title{A \\thanks{Funded} title}\n\\author{Ann$^{1}$\\\\Dept}\n"
+               "\\begin{document}\\maketitle\ntext\n\\end{document}\n")
+        from textconverter import ConvertOptions, save_to_file
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "a.tex")
+            with open(src, "w", encoding="utf-8") as f:
+                f.write(tex)
+            out = os.path.join(tmp, "a.docx")
+            save_to_file(src, out, ConvertOptions(image_handling="discard"))
+            props = docx.Document(out).core_properties
+            self.assertEqual((props.title, props.author), ("A  title".replace("  ", " "), "Ann$^{1}$; Dept"))
+
+
+class TestDiscardedCaptions(BaseConverterTest):
+
+    def test_a_caption_goes_with_its_image(self):
+        document = docx.Document()
+        document.add_picture(_png())
+        document.add_paragraph("Figura 1: La didascalia", style="Caption")
+        document.add_paragraph("Dopo")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "c.docx")
+            document.save(path)
+            md = textconverter.convert(path, "markdown", textconverter.ConvertOptions(image_handling="discard"))
+        self.assertNotIn("didascalia", md)
+        self.assertIn("Dopo", md)
 
 
 class TestDocxOutputThroughTheApi(BaseConverterTest):

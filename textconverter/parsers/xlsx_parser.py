@@ -5,9 +5,10 @@ one sheet has no heading). The first row of the sheet is the table's header and
 the data starts at A1, so the cell coordinates in the formulas stay true. A cell
 holds its value (a formula cell its stored result), a comment as a footnote, a
 hyperlink as a link and an image anchored to it as an image. The formulas come
-as an ``excel`` code block under the table (see ``_excel_formulas``). Merged
-cells, charts, pivot tables, filters and conditional formatting are dropped,
-with a single warning listing them.
+as an ``excel`` code block under the table (see ``_excel_formulas``), the text
+boxes as quotes after it (see ``_xlsx_shapes``). Merged cells, charts, pivot
+tables, filters and conditional formatting are dropped, with a single warning
+listing them.
 """
 from __future__ import annotations
 
@@ -19,10 +20,13 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
-from ..ast import CodeBlock, Document, Footnote, Heading, Image, Link, Node, Table, TableCell, TableRow, Text
+from ..ast import (
+    BlockQuote, CodeBlock, Document, Footnote, Heading, Image, Link, Node, Table, TableCell, TableRow, Text,
+)
 from ..images import ImageStore
 from ..logger import log_warning
 from ._excel_formulas import FORMULA_LANGUAGE, compress
+from ._xlsx_shapes import read_text_boxes
 
 
 def format_value(value: object) -> str:
@@ -61,9 +65,11 @@ class _Style:
 
 
 class _Reader:
-    def __init__(self, workbook, values, output_dir: str | None, image_dir_name: str | None, write_images: bool):
+    def __init__(self, workbook, values, boxes: dict[str, list[BlockQuote]], output_dir: str | None,
+                 image_dir_name: str | None, write_images: bool):
         self.workbook = workbook
         self.values = values
+        self.boxes = boxes
         self.write_images = write_images
         self.dropped: Counter[str] = Counter()
         self.uncached = 0
@@ -75,16 +81,19 @@ class _Reader:
             if ws.sheet_state != "visible":
                 continue
             read = self._sheet(ws, self.values[ws.title])
-            if read:
-                sheets.append((ws.title, *read))
+            boxes = self.boxes.get(ws.title, [])
+            if read or boxes:
+                sheets.append((ws.title, *(read or (None, [])), boxes))
         self.dropped["chart sheets"] += len(self.workbook.chartsheets)
         children: list[Node] = []
-        for title, table, formulas in sheets:
+        for title, table, formulas, boxes in sheets:
             if len(sheets) > 1:
                 children.append(Heading(level=1, children=[Text(title)]))
-            children.append(table)
+            if table is not None:
+                children.append(table)
             if formulas:
                 children.append(CodeBlock("\n".join(formulas), language=FORMULA_LANGUAGE))
+            children.extend(boxes)
         doc = Document(children=children)
         props = self.workbook.properties
         if props.title:
@@ -208,7 +217,7 @@ def parse_xlsx(
     workbook = load_workbook(file_path, rich_text=True)
     values = load_workbook(file_path, data_only=True)
     try:
-        return _Reader(workbook, values, output_dir, image_dir_name, write_images).read()
+        return _Reader(workbook, values, read_text_boxes(file_path), output_dir, image_dir_name, write_images).read()
     finally:
         workbook.close()
         values.close()

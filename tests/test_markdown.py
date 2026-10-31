@@ -146,7 +146,7 @@ class TestMarkdownFixes(BaseConverterTest):
     def test_starred_citation_macro(self):
         from textconverter.ast import Citation
         children = _doc(r"as \citet*{knuth} shows").children[0].children
-        self.assertIn(Citation(keys=["knuth"], style="citet"), children)
+        self.assertIn(Citation(keys=["knuth"], style="citet*"), children)
 
     def test_bullet_before_code_fence_attaches_the_code(self):
         from textconverter.ast import CodeBlock, ListBlock
@@ -411,8 +411,206 @@ class TestMarkdownInline(BaseConverterTest):
         self.assertIn(CodeInline(code="Ctrl"), children)
         self.assertIn(Text(content="e", italic=True), children)
         self.assertIn(LineBreak(), children)
-        self.assertIn(Text(content="<span>s</span>"), children)  # any other tag stays text
+        self.assertIn(Text(content="s"), children)  # any other tag keeps its text
         self.assertEqual(self._render(Text(content="x"), Text(content="2", script="sup")), "x<sup>2</sup>")
+
+
+class TestFencedCode(BaseConverterTest):
+
+    def test_indentation_of_the_code_is_kept(self):
+        for code in ("    x\n        y", "\tx\n\ty", "  a\nb"):
+            with self.subTest(code):
+                self.assertEqual(_doc(f"```\n{code}\n```\n").children[0].code, code)
+
+    def test_only_the_indentation_of_the_fence_is_removed(self):
+        from textconverter.ast import CodeBlock, ListBlock
+        (block,) = _doc("  ```\n  x\n      y\n  ```\n").children
+        self.assertEqual(block.code, "x\n    y")
+        (lst,) = _doc("- a\n\n    ```\n    x\n        y\n    ```\n").children
+        self.assertIsInstance(lst, ListBlock)
+        self.assertEqual(lst.items[0].children[-1], CodeBlock(code="x\n    y"))
+
+    def test_the_round_trip_is_stable(self):
+        source = "```python\n    x = 1\n\n\ty = 2\n```\n"
+        self.assertEqual(_md(source), source)
+
+    def test_an_unclosed_fence_is_code_up_to_the_end_with_a_warning(self):
+        from unittest.mock import patch
+        from textconverter.ast import CodeBlock, Paragraph
+        with patch("textconverter.parsers.markdown_parser.log_warning") as warn:
+            doc = _doc("Before\n\n```python\ndef f():\n    return 1\n\n# Not a title\n")
+        self.assertEqual([type(n) for n in doc.children], [Paragraph, CodeBlock])
+        self.assertEqual(doc.children[1], CodeBlock(code="def f():\n    return 1\n\n# Not a title", language="python"))
+        warn.assert_called_once()
+
+
+class TestIndentedCode(BaseConverterTest):
+
+    def test_an_indented_block_is_code(self):
+        from textconverter.ast import CodeBlock
+        doc = _doc("text\n\n    code\n      more\n\n    again\n\nafter\n")
+        self.assertEqual(doc.children[1], CodeBlock(code="code\n  more\n\nagain"))
+        self.assertEqual(len(doc.children), 3)
+
+    def test_a_tab_counts(self):
+        from textconverter.ast import CodeBlock
+        self.assertEqual(_doc("\tcode\n").children[0], CodeBlock(code="code"))
+
+    def test_a_paragraph_cannot_be_interrupted(self):
+        from textconverter.ast import Paragraph
+        (para,) = _doc("text\n    still text\n").children
+        self.assertIsInstance(para, Paragraph)
+
+    def test_inside_a_list_it_is_the_item(self):
+        from textconverter.ast import CodeBlock, ListBlock, walk
+        doc = _doc("- a\n\n    b\n")
+        self.assertIsInstance(doc.children[0], ListBlock)
+        self.assertFalse(any(isinstance(n, CodeBlock) for n in walk(doc)))
+
+    def test_machine_sources_can_turn_it_off(self):
+        from textconverter.ast import Paragraph
+        from textconverter.parsers.markdown_parser import parse_markdown
+        (para,) = parse_markdown("    a line of a PDF\n", indented_code=False).children
+        self.assertIsInstance(para, Paragraph)
+
+    def test_transcriptions_do_not_read_indented_code(self):
+        from textconverter.ast import Paragraph
+        from textconverter.parsers.transcription_parser import parse_transcription
+        doc = parse_transcription("    a transcribed line\n")
+        self.assertIsInstance(doc.children[0], Paragraph)
+
+
+class TestCommonMarkDetails(BaseConverterTest):
+
+    def test_html_comments_are_dropped(self):
+        self.assertEqual(_md("a\n\n<!-- hidden -->\n\nb\n"), "a\n\nb\n")
+        self.assertEqual(_md("a <!-- hidden --> b\n"), "a b\n")
+        self.assertEqual(_md("<!-- one\nline\n\ntwo -->\n\nb\n"), "b\n")
+
+    def test_a_comment_in_code_stays(self):
+        self.assertIn("<!-- x -->", _md("`<!-- x -->`\n"))
+        self.assertIn("<!-- x -->", _md("```\n<!-- x -->\n```\n"))
+
+    def test_a_shortcut_reference_is_a_link(self):
+        from textconverter.ast import Link
+        (link,) = _doc("[foo]\n\n[foo]: http://foo.com \"T\"\n").children[0].children
+        self.assertIsInstance(link, Link)
+        self.assertEqual((link.url, link.title), ("http://foo.com", "T"))
+
+    def test_an_undefined_shortcut_stays_text(self):
+        self.assertEqual(_md("see [foo] and matrix[i]\n"), "see \\[foo\\] and matrix\\[i\\]\n")
+
+    def test_entities_are_decoded(self):
+        self.assertIn("AT&amp;T ©", _md("AT&amp;T &copy;\n", to="html"))
+        self.assertEqual(_doc("&#169; &#xA9;").children[0].children[0].content, "© ©")
+
+    def test_entities_stay_literal_in_code(self):
+        self.assertIn("`&amp;`", _md("`&amp;`\n"))
+
+    def test_an_unknown_entity_stays_text(self):
+        self.assertEqual(_doc("&nosuch; a & b").children[0].children[0].content, "&nosuch; a & b")
+
+    def test_a_literal_entity_round_trips(self):
+        from textconverter.ast import Document, Paragraph, Text
+        from textconverter.renderers.markdown_renderer import render_markdown
+        text = render_markdown(Document(children=[Paragraph(children=[Text(content="write &amp; here")])]))
+        self.assertEqual(_doc(text).children[0].children[0].content, "write &amp; here")
+
+    def test_closing_hashes_of_a_heading(self):
+        for source, title in (("# Title #", "Title"), ("## Title ##  ", "Title"), ("# C#", "C#"), ("# a \\#", "a #"),
+                              ("# Title #x", "Title #x")):
+            with self.subTest(source):
+                self.assertEqual(_doc(source).children[0].children[0].content, title)
+
+    def test_hard_breaks_in_a_list_item(self):
+        from textconverter.ast import LineBreak, Text, walk
+        for source in ("- a  \n  b\n", "- a\\\n  b\n"):
+            with self.subTest(source):
+                nodes = list(walk(_doc(source)))
+                has_break = any(isinstance(n, LineBreak) or (isinstance(n, Text) and "\n" in n.content) for n in nodes)
+                self.assertTrue(has_break)
+                self.assertFalse(any(isinstance(n, Text) and "\\" in n.content for n in nodes))
+        self.assertEqual(_md(_md("- a  \n  b\n")), _md("- a  \n  b\n"))
+
+    def test_footnote_indentation_does_not_grow(self):
+        source = "Text[^1]\n\n[^1]: First  \n    second\n"
+        once = _md(source)
+        self.assertEqual(_md(once), once)
+        self.assertEqual(_md(_md(once)), once)
+
+    def test_no_private_character_in_a_title(self):
+        self.assertIn('title="ti&quot;tle"', _md('[t](http://a.com "ti\\"tle")\n', to="html"))
+        self.assertNotRegex(_md('![t](a.png "ti\\"tle")\n'), "[-]")
+
+
+class TestHtmlInMarkdown(BaseConverterTest):
+    """HTML in a Markdown file goes through the HTML parser: real nodes, or the text inside."""
+
+    def test_inline_tags_keep_their_text(self):
+        self.assertEqual(_md("a <span class='x'>b</span> <u>c</u> <foo>d</foo> e\n"), "a b c d e\n")
+
+    def test_an_image_tag(self):
+        from textconverter.ast import Image
+        (image,) = _doc('<img src="a.png" alt="x">\n').children[0].children
+        self.assertEqual(image, Image(src="a.png", alt="x"))
+
+    def test_an_inline_image_tag(self):
+        from textconverter.ast import Image
+        children = _doc('see <img src="a.png"> here').children[0].children
+        self.assertTrue(any(isinstance(n, Image) for n in children))
+
+    def test_a_table_block(self):
+        from textconverter.ast import Table
+        (table,) = _doc("<table><tr><th>A</th></tr><tr><td>1</td></tr></table>\n").children
+        self.assertIsInstance(table, Table)
+
+    def test_a_block_spanning_lines(self):
+        self.assertEqual(_md("<div align='center'>\n\ninside\n\n</div>\n\nafter\n"), "inside\n\nafter\n")
+
+    def test_details(self):
+        md = _md("<details><summary>More</summary>Body</details>\n")
+        self.assertIn("More", md)
+        self.assertIn("Body", md)
+        self.assertNotIn("<", md)
+
+    def test_what_is_not_a_tag_stays_text(self):
+        from textconverter.ast import Text
+        for source in ("a < b and c > d", "a <b", "x<y>", "1 <2> 3", "<3"):
+            with self.subTest(source):
+                self.assertEqual("".join(n.content for n in _doc(source).children[0].children if isinstance(n, Text))
+                                 .replace("<y>", "").replace("<2>", ""), source.replace("<y>", "").replace("<2>", ""))
+
+    def test_an_escaped_tag_stays_text(self):
+        from textconverter.ast import Document, Paragraph, Text
+        from textconverter.renderers.markdown_renderer import render_markdown
+        text = render_markdown(Document(children=[Paragraph(children=[Text(content="the <span> tag")])]))
+        self.assertEqual(_doc(text).children[0].children[0].content, "the <span> tag")
+
+    def test_code_keeps_its_tags(self):
+        self.assertIn("`<span>x</span>`", _md("`<span>x</span>`\n"))
+        self.assertIn("<span>x</span>", _md("```html\n<span>x</span>\n```\n"))
+
+
+class TestAdjacentLists(BaseConverterTest):
+
+    def _starts(self, source: str) -> list[tuple[int, int]]:
+        from textconverter.ast import ListBlock
+        return [(n.start, len(n.items)) for n in _doc(source).children if isinstance(n, ListBlock)]
+
+    def test_a_number_that_does_not_follow_starts_a_list(self):
+        self.assertEqual(self._starts("1. a\n2. b\n\n1. c\n"), [(1, 2), (1, 1)])
+        self.assertEqual(self._starts("1. a\n\n3. b\n"), [(1, 1), (3, 1)])
+
+    def test_a_number_that_follows_continues(self):
+        self.assertEqual(self._starts("1. a\n\n2. b\n\n3. c\n"), [(1, 3)])
+
+    def test_two_lists_round_trip(self):
+        from textconverter.ast import Document, ListBlock, ListItem, Paragraph, Text
+        from textconverter.renderers.markdown_renderer import render_markdown
+        item = lambda t: ListItem(children=[Paragraph(children=[Text(content=t)])])
+        doc = Document(children=[ListBlock(ordered=True, items=[item("a"), item("b")]),
+                                 ListBlock(ordered=True, items=[item("c")], start=1)])
+        self.assertEqual(self._starts(render_markdown(doc)), [(1, 2), (1, 1)])
 
 
 class TestCodeDetection(BaseConverterTest):

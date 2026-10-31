@@ -1,16 +1,17 @@
-"""What the Word and PowerPoint renderers share: reading an image's bytes and writing the file properties."""
+"""What the Office renderers share: reading an image's bytes and writing the file properties."""
 from __future__ import annotations
 
-import base64
 import datetime
 import os
-import urllib.parse
 
-from ..ast import Document
-from ..images import is_remote, resolve_local
-from ._common import plain_text
+from ..ast import Document, Node
+from ..images import data_url_bytes, is_remote, resolve_local
+from ..logger import log_warning
+from ._common import plain_text, summary_text
 
 _DC_TERMS = "http://purl.org/dc/terms/"
+# The longest text Office keeps in a file property.
+_MAX_PROPERTY = 255
 
 
 def image_bytes(src: str, base_dir: str) -> bytes | None:
@@ -19,8 +20,7 @@ def image_bytes(src: str, base_dir: str) -> bytes | None:
     A relative path is looked up under ``base_dir`` and then the current directory; remote images are not fetched.
     """
     if src.startswith("data:"):
-        header, _, data = src.partition(",")
-        return base64.b64decode(data) if header.endswith(";base64") else urllib.parse.unquote_to_bytes(data)
+        return data_url_bytes(src)
     if not src or is_remote(src):
         return None
     for base in (base_dir, os.getcwd()):
@@ -31,10 +31,19 @@ def image_bytes(src: str, base_dir: str) -> bytes | None:
     return None
 
 
+def property_text(nodes: list[Node], name: str) -> str:
+    """A metadata field as a file property: one line of at most 255 characters, cut at a word."""
+    text = summary_text(nodes)
+    if len(text) <= _MAX_PROPERTY:
+        return text
+    log_warning(f"The {name} is too long for the file properties and was cut; the document keeps it whole.")
+    return text[:_MAX_PROPERTY + 1].rsplit(" ", 1)[0].rstrip(" ;,")
+
+
 def write_properties(props, doc: Document) -> None:
     """Set the title, author and date of an Office file's core properties from the document's metadata."""
-    props.title = plain_text(doc.title).strip()
-    props.author = plain_text(doc.author).strip()
+    props.title = property_text(doc.title, "title")
+    props.author = property_text(doc.author, "author")
     props.last_modified_by = props.comments = props.subject = props.keywords = ""
     try:
         day = datetime.date.fromisoformat(plain_text(doc.date).strip())

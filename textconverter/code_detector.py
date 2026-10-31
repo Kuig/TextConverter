@@ -4,7 +4,7 @@ import string
 
 from textconverter.ast import BlockQuote, CodeBlock, CodeInline, Document, Equation, LineBreak, Node, Paragraph, Text, walk
 from textconverter.logger import log_info, log_action, log_warning
-from textconverter.parsers._pptx_xml import parse_box_preamble
+from textconverter.parsers._office import parse_box_preamble
 from textconverter.parsers.markdown_parser import TABLE_SEPARATOR, parse_inline
 
 # Characters that code is made of: ASCII punctuation only (accented letters, "★" or

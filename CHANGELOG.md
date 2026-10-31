@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- The citation and cross-reference macros of natbib, biblatex, cleveref, varioref, amsmath and hyperref (`\eqref`, `\autoref`,
+  `\cref`, `\pageref`, `\hyperref`, `\parencite`, `\autocite`, `\textcite`, `\citeauthor`, ...) stay macros in every format, as
+  written, stars included; LaTeX output loads the packages they need.
+- The bibliography survives: `\bibliography`, `\bibliographystyle`, `\addbibresource`, `\printbibliography` and
+  `thebibliography` are a `Bibliography` node, shown as macros in the formats that have no construct of their own.
+- `\part` and `\chapter` are headings; `\input` and `\include` read `.tex` files in the source's folder or below it; the author's
+  macros are expanded, also in formulas; `\verb`, `\lstinline`, `\mintinline`, `minted` and `Verbatim` are code; a listing's caption
+  is a `Listing: ...` paragraph; `subfigure` keeps every caption; `\footnotemark` with `\footnotetext`, `{\tt x}`, `\begin{math}`,
+  a theorem's title, `\thanks` and `\and` are read.
+- A text box tells its font size: `Text box (x 10%, y 50%, w 30%, h 20%, font 18pt)`. Word text boxes now give their frame too and are
+  written back as floating text boxes; Excel text boxes, which were lost, are read and written back (`Text box (C4:F8, font 12pt)`).
+- A code block's language survives LaTeX (`% language: x` above the `verbatim`) and Word (a content control), so the formulas of a
+  workbook come back through both.
+- Markdown: indented code, shortcut reference links (`[foo]`), entities, closing `#` of a heading; HTML goes through the HTML parser.
+- PDF output: notes are numbered and listed at the end, citations show their keys, `\ref` the number of its label when it can be told.
+- A file that is not what `from_format` says gives a readable `ValueError`; a missing output folder is created first.
+
+### Changed
+
+- A plain display formula (`$$...$$`, `\[...\]`) is written as `\[...\]` in LaTeX, not `equation`: it has no number. `equation`,
+  `equation*` and `displaymath` are kept, in Markdown too (`$$\begin{equation}...`), and a formula with a `\label` stays numbered.
+- `discard` also drops an image's caption and a link left empty.
+- A numbered list after a blank line starts a new list when its number does not follow: `1. a`, blank line, `1. b` is two lists.
+- A link that would run code points to `#` in Markdown and LaTeX too, with a warning; JSON output keeps the address.
+- `embed` on LaTeX acts as `link` with a warning, and `data:` images become files.
+- `Citation.style` keeps the star (`citet*`); JSON output gains `Document.section_root` and `LineBreak.author_separator`.
+
+### Fixed
+
+- LaTeX tables: a cell starting with `(...)` or `[...]` right after `\hline`, `\toprule` or the like was lost; unbalanced braces in
+  a cell no longer join the rows.
+- Environments inside `$...$` and `\[...\]` stay formulas; `aligned` is no longer wrapped again at every conversion, and `\\` stays
+  in formulas in cells, titles and captions.
+- A macro with several arguments keeps its content (`\textcolor{red}{word}` gave `red`); unknown ones keep all their arguments and
+  are reported in one warning.
+- `\begin{comment}` and `\iffalse` no longer reach the output.
+- LaTeX output keeps paragraphs apart in quotes, items and abstracts, reads back alerts and line breaks in cells, and keeps `’`.
+- Word and PowerPoint: a title or author over 255 characters no longer crashes; file properties keep formulas and line breaks. A JPEG
+  that declares 0 dpi is embedded. A presentation written by the converter no longer reads back a `Default Section` heading.
+- Markdown: code keeps its indentation; a fence never closed is code, with a warning; hard breaks in list items and the indentation
+  of notes are stable; HTML comments are dropped; no private-use character in a title.
+- HTML: the second row of a `<thead>` is kept, a first row of `<th>` with `colspan` is the header, and a table inside a cell is text.
+- Image paths on another drive use forward slashes.
+
 ## [0.4.0] - 2026-10-31
 
 ### Added
@@ -72,7 +118,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LaTeX tables that were lost or garbled, in every output format: `tabularx`, `tabular*`, `tabulary`, `longtable` and
   `xltabular` are tables, a float keeps all its tables, and `sidewaystable` and `wraptable` keep their caption. `\multicolumn`
   and `\multirow` keep their text (a `\multicolumn` is followed by blank cells), rule and color commands leave no trace in the
-  cells (`\cline`, `\cmidrule(lr){1-2}`, `owcolor`, ...), and a row or cell no longer ends inside a group or a nested table.
+  cells (`\cline`, `\cmidrule(lr){1-2}`, `
+owcolor`, ...), and a row or cell no longer ends inside a group or a nested table.
   A `longtable`'s repeated head and feet are not rows, and its caption and label go to the table.
 - CSV and Excel cells keep math (`$x^2$`), citations and cross-references; CSV also keeps inline code. They used to come out empty.
 - The confirmation of a `.csv` output with several tables named a file that does not exist: CLI, MCP and GUI report the files written.

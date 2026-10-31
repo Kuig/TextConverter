@@ -31,6 +31,128 @@ class TestDiscardLinks(BaseConverterTest):
         self.assertIn("![alt](pic.jpg)", md)
 
 
+class TestUnsafeLinks(BaseConverterTest):
+    """A link that would run code is neutralized in every format that keeps links."""
+
+    SOURCE = "[click](javascript:alert(1)) and [fine](https://x.test)\n"
+
+    def test_text_formats(self):
+        from unittest.mock import patch
+        for to in ("markdown", "latex", "html"):
+            with self.subTest(to=to), patch("textconverter.images.log_warning") as warn:
+                out = textconverter.convert_text(self.SOURCE, "markdown", to, ConvertOptions(image_handling="link"))
+                self.assertNotIn("javascript", out)
+                self.assertIn("click", out)
+                self.assertIn("https://x.test", out)
+                warn.assert_called_once()
+
+    def test_the_ast_form_keeps_the_address(self):
+        self.assertIn("javascript:alert(1)",
+                      textconverter.convert_text(self.SOURCE, "markdown", "json", ConvertOptions(image_handling="link")))
+
+
+class TestDiscardedImages(BaseConverterTest):
+
+    def test_a_link_around_an_image_goes_with_it(self):
+        md = textconverter.convert_text("a [![x](p.png)](http://y.test) b\n", "markdown", "markdown",
+                                        ConvertOptions(image_handling="discard"))
+        self.assertEqual(md, "a  b\n")
+
+    def test_a_link_with_text_stays(self):
+        md = textconverter.convert_text("[t ![x](p.png)](http://y.test)\n", "markdown", "markdown",
+                                        ConvertOptions(image_handling="discard"))
+        self.assertIn("http://y.test", md)
+
+    def test_a_caption_goes_with_its_image(self):
+        for to in ("markdown", "html", "latex"):
+            with self.subTest(to=to):
+                out = textconverter.convert_text("![x](p.png)\n\nFigure: The caption\n", "markdown", to,
+                                                 ConvertOptions(image_handling="discard"))
+                self.assertNotIn("The caption", out)
+
+
+class TestEmbedInLatex(BaseConverterTest):
+
+    def test_embed_writes_files_and_warns(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "a.md"
+            (Path(tmp) / "p.png").write_bytes((INPUT_DIR / "googlelogo_color_272x92dp.png").read_bytes())
+            src.write_text("![x](p.png)\n", encoding="utf-8")
+            out = Path(tmp) / "out" / "a.tex"
+            out.parent.mkdir()
+            with patch("textconverter.api.log_warning") as warn:
+                textconverter.save_to_file(str(src), str(out), ConvertOptions(image_handling="embed"))
+            tex = out.read_text(encoding="utf-8")
+        self.assertNotIn("data:", tex)
+        self.assertIn("\\includegraphics{", tex)
+        warn.assert_called_once()
+
+    def test_a_data_url_becomes_a_file(self):
+        import base64
+        data = base64.b64encode((INPUT_DIR / "googlelogo_color_272x92dp.png").read_bytes()).decode()
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "a.md"
+            src.write_text(f"![x](data:image/png;base64,{data})\n", encoding="utf-8")
+            out = Path(tmp) / "a.tex"
+            textconverter.save_to_file(str(src), str(out), ConvertOptions(image_handling="link"))
+            tex = out.read_text(encoding="utf-8")
+            self.assertNotIn("data:", tex)
+            self.assertEqual(len(list((Path(tmp) / "a_images").iterdir())), 1)
+        self.assertRegex(tex, r"\\includegraphics\{a_images/image_\w+\.png\}")
+
+    def test_embed_still_embeds_elsewhere(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "a.md"
+            (Path(tmp) / "p.png").write_bytes((INPUT_DIR / "googlelogo_color_272x92dp.png").read_bytes())
+            src.write_text("![x](p.png)\n", encoding="utf-8")
+            self.assertIn("data:image/png", textconverter.convert(str(src), "markdown", ConvertOptions(image_handling="embed")))
+
+
+class TestOutputFolder(BaseConverterTest):
+
+    def test_missing_folders_are_created(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "a.md"
+            src.write_text("# a\n\n| x |\n|---|\n| 1 |\n", encoding="utf-8")
+            for name in ("a.md", "a.html", "a.docx", "a.pptx", "a.xlsx", "a.csv", "a.pdf"):
+                with self.subTest(name):
+                    out = Path(tmp) / "new" / name.replace(".", "_") / "deep" / name
+                    self.assertEqual(textconverter.save_to_file(str(src), str(out)), [str(out)])
+                    self.assertTrue(out.exists())
+
+    def test_a_folder_that_cannot_exist_fails_before_converting(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "a.md"
+            src.write_text("# a", encoding="utf-8")
+            blocker = Path(tmp) / "file"
+            blocker.write_text("x", encoding="utf-8")
+            with patch("textconverter.api._convert") as run, self.assertRaisesRegex(OSError, "output folder"):
+                textconverter.save_to_file(str(src), str(blocker / "sub" / "a.md"))
+            run.assert_not_called()
+
+
+class TestSourceSignature(BaseConverterTest):
+    """A file that is not what ``from_format`` says gives a readable error, not a parser's own."""
+
+    def test_a_text_file_given_as_a_binary_format(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "a.md"
+            src.write_text("# a", encoding="utf-8")
+            for name in ("pdf", "docx", "pptx", "xlsx"):
+                with self.subTest(name), self.assertRaisesRegex(ValueError, f"not a valid {name}"):
+                    textconverter.convert(str(src), "markdown", from_format=name)
+
+    def test_office_formats_are_told_apart(self):
+        with self.assertRaisesRegex(ValueError, "not a valid xlsx"):
+            textconverter.convert(str(INPUT_DIR / "Test_docx.docx"), "markdown", from_format="xlsx")
+
+    def test_real_files_pass(self):
+        self.assertIn("Lorem", textconverter.convert(str(INPUT_DIR / "Simple Pdf.pdf"), "markdown",
+                                                     ConvertOptions(image_handling="discard"), from_format="pdf"))
+
+
 class TestOptionsValidation(BaseConverterTest):
 
     def test_unknown_option_values_fail_on_creation(self):

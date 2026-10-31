@@ -2,26 +2,35 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Callable
+from contextvars import ContextVar
+from dataclasses import dataclass
 
 from ..ast import (
-    METADATA_FIELDS, Abstract, Appendix, BlockQuote, CodeBlock, CodeInline, Document, Equation, Heading, HorizontalRule, Image,
-    InlineElement, Label, LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Table, TableCell, TableRow, Text,
+    METADATA_FIELDS, Abstract, Appendix, BibEntry, Bibliography, BlockQuote, CodeBlock, CodeInline, Document, Equation,
+    Footnote, Heading, HorizontalRule, Image, InlineElement, Label, LineBreak, Link, ListBlock, ListItem, Node, Paragraph,
+    Table, TableCell, TableRow, Text,
 )
-from ._latex_macros import REFERENCE_MACROS, extract_macro_args, find_balanced_braces, parse_reference_macro
+from ..logger import log_warning
+from ._latex_macros import (
+    BIBLIOGRAPHY_COMMAND, REFERENCE_MACROS, extract_macro_args, find_balanced_braces, parse_reference_macro,
+)
+from ._latex_source import URL_PERCENT, HiddenCode, prepare_source
 from ._math import MATH_ENVS as _MATH_ENVS
 
-_SECTION_LEVELS = {'section': 1, 'subsection': 2, 'subsubsection': 3, 'paragraph': 4, 'subparagraph': 5}
-# A section command, \appendix, or the start of an environment.
-_BLOCK_START = re.compile(r'\\(?:(?P<sec>section|subsection|subsubsection|paragraph|subparagraph)(?![a-zA-Z])'
-                          r'|(?P<appendix>appendix)(?![a-zA-Z])|begin\{(?P<env>[^}]+)\})')
+# The sectioning commands, outermost first; the highest one in the document is level 1.
+_SECTIONS = ('part', 'chapter', 'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph')
+_SECTION_ROOT = re.compile(r'\\(part|chapter)\*?(?![a-zA-Z])')
+_MAX_LEVEL = 6
+# A section command, \appendix, a bibliography command, or the start of an environment.
+_BLOCK_START = re.compile(rf'\\(?:(?P<sec>{"|".join(_SECTIONS)})(?![a-zA-Z])'
+                          r'|(?P<appendix>appendix)(?![a-zA-Z])|begin\{(?P<env>[^}]+)\})'
+                          rf'|(?P<bib>{BIBLIOGRAPHY_COMMAND.pattern})')
+# Text the search for blocks must not look into: an escape, or a formula that is closed.
+_MATH_SPAN = re.compile(r'\\[\\$]|\$\$.*?\$\$|\$(?:[^$\\\n]|\\.|\n(?![ \t]*\n))*?\$|\\\[.*?\\\]|\\\(.*?\\\)', re.DOTALL)
 # An enumerate counter set before the first item: \setcounter{enumi}{2} starts the list at 3.
 _SET_COUNTER = re.compile(r'\\setcounter\{enum(?:i|ii|iii|iv)\}\{\s*(-?\d+)\s*\}')
 # The \item labels that mark a task list item, unchecked and checked.
 _TASK_LABELS = {'$\\square$': False, '$\\Box$': False, '$\\boxtimes$': True, '$\\checkmark$': True}
-# The URL argument of \url and \href, where "%" is literal rather than a comment: it
-# stands in a private-use character until the link is built.
-_URL_ARG = re.compile(r'\\(?:url|href)\{[^{}]*\}')
-_URL_PERCENT = '\ue000'
 _ITEM = re.compile(r'\\item(?![a-zA-Z])')
 # A paragraph that is only a full-width rule (as the renderer writes a HorizontalRule).
 _RULE = re.compile(r'^(?:\\rule\{\\(?:text|line)width\}\{[^}]*\}|\\hrule|\\hrulefill)$')
@@ -30,22 +39,30 @@ _ENV_BOUNDARY = re.compile(r'\\(begin|end)\{[^}]*\}')
 _TABLE_ENVS = ('tabular', 'tabular*', 'tabularx', 'tabulary', 'longtable', 'longtable*', 'xltabular')
 _TABLE_FLOATS = ('table', 'table*', 'sidewaystable', 'sidewaystable*', 'wraptable')
 _TABLE_START = re.compile(r'\\begin\{(' + '|'.join(re.escape(env) for env in _TABLE_ENVS) + r')\}')
-# Table commands that draw and hold no data, by the number of {...} arguments they take.
+# Table commands that draw and hold no data: the optional arguments each one takes, right
+# after its name (any further away they are the text of the next cell), and how many {...}.
+_BRACKET = r'(?:\[[^\]]*\])?'
 _TABLE_LAYOUT = {
-    'hline': 0, 'toprule': 0, 'midrule': 0, 'bottomrule': 0, 'addlinespace': 0, 'morecmidrules': 0,
-    'cline': 1, 'cmidrule': 1, 'hhline': 1, 'rowcolor': 1, 'cellcolor': 1, 'specialrule': 3,
+    'hline': ('', 0), 'morecmidrules': ('', 0), 'toprule': (_BRACKET, 0), 'midrule': (_BRACKET, 0),
+    'bottomrule': (_BRACKET, 0), 'addlinespace': (_BRACKET, 0), 'cline': ('', 1), 'hhline': ('', 1),
+    'cmidrule': (_BRACKET + r'(?:\([^)]*\))?', 1), 'rowcolor': (_BRACKET, 1), 'cellcolor': (_BRACKET, 1),
+    'specialrule': ('', 3),
 }
 _TABLE_LAYOUT_COMMAND = re.compile('|'.join(
-    rf'\\{name}(?![a-zA-Z])(?:\s*\[[^\]]*\]|\s*\([^)]*\))*' + r'\s*\{[^{}]*\}' * arguments
-    for name, arguments in _TABLE_LAYOUT.items()
+    rf'\\{name}(?![a-zA-Z]){options}' + r'\s*\{[^{}]*\}' * arguments
+    for name, (options, arguments) in _TABLE_LAYOUT.items()
 ))
+# A cell of several lines, as the LaTeX renderer writes it.
+_CELL_LINES = re.compile(r'\\begin\{tabular\}\{@\{\}c@\{\}\}(.*)\\end\{tabular\}', re.DOTALL)
 _TABLE_ROW_END = re.compile(r'\\\\\*?(?:\[[^\]]*\])?|\\tabularnewline(?![a-zA-Z])')
 # What stands before the text of a \multirow: the optional and the required arguments.
 _MULTIROW = re.compile(r'\\multirow(?:\[[^\]]*\])?\s*\{[^{}]*\}(?:\[[^\]]*\])?\s*\{[^{}]*\}(?:\[[^\]]*\])?\s*')
 # The end of a longtable's first head, repeated head and feet; the last two parts are not body.
 _LONGTABLE_PART = re.compile(r'\\(endfirsthead|endhead|endfoot|endlastfoot)(?![a-zA-Z])')
-_VERBATIM = re.compile(r'(?P<begin>\\begin\{(?P<env>verbatim\*?|lstlisting)\})(?P<options>\[[^\]\n]*\])?'
-                       r'(?P<body>.*?)(?P<end>\\end\{(?P=env)\})', re.DOTALL)
+_BIB_ITEM = re.compile(r'\\bibitem(?:\[([^\]]*)\])?\s*\{([^{}]*)\}')
+_ALERTS = ('NOTE', 'TIP', 'IMPORTANT', 'WARNING', 'CAUTION')
+_THEOREM_ENVS = ('theorem', 'lemma', 'proposition', 'corollary', 'definition', 'remark', 'example', 'proof',
+                 'claim', 'conjecture')
 
 # Accent commands followed by one letter, as combining marks.
 _ACCENTS = {
@@ -71,6 +88,27 @@ _DECLARATIONS = {
 }
 # Control symbols: "\," and the like, as the space they make.
 _CONTROL_SPACES = {',': '\u2009', ';': ' ', ':': ' ', ' ': ' ', '!': '', '@': '', '/': '', '-': ''}
+# Font declarations that make a group code.
+_CODE_GROUP = re.compile(r'\s*\\(?:tt|ttfamily)(?![a-zA-Z])\s*')
+# Commands whose text is one argument: its index; those before it are settings.
+_CONTENT_ARGUMENT = {'textcolor': 1, 'colorbox': 1, 'fcolorbox': 2, 'foreignlanguage': 1, 'parbox': 1, 'raisebox': 1,
+                     'resizebox': 2, 'scalebox': 1, 'rotatebox': 1}
+# Commands with no text of their own.
+_LAYOUT_COMMANDS = frozenset({
+    'color', 'pagecolor', 'setlength', 'addtolength', 'setcounter', 'addtocounter', 'stepcounter', 'refstepcounter',
+    'newlength', 'newcounter', 'pagestyle', 'pagenumbering', 'linespread', 'setstretch', 'enlargethispage',
+    'fontfamily', 'fontseries', 'fontshape', 'rule', 'newtheorem', 'theoremstyle', 'lstset', 'graphicspath',
+    'captionsetup', 'hypersetup', 'usetikzlibrary', 'geometry', 'definecolor', 'usepackage', 'documentclass',
+})
+# Commands that only style their argument: known, so not worth a warning.
+_STYLE_COMMANDS = frozenset({
+    'textsc', 'textrm', 'textsf', 'textup', 'textmd', 'textnormal', 'underline', 'uline', 'dotuline', 'mbox', 'hbox',
+    'fbox', 'makebox', 'framebox', 'text', 'ensuremath', 'nolinkurl', 'si', 'num', 'tiny', 'small', 'large', 'Large',
+    'huge', 'Huge', 'normalsize', 'footnotesize', 'scriptsize', 'mathbf', 'mathit', 'mathrm', 'makecell', 'caption',
+    'centerline', 'subcaption', 'SI',
+})
+# The names of the unknown macros met while parsing one document.
+_UNKNOWN: ContextVar[set[str] | None] = ContextVar("latex_unknown_macros", default=None)
 _ESCAPED_CHARS = ('%', '&', '$', '_', '#', '{', '}')
 
 
@@ -160,26 +198,44 @@ def _extract_environment(text: str, env_name: str, start_pos: int = 0) -> tuple[
     return content[idx:], start_idx, end_idx + len(end_str)
 
 
-def parse_latex(text: str) -> Document:
+@dataclass
+class _Context:
+    """What the block parser needs from the whole document."""
+    code: list[HiddenCode]
+    first_section: int = _SECTIONS.index('section')  # the command that is level 1
+
+
+def parse_latex(text: str, source: str | None = None) -> Document:
     """Parses a basic subset of LaTeX into an AST Document.
 
     Recognized: sectioning, title/author/date, abstract, lists (nested),
-    verbatim/lstlisting, tables (the tabular family and longtable, inside a
-    float or alone), figures, display
-    math environments, keywords and quotes; any other environment contributes
-    its content. Inline: emphasis, links, code, math, footnotes, citations,
-    cross-references, accents and the common symbols.
+    code (verbatim, lstlisting, minted, Verbatim and the inline macros), tables
+    (the tabular family and longtable, inside a float or alone), figures, display
+    math environments, keywords, quotes and the bibliography; any other
+    environment contributes its content. Inline: emphasis, links, code, math,
+    footnotes, citations, cross-references, accents and the common symbols.
+    The author's macros are expanded and hidden text is dropped (see
+    ``_latex_source``). Commands it does not know keep their arguments as text
+    and are reported in one warning.
+
+    Args:
+        text: The LaTeX source.
+        source: Its path, the folder ``\\input`` reads from; None reads no file.
     """
-    # Keep verbatim content away from comment stripping
-    verbatim: list[str] = []
+    unknown: set[str] = set()
+    token = _UNKNOWN.set(unknown)
+    try:
+        doc = _parse_source(text, source)
+    finally:
+        _UNKNOWN.reset(token)
+    if unknown:
+        names = ', '.join(sorted(f'\\{name}' for name in unknown))
+        log_warning(f"LaTeX macros read as plain text: {names}.")
+    return doc
 
-    def _hide(m: re.Match) -> str:
-        verbatim.append(m.group('body'))
-        return f"{m.group('begin')}{m.group('options') or ''}\x00{len(verbatim) - 1}\x00{m.group('end')}"
 
-    text = _VERBATIM.sub(_hide, text)
-    text = _URL_ARG.sub(lambda m: m.group(0).replace('%', _URL_PERCENT), text)
-    text = re.sub(r'(?<!\\)%.*$', '', text, flags=re.MULTILINE)
+def _parse_source(text: str, source: str | None) -> Document:
+    text, code = prepare_source(text, source)
 
     # Strip custom two-column layouts and wrappers
     text = re.sub(r'\\twocolumn\s*\[', '', text)
@@ -189,11 +245,10 @@ def parse_latex(text: str) -> Document:
 
     # Strip layout and styling commands first so they are cleaned from metadata too
     for cmd in ["\\fontsize", "\\thispagestyle", "\\pubyear", "\\pagerange", "\\vspace", "\\hspace",
-                "\\pageref", "\\bibliographystyle", "\\bibliography", "\\sectionmark", "\\markboth",
-                "\\markright"]:
+                "\\sectionmark", "\\markboth", "\\markright"]:
         text = _strip_macro(text, cmd)
     for cmd in ["\\selectfont", "\\balance", "\\noindent", "\\raggedright", "\\justifying", "\\centering",
-                "\\hfill", "\\maketitle", "\\printbibliography"]:
+                "\\hfill", "\\maketitle"]:
         text = re.sub(re.escape(cmd) + r'(?![a-zA-Z])', '', text)
 
     doc = Document()
@@ -208,10 +263,28 @@ def parse_latex(text: str) -> Document:
 
     # Strip out preamble if document environment exists
     m_doc = re.search(r'\\begin\{document\}(.*?)\\end\{document\}', text, re.DOTALL)
+    preamble = text[:m_doc.start()] if m_doc else ""
     if m_doc:
         text = m_doc.group(1)
-    doc.children.extend(_parse_blocks(text, verbatim))
+    ctx = _Context(code)
+    root = {m.group(1) for m in _SECTION_ROOT.finditer(text)}
+    if root:
+        doc.section_root = 'part' if 'part' in root else 'chapter'
+        ctx.first_section = _SECTIONS.index(doc.section_root)
+    doc.children.extend(_parse_blocks(text, ctx))
+    _add_preamble_commands(doc, [m.group(0) for m in BIBLIOGRAPHY_COMMAND.finditer(preamble)])
     return doc
+
+
+def _add_preamble_commands(doc: Document, commands: list[str]) -> None:
+    """Give the bibliography the commands that stand in the preamble (``\\addbibresource``, a style)."""
+    if not commands:
+        return
+    existing = next((n for n in doc.children if isinstance(n, Bibliography)), None)
+    if existing is None:
+        doc.children.append(Bibliography(commands=commands))
+    else:
+        existing.commands[:0] = commands
 
 
 def _one_line(nodes: list[InlineElement]) -> list[InlineElement]:
@@ -260,12 +333,26 @@ def _paragraphs(chunk: str) -> list[Node]:
     return nodes
 
 
-def _parse_blocks(text: str, verbatim: list[str]) -> list[Node]:
+def _next_block(text: str, pos: int) -> re.Match | None:
+    """The next block start at or after ``pos`` that is not inside a formula."""
+    while (block := _BLOCK_START.search(text, pos)) is not None:
+        for span in _MATH_SPAN.finditer(text, pos):
+            if span.start() >= block.start():
+                return block
+            if span.end() > block.start():
+                pos = span.end()
+                break
+        else:
+            return block
+    return None
+
+
+def _parse_blocks(text: str, ctx: _Context) -> list[Node]:
     """Parse LaTeX body text into block nodes."""
     nodes: list[Node] = []
     pos = 0
     while True:
-        m = _BLOCK_START.search(text, pos)
+        m = _next_block(text, pos)
         if m is None:
             nodes.extend(_paragraphs(text[pos:]))
             return nodes
@@ -276,11 +363,20 @@ def _parse_blocks(text: str, verbatim: list[str]) -> list[Node]:
             pos = m.end()
             continue
 
+        if m.group('bib'):
+            if nodes and isinstance(nodes[-1], Bibliography):
+                nodes[-1].commands.append(m.group('bib'))
+            else:
+                nodes.append(Bibliography(commands=[m.group('bib')]))
+            pos = m.end()
+            continue
+
         if m.group('sec'):
             starred = text.startswith('*', m.end())
             args, start, end = extract_macro_args(text, m.group(0) + ('*' if starred else ''), m.start())
             if start == m.start() and args:
-                nodes.append(Heading(level=_SECTION_LEVELS[m.group('sec')], numbered=not starred,
+                level = _SECTIONS.index(m.group('sec')) - ctx.first_section + 1
+                nodes.append(Heading(level=min(level, _MAX_LEVEL), numbered=not starred,
                                      children=_one_line(parse_inline_latex(args[0]))))
                 pos = end
             else:
@@ -292,39 +388,103 @@ def _parse_blocks(text: str, verbatim: list[str]) -> list[Node]:
         if start == -1:
             pos = m.end()  # unclosed: skip the \begin and read on
             continue
-        nodes.extend(_environment(env, content, verbatim))
+        if env == 'thebibliography':
+            nodes.extend(_bibliography(text[m.end():end], content, nodes))
+        elif env in _THEOREM_ENVS:
+            title = re.match(r'\s*\[([^\]]*)\]', text[m.end():end])
+            nodes.extend(_parse_blocks(f"\\textbf{{{title.group(1)}}} {content}" if title else content, ctx))
+        else:
+            nodes.extend(_environment(env, content, ctx))
         pos = end
 
 
-def _environment(env: str, content: str, verbatim: list[str]) -> list[Node]:
+def _bibliography(head: str, content: str, nodes: list[Node]) -> list[Node]:
+    """A ``thebibliography``: added to the commands just before it, if any, else a node of its own."""
+    previous = nodes[-1] if nodes and isinstance(nodes[-1], Bibliography) else None
+    bib = previous or Bibliography()
+    widest = re.match(r'\s*\{([^{}]*)\}', head)
+    if widest:
+        bib.widest = widest.group(1)
+    items = list(_BIB_ITEM.finditer(content))
+    for item, following in zip(items, [*items[1:], None]):
+        body = content[item.end():following.start() if following else len(content)]
+        bib.entries.append(BibEntry(key=item.group(2).strip(), label=item.group(1),
+                                    children=_clean_breaks(parse_inline_latex(body.strip()))))
+    return [] if previous else [bib]
+
+
+def _code_environment(content: str, ctx: _Context) -> list[Node]:
+    """A code environment; a listing's caption is a paragraph before it, as tables and figures have."""
+    m = re.search(r'\x00(\d+)\x00', content)
+    hidden = ctx.code[int(m.group(1))] if m else HiddenCode(code=content.strip('\n').rstrip())
+    block = CodeBlock(code=hidden.code, language=hidden.language)
+    if hidden.caption:
+        return [Paragraph(children=parse_inline_latex(f"Listing: {hidden.caption.strip()}")), block]
+    return [block]
+
+
+def _images(content: str) -> list[Image]:
+    """The images of a float's content."""
+    images = []
+    pos = 0
+    while True:
+        args, start, pos = extract_macro_args(content, "\\includegraphics", pos)
+        if start == -1:
+            return images
+        if args:
+            images.append(Image(src=args[0].strip(), alt="image"))
+
+
+def _figure(content: str) -> list[Node]:
+    """A figure float. The AST has no subfigures: each one's image keeps its own caption, the main caption follows."""
+    images: list[Image] = []
+    rest = content
+    while True:
+        body, start, end = _extract_environment(rest, 'subfigure')
+        if start == -1:
+            break
+        found = _images(body)
+        if found:
+            _float_caption(body, found[0])
+        images.extend(found)
+        rest = rest[:start] + rest[end:]
+    if images:
+        label_args, _, _ = extract_macro_args(_strip_macro(rest, "\\caption"), "\\label")
+        caption = _caption_paragraph(rest, "Figure")
+        if caption and label_args:
+            caption[0].children.extend([Text(content=" "), Label(name=label_args[0].strip())])
+        return [Paragraph(children=images), *caption]
+    images = _images(content)
+    if not images:
+        return _caption_paragraph(content, "Figure")
+    _float_caption(content, images[0])
+    return [Paragraph(children=images)]
+
+
+def _quote(content: str, ctx: _Context) -> BlockQuote:
+    """A quote; a first line that is only an alert's name in bold, as the renderer writes it, is that alert."""
+    blocks = _parse_blocks(content, ctx)
+    first = blocks[0].children if blocks and isinstance(blocks[0], Paragraph) else []
+    if (len(first) > 1 and isinstance(first[0], Text) and first[0].bold and first[0].content in _ALERTS
+            and isinstance(first[1], LineBreak)):
+        alert = first[0].content
+        del first[:2]
+        return BlockQuote(children=blocks if first else blocks[1:], alert_type=alert)
+    return BlockQuote(children=blocks)
+
+
+def _environment(env: str, content: str, ctx: _Context) -> list[Node]:
     """The block nodes for one environment."""
     if env in _MATH_ENVS:
-        return [Equation(code=content.strip(), inline=False, env=_MATH_ENVS[env])]
-    if env in ('verbatim', 'verbatim*', 'lstlisting'):
-        options = re.match(r'\s*\[([^\]]*)\]', content)
-        lang = re.search(r'language\s*=\s*\{?([\w+#-]+)', options.group(1)) if options else None
-        if options:
-            content = content[options.end():]
-        m = re.search(r'\x00(\d+)\x00', content)
-        code = verbatim[int(m.group(1))] if m else content
-        return [CodeBlock(code=code.strip('\n').rstrip(), language=lang.group(1).lower() if lang else None)]
+        return [Equation(code=content.strip(), inline=False, env=env)]
+    if env == 'verbatim':
+        return _code_environment(content, ctx)
     if env in ('itemize', 'enumerate', 'description'):
-        return [_list(env, content, verbatim)]
+        return [_list(env, content, ctx)]
     if env in _TABLE_ENVS:
         return [_parse_latex_table(content.strip())]
     if env in ('figure', 'figure*'):
-        images = []
-        pos = 0
-        while True:
-            img_args, start, pos = extract_macro_args(content, "\\includegraphics", pos)
-            if start == -1:
-                break
-            if img_args:
-                images.append(Image(src=img_args[0].strip(), alt="image"))
-        if not images:
-            return _caption_paragraph(content, "Figure")
-        _float_caption(content, images[0])
-        return [Paragraph(children=images)]
+        return _figure(content)
     if env in _TABLE_FLOATS:
         tables = _float_tables(content)
         if not tables:
@@ -332,13 +492,13 @@ def _environment(env: str, content: str, verbatim: list[str]) -> list[Node]:
         _float_caption(content, tables[0])
         return tables
     if env == 'abstract':
-        return [Abstract(children=_parse_blocks(content, verbatim))]
+        return [Abstract(children=_parse_blocks(content, ctx))]
     if env == 'keywords':
         return [Paragraph(children=[Text(content="Keywords: ", bold=True)] + parse_inline_latex(content.strip()))]
     if env in ('quote', 'quotation'):
-        return [BlockQuote(children=_parse_blocks(content, verbatim))]
+        return [_quote(content, ctx)]
     # Layout environments (center, minipage, ...): their content
-    return _parse_blocks(content, verbatim)
+    return _parse_blocks(content, ctx)
 
 
 def _float_tables(content: str) -> list[Table]:
@@ -373,7 +533,7 @@ def _caption_paragraph(content: str, kind: str) -> list[Node]:
     return [Paragraph(children=parse_inline_latex(f"{kind}: {cap_args[0].strip()}"))]
 
 
-def _list(env: str, content: str, verbatim: list[str]) -> ListBlock:
+def _list(env: str, content: str, ctx: _Context) -> ListBlock:
     """An itemize, enumerate or description list; ``\\setcounter`` sets the start, box labels mark tasks."""
     first_item = _ITEM.search(content)
     counter = _SET_COUNTER.search(content, 0, first_item.start() if first_item else len(content))
@@ -382,7 +542,7 @@ def _list(env: str, content: str, verbatim: list[str]) -> ListBlock:
         checked = _TASK_LABELS.get(label.strip()) if label is not None and env != 'description' else None
         if label is not None and checked is None:  # \item[label]: the label leads the item, in bold
             body = f"\\textbf{{{label}}} {body}"
-        lst.items.append(ListItem(children=_parse_blocks(body, verbatim), checked=checked))
+        lst.items.append(ListItem(children=_parse_blocks(body, ctx), checked=checked))
     return lst
 
 
@@ -415,11 +575,13 @@ def _longtable_rows(content: str) -> str:
     return heads.get('endfirsthead', heads.get('endhead', '')) + parts[-1]
 
 
-def _table_cells(content: str) -> list[list[str]]:
+def _table_cells(content: str, groups: bool = True) -> list[list[str]]:
     """The source of each cell, row by row.
 
     Rows and cells only end outside groups and nested environments, so
     ``\\multicolumn{2}{c}{a\\\\b}`` is one cell. ``\\&`` is a literal ampersand.
+    With braces that do not balance the rows would run together, so they are
+    read again with ``groups`` False, which ignores them.
     """
     rows: list[list[str]] = [[]]
     start = pos = depth = 0
@@ -438,14 +600,16 @@ def _table_cells(content: str) -> list[list[str]]:
             else:
                 pos += 2
             continue
-        if char == '{':
+        if char == '{' and groups:
             depth += 1
-        elif char == '}':
+        elif char == '}' and groups:
             depth -= 1
         elif char == '&' and depth == 0:
             rows[-1].append(content[start:pos])
             start = pos + 1
         pos += 1
+    if groups and depth:
+        return _table_cells(content, groups=False)
     rows[-1].append(content[start:])
     return rows
 
@@ -483,7 +647,8 @@ def _parse_latex_table(content: str) -> Table:
         cells: list[TableCell] = []
         for source in row:
             text, span = _spanned_cell(source)
-            cells.append(TableCell(children=parse_inline_latex(text.strip())))
+            lines = _CELL_LINES.fullmatch(text.strip())
+            cells.append(TableCell(children=parse_inline_latex((lines.group(1) if lines else text).strip())))
             cells.extend(TableCell() for _ in range(span - 1))
         if table.headers or table.rows:
             table.rows.append(TableRow(cells=cells))
@@ -533,7 +698,11 @@ def parse_inline_latex(
             continue
         if text[pos] == '{':
             group, pos = find_balanced_braces(text, pos)
-            elements.extend(inline(group))
+            code = _CODE_GROUP.match(group)
+            if code:
+                elements.append(CodeInline(code=_unescape_latex(group[code.end():].strip())))
+            else:
+                elements.extend(inline(group))
             continue
         if text[pos] == '}':  # unbalanced: dropped, as the group it closes is already open
             pos += 1
@@ -592,6 +761,14 @@ def parse_inline_latex(
             add_text(_SYMBOLS[cmd_base])
             pos = _skip_spaces(text, pos + len(cmd_name))
             continue
+        if cmd_base == 'and':  # between two authors
+            if elements and isinstance(elements[-1], Text):
+                elements[-1].content = elements[-1].content.rstrip()
+                if not elements[-1].content:
+                    elements.pop()
+            elements.append(LineBreak(author_separator=True))
+            pos = _skip_spaces(text, pos + len(cmd_name))
+            continue
         if cmd_base in _DECLARATIONS:
             fmt = _DECLARATIONS[cmd_base]
             is_bold = fmt.get('is_bold', is_bold)
@@ -619,11 +796,23 @@ def parse_inline_latex(
             # Keep \texttt{...} apart from a word glued to it
             if cmd_base == 'texttt' and end < len(text) and text[end].isalnum():
                 add_text(' ')
-        else:
-            # Any other command: its first argument's content
-            elements.extend(inline(args[0]))
+        elif cmd_base in _CONTENT_ARGUMENT:
+            elements.extend(inline(args[min(_CONTENT_ARGUMENT[cmd_base], len(args) - 1)]))
+        elif cmd_base not in _LAYOUT_COMMANDS:
+            elements.extend(_all_arguments(cmd_base, args, inline))
 
     return _collapse_spaces(elements)
+
+
+def _all_arguments(name: str, args: list[str], inline: Callable[[str], list[InlineElement]]) -> list[InlineElement]:
+    """Any other command: the content of its arguments, in order, so that none is lost."""
+    unknown = _UNKNOWN.get()
+    if unknown is not None and name not in _STYLE_COMMANDS:
+        unknown.add(name)
+    out: list[InlineElement] = []
+    for i, arg in enumerate(args):
+        out.extend([*([Text(content=' ')] if i else []), *inline(arg)])
+    return out
 
 
 def _collapse_spaces(nodes: list[InlineElement]) -> list[InlineElement]:
@@ -705,7 +894,7 @@ def _unescape_latex(text: str) -> str:
 
 
 def _link(args, inline, *fmt) -> list[InlineElement]:
-    url = _unescape_latex(args[0].replace(_URL_PERCENT, '%'))
+    url = _unescape_latex(args[0].replace(URL_PERCENT, '%'))
     text = inline(args[1]) if len(args) >= 2 else [Text(content=url, bold=fmt[0], italic=fmt[1], strikethrough=fmt[2])]
     return [Link(url=url, title=None, content=text)]
 
@@ -720,6 +909,8 @@ _INLINE_COMMANDS: dict[str, Callable[..., list[InlineElement]]] = {
     'textsuperscript': lambda args, inline, *fmt: inline(args[0], script='sup'),
     'textsubscript': lambda args, inline, *fmt: inline(args[0], script='sub'),
     'texttt': lambda args, inline, *fmt: [CodeInline(code=_unescape_latex(args[0]))],
+    'tcverbatim': lambda args, inline, *fmt: [CodeInline(code=bytes.fromhex(args[0]).decode('utf-8'))],
+    'thanks': lambda args, inline, *fmt: [Footnote(content=inline(args[0]))],
     'href': _link,
     'url': lambda args, inline, *fmt: _link(args[:1], inline, *fmt),
     'includegraphics': lambda args, inline, *fmt: [Image(src=args[0], alt="image")],
