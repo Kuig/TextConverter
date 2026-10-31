@@ -14,8 +14,6 @@ Loading is tolerant: a missing key takes its default, and an unknown key, or a s
     "provider": "ollama",
     "classification_model": "gemma4:e2b",
     "description_model": "gemma4:e2b",
-    "classification_visual_token_budget": 70,
-    "description_visual_token_budget": 1120,
     "provide_extracted_text_to_describer": true,
     "classification_prompt": "...",
     "prompts": { "...": "..." },
@@ -49,7 +47,7 @@ Loading is tolerant: a missing key takes its default, and an unknown key, or a s
 
 The file is split into three kinds of section:
 
-- **`"ai"`**: application-level AI settings: which provider to use, model names, prompts, and token budgets. It is provider-agnostic: switching backend only requires changing `"provider"` and adding the matching connection block (e.g. `"google"`, `"openai"`).
+- **`"ai"`**: application-level AI settings: which provider to use, model names, and prompts. It is provider-agnostic: switching backend only requires changing `"provider"` and adding the matching connection block (e.g. `"google"`, `"openai"`).
 - **`"html"`**: HTML input handling.
 - **`"<provider>"`**: connection settings passed directly to `unified_ai_client` (URL, timeout, keep-alive, context size, ...). Their schema is owned by `unified_ai_client`.
 
@@ -60,8 +58,6 @@ The file is split into three kinds of section:
 | `provider` | `"ollama"` | AI provider name, as known to `unified_ai_client` |
 | `classification_model` | `"gemma4:e2b"` | Vision model that assigns each image a category |
 | `description_model` | `"gemma4:e2b"` | Vision model that describes or transcribes each image |
-| `classification_visual_token_budget` | `70` | Visual tokens for the classification call; `0` leaves the model default |
-| `description_visual_token_budget` | `1120` | Visual tokens for the description call; `0` leaves the model default |
 | `provide_extracted_text_to_describer` | `false` | Append the text extracted from a vector image to the description prompt |
 | `classification_prompt` | built-in | Prompt asking for a JSON object `{"category": ...}` |
 | `prompts` | built-in | Description prompt per category, plus `default` |
@@ -71,6 +67,8 @@ The file is split into three kinds of section:
 | `ocr_temperature` | `0` | Sampling temperature of the OCR call; `null` leaves the model default |
 
 Images are processed in three phases, one model each: every image is classified, then the non-OCR categories are described, then the OCR categories are transcribed. Each model is therefore loaded once per conversion, and an OCR model can sit next to the vision model without swapping on every image.
+
+With Ollama, the resolution at which Gemma 4 reads an image is chosen by the server from the image's size; it cannot be configured.
 
 The categories are `photo_drawing_or_comic`, `diagram`, `text`, `table`, `formula`, `chart`, `infographic_or_depliant`, `document_scan`, `logo_or_icon` and `map`. An answer outside `prompts` and `ocr_prompts` falls back to `default`.
 

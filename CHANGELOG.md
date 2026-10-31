@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The `ai.classification_visual_token_budget` and `ai.description_visual_token_budget` settings: Ollama has no such option, ignores
+  them and picks the image resolution itself. A `config.json` that still has them works, with a warning about the unknown keys.
+
 ## [0.4.1] - 2026-10-31
 
 ### Added

@@ -83,8 +83,6 @@ class AiConfig:
     provider: str = "ollama"
     classification_model: str = "gemma4:e2b"
     description_model: str = "gemma4:e2b"
-    classification_visual_token_budget: int = 70
-    description_visual_token_budget: int = 1120
     provide_extracted_text_to_describer: bool = False
     classification_prompt: str = _DEFAULT_CLASSIFICATION_PROMPT
     prompts: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_PROMPTS))

@@ -69,7 +69,6 @@ def _ask(
     config: AppConfig,
     *,
     temperature: float | None = None,
-    visual_token_budget: int = 0,
     format_json: bool = False,
 ) -> str | None:
     """Make one AI call on one image.
@@ -79,7 +78,6 @@ def _ask(
     """
     from unified_ai_client import call_ai
 
-    options = {"visual_token_budget": visual_token_budget} if visual_token_budget > 0 else None
     try:
         response = call_ai(
             provider=config.ai.provider,
@@ -88,7 +86,6 @@ def _ask(
             file_path=img_path,
             temperature=temperature,
             format_json=format_json,
-            extra_options=options,
         )
     except Exception as exc:
         log_warning(f"AI call failed for {img_path}, skipping: {exc}")
@@ -108,7 +105,6 @@ def _classify(img_path: str, config: AppConfig) -> str:
         img_path,
         config,
         temperature=ai.classification_temperature,
-        visual_token_budget=ai.classification_visual_token_budget,
         format_json=True,
     )
     try:
@@ -210,18 +206,14 @@ def _run_phases(jobs: list[tuple[Image, str]], config: AppConfig, latex_auto: bo
         log_action("(LaTeX Auto mode: skipping description for non-text/table/formula images)")
 
     def describe(img: Image, img_path: str) -> None:
-        img.description = _ask(
-            ai.description_model, _description_prompt(img, config), img_path, config,
-            visual_token_budget=ai.description_visual_token_budget,
-        )
+        img.description = _ask(ai.description_model, _description_prompt(img, config), img_path, config)
 
     def transcribe(img: Image, img_path: str) -> None:
         if ai.ocr_model:
             text = _ask(ai.ocr_model, ai.ocr_prompts[img.category], img_path, config,
                         temperature=ai.ocr_temperature)
         else:
-            text = _ask(ai.description_model, _description_prompt(img, config), img_path, config,
-                        visual_token_budget=ai.description_visual_token_budget)
+            text = _ask(ai.description_model, _description_prompt(img, config), img_path, config)
         img.description = normalize_transcription(text) if text else None
 
     run_phase("Describing", ai.description_model, to_describe, describe)

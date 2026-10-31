@@ -3,8 +3,6 @@
     "provider": "ollama",
     "classification_model": "gemma4:e2b",
     "description_model": "gemma4:e2b",
-    "classification_visual_token_budget": 70,
-    "description_visual_token_budget": 1120,
     "provide_extracted_text_to_describer": true,
     "classification_prompt": "Analyze the image and classify it into exactly one of the following categories: 'photo_drawing_or_comic', 'diagram', 'text' (mostly a short passage of text), 'table' (mostly a table), 'formula' (mostly a mathematical formula or equation), 'chart', 'infographic_or_depliant', 'document_scan' (a whole scanned or photographed page), 'logo_or_icon', 'map'. Reply ONLY with a valid JSON object containing a single key 'category' and the chosen category as the value. Do not include markdown blocks.",
     "prompts": {
