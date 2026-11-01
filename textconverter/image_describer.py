@@ -5,7 +5,7 @@ import tempfile
 from textconverter.logger import log_action, log_info, log_success, log_warning
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from .ast import Document, Image, Node, Paragraph, walk
+from .ast import Document, Heading, Image, Node, Paragraph, Text, walk
 from .config import AppConfig
 from .images import Expansion, expand_images, resolve_local
 from .parsers.transcription_parser import normalize_transcription, transcription_nodes
@@ -13,6 +13,7 @@ from .regions import (
     Block, contact_sheet, crop_image, draw_overlay, find_blocks, needs_labels, parse_labels, plan_crops,
     plan_regions,
 )
+from .renderers._common import plain_text, summary_text
 
 # Categories that ``auto_latex`` transcribes; every other image keeps a plain reference.
 LATEX_AUTO_CATEGORIES = ("text", "table", "formula")
@@ -23,11 +24,18 @@ REGION_LABELS = ("text", "table", "formula", "photo_drawing_or_comic", "diagram"
 # Margin around a transcribed crop, of the image's side: blocks are cut tight to the ink, and
 # what lies next to them is blanked. A figure gets none: the model reads a neighbour into it.
 _REGION_PADDING = 0.01
+# The first line of a page's text, cut to this length, stands for its title.
+_PAGE_TITLE_LENGTH = 120
 
 # Writes a crop's PNG bytes where the output keeps its images; returns the ``src`` for the Image.
 SaveCrop = Callable[[bytes], str]
 
 _FALLBACK_PROMPT = "Describe the image in detail."
+_CONTEXT_INTRO = (
+    "The image comes from a document. This text from around it is there only to help you name what "
+    "you see. Describe only what is visible, and never quote or mention this text, the document or "
+    "any context:"
+)
 _MISSING_CLIENT = (
     "The 'unified_ai_client' package is required for AI-based image description. "
     "Please install it first (e.g. via requirements_prod.txt)."
@@ -153,8 +161,8 @@ def _description_thinking(config: AppConfig) -> bool | str:
     return "default" if config.ai.description_thinking else False
 
 
-def _description_prompt(img: Image, config: AppConfig) -> str:
-    """Category prompt for the description model, plus any text extracted from a vector image."""
+def _description_prompt(img: Image, config: AppConfig, context: str = "") -> str:
+    """Category prompt for the description model, plus any text extracted from a vector image and any context."""
     ai = config.ai
     prompt = ai.prompts.get(img.category, ai.prompts.get("default", _FALLBACK_PROMPT))
     if img.extracted_text and ai.provide_extracted_text_to_describer:
@@ -162,7 +170,46 @@ def _description_prompt(img: Image, config: AppConfig) -> str:
             f"\n\nThis image was originally vector-based and contained the following "
             f"extracted text:\n{img.extracted_text}"
         )
+    if context:
+        prompt += f"\n\n{_CONTEXT_INTRO}\n{context}"
     return prompt
+
+
+def _context_text(title: str, section: str, before: str, after: str) -> str:
+    """The lines of context that have something to say, each on one line; empty when none has."""
+    parts = (("Title", title), ("Section", section), ("Text before", before), ("Text after", after))
+    lines = ((name, " ".join(text.split())) for name, text in parts)
+    return "\n".join(f"{name}: {text}" for name, text in lines if text)
+
+
+def _document_contexts(doc: Document, chars: int) -> dict[int, str]:
+    """The context of each image of a document, by ``id`` of its Image.
+
+    A caption follows its image in ``walk``, so it opens the text after it.
+    ``Image.alt`` stays out: it is often just a file name.
+
+    Args:
+        doc: The document.
+        chars: Characters of text to take on each side of an image; 0 gives no context.
+    """
+    if not chars:
+        return {}
+    pieces: list[str] = []
+    length = 0
+    section = ""
+    places: list[tuple[Image, int, str]] = []
+    for node in (found for child in doc.children for found in walk(child)):
+        if isinstance(node, Image):
+            places.append((node, length, section))
+            continue
+        if isinstance(node, Heading):
+            section = plain_text(node.children)
+        pieces.append(node.content if isinstance(node, Text) else " ")
+        length += len(pieces[-1])
+    body = "".join(pieces)
+    title = summary_text(doc.title)
+    return {id(img): _context_text(title, heading, body[max(0, at - chars):at], body[at:at + chars])
+            for img, at, heading in places}
 
 
 def _plan_split(img: Image, img_path: str, blocks: list[Block], tmp_dir: str, config: AppConfig) -> Split | None:
@@ -196,6 +243,20 @@ def _plan_split(img: Image, img_path: str, blocks: list[Block], tmp_dir: str, co
         log_warning(f"Could not split {img_path} into regions, keeping the page whole: {exc}")
         return None
     return Split(regions, planned) if regions else None
+
+
+def _region_contexts(split: Split, chars: int) -> dict[int, str]:
+    """The context of the regions of a transcribed page, by ``id`` of their Image.
+
+    Only text regions count: two figures in a row see the same text, not each
+    other's descriptions, and a transcription that failed adds nothing.
+    """
+    texts = [region.description if region.category == "text" and region.description else ""
+             for region in split.regions]
+    title = next((text.strip().splitlines()[0] for text in texts if text.strip()), "")[:_PAGE_TITLE_LENGTH]
+    return {id(region): _context_text(title, "", "\n".join(filter(None, texts[:number]))[-chars:],
+                                      "\n".join(filter(None, texts[number + 1:]))[:chars])
+            for number, region in enumerate(split.regions)}
 
 
 def _page_blocks(jobs: list[tuple[Image, str]], config: AppConfig) -> dict[int, list[Block]]:
@@ -254,13 +315,16 @@ def describe_images(
     config: AppConfig,
     latex_auto: bool = False,
     save_crop: SaveCrop | None = None,
+    contexts: dict[int, str] | None = None,
 ) -> dict[int, Split]:
     """Classify, describe and transcribe images in phases, one model per phase.
 
     Every image is classified first; then pages holding more than text are
     split into regions; then the description model describes the images
     outside ``ai.ocr_prompts``; finally the OCR model (or, without one, the
-    description model) transcribes the rest. The calls are grouped by model, so
+    description model) transcribes the rest. With split pages and
+    ``ai.description_context`` the last two phases swap, so that a figure's
+    description can use the text around it. The calls are grouped by model, so
     models swap between phases and never image by image. Sets ``category`` and
     ``description`` on each Image in place; a missing file gets category
     ``"error"`` and a failed call leaves ``description`` unset. A file used by
@@ -274,6 +338,7 @@ def describe_images(
         config: The application configuration.
         latex_auto: Only transcribe ``LATEX_AUTO_CATEGORIES``; describe nothing.
         save_crop: Stores the crops worth keeping; without it they are dropped.
+        contexts: Text for the description of an image, by ``id`` of its node.
 
     Returns:
         The split pages, by ``id`` of their Image node.
@@ -300,7 +365,7 @@ def describe_images(
     splits: dict[int, Split] = {}
     with tempfile.TemporaryDirectory(prefix="textconverter_regions_") as tmp_dir:
         try:
-            _run_phases(jobs, config, latex_auto, tmp_dir, splits)
+            _run_phases(jobs, config, latex_auto, tmp_dir, splits, dict(contexts or {}))
             _keep_crops(splits, config, save_crop)
         finally:
             for img, img_path in jobs:
@@ -317,8 +382,12 @@ def _run_phases(
     latex_auto: bool,
     tmp_dir: str,
     splits: dict[int, Split],
+    contexts: dict[int, str],
 ) -> None:
-    """The phases of ``describe_images`` on ``(image, file)`` jobs of distinct files; ``splits`` is filled in."""
+    """The phases of ``describe_images`` on ``(image, file)`` jobs of distinct files.
+
+    ``splits`` is filled in, and ``contexts`` gets the context of the regions.
+    """
     ai = config.ai
 
     init_ai(config)
@@ -371,7 +440,8 @@ def _run_phases(
         log_action("(LaTeX Auto mode: skipping description for non-text/table/formula images)")
 
     def describe(img: Image, img_path: str) -> None:
-        img.description = _ask(ai.description_model, _description_prompt(img, config), img_path, config,
+        prompt = _description_prompt(img, config, contexts.get(id(img), ""))
+        img.description = _ask(ai.description_model, prompt, img_path, config,
                                max_tokens=ai.description_max_tokens, thinking=_description_thinking(config))
 
     def transcribe(img: Image, img_path: str) -> None:
@@ -383,8 +453,14 @@ def _run_phases(
                         max_tokens=ai.ocr_max_tokens, thinking=_description_thinking(config))
         img.description = normalize_transcription(text) if text else None
 
+    text_first = bool(splits and ai.description_context)
+    if text_first:
+        run_phase("Transcribing", ai.ocr_model or ai.description_model, to_transcribe, transcribe)
+        for page in splits.values():
+            contexts.update(_region_contexts(page, ai.description_context))
     run_phase("Describing", ai.description_model, to_describe, describe)
-    run_phase("Transcribing", ai.ocr_model or ai.description_model, to_transcribe, transcribe)
+    if not text_first:
+        run_phase("Transcribing", ai.ocr_model or ai.description_model, to_transcribe, transcribe)
 
 
 def _apply_latex_auto(node: Node) -> None:
@@ -403,7 +479,7 @@ def _apply_latex_auto(node: Node) -> None:
 
 
 def process_images(
-    doc: Node,
+    doc: Document,
     base_dir: str,
     *,
     config: AppConfig,
@@ -443,7 +519,8 @@ def process_images(
         f"(Class: {ai.classification_model}, Desc: {ai.description_model}, "
         f"OCR: {ai.ocr_model or ai.description_model})..."
     )
-    splits = describe_images(images, base_dir, config=config, latex_auto=latex_auto, save_crop=save_crop)
+    splits = describe_images(images, base_dir, config=config, latex_auto=latex_auto, save_crop=save_crop,
+                             contexts=_document_contexts(doc, ai.description_context))
 
     def regions(img: Image) -> Expansion | None:
         if id(img) not in splits:

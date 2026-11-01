@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   text is recognized without a model and costs no extra call.
 - An image source leaves `<output stem>_regions.png` next to the output of `save_to_file()`: the image with what the AI found in
   it, to check a detection by eye.
+- A description is told what surrounds its image: title, section, caption and nearby text in a document, the transcribed text of the
+  page for a figure of a split page, whose OCR now runs first. `ai.description_context` sets the characters per side (500); 0 turns
+  it off.
 - `ai.description_thinking`, off by default, leaves thinking to the model in description calls.
 - `ai.description_max_tokens` and `ai.ocr_max_tokens`, 4096 by default: a model that loops stops there instead of running until the
   timeout.

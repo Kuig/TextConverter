@@ -27,6 +27,7 @@ Loading is tolerant: a missing key takes its default, and an unknown key, or a s
     "classification_temperature": 0,
     "ocr_temperature": 0,
     "description_thinking": false,
+    "description_context": 500,
     "description_max_tokens": 4096,
     "ocr_max_tokens": 4096,
     "region_model": "gemma4:12b",
@@ -72,6 +73,7 @@ The file is split into three kinds of section:
 | `classification_temperature` | `0` | Sampling temperature of the classification call; `null` leaves the model default |
 | `ocr_temperature` | `0` | Sampling temperature of the OCR call; `null` leaves the model default |
 | `description_thinking` | `false` | Leave thinking to the model in description calls; every other image call has it off |
+| `description_context` | `500` | Characters of text around an image given to the description call, per side; `0` turns it off |
 | `description_max_tokens` | `4096` | Limit of a description, thinking included; `null` means no limit |
 | `ocr_max_tokens` | `4096` | Limit of a transcription; `null` means no limit |
 | `region_model` | `"gemma4:12b"` | Vision model that labels the blocks of a page; empty turns regions off |
@@ -79,6 +81,8 @@ The file is split into three kinds of section:
 | `region_max_tokens` | `1500` | Limit of the labelling answer; `null` means no limit |
 
 Images are processed in phases, one model each: every image is classified, then pages are split into regions, then the non-OCR categories are described, then the OCR categories are transcribed. Models therefore swap between phases and never image by image, so an OCR model can sit next to the vision model.
+
+A description is told what surrounds its image, so that the model can recognize what a picture alone does not say: the document's title, the section, and `description_context` characters of text on each side, a caption included. On a split page that text is the transcription of the page, so the OCR phase runs before the descriptions; with the same model for labels and descriptions this costs one more swap, and `description_context: 0` avoids it.
 
 A page is an image classified as `text` or `document_scan`. Its blocks are found with Pillow, and a page of plain text stops there, with no model involved. Otherwise `region_model` labels the blocks, shown to it as numbered tiles on one contact sheet, and a page with more than one kind of content is split: runs of text, tables and formulas are transcribed, the other regions are described and kept as files. Any failure leaves the page whole. Locating content is left to Pillow because the small vision models place boxes too loosely to crop from. The labels need a model of at least the size of `gemma4:12b`: `gemma4:e2b` answers with text copied from the tiles. Thinking stays off in the labelling call, where it can use up the token limit before any answer.
 

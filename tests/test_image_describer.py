@@ -208,23 +208,81 @@ class TestRegions(BaseConverterTest):
         return FakeAi(list(categories), {"region": _labels() if region is None else region, "desc": desc, "ocr": ocr})
 
     def test_phases_stay_grouped_by_model(self):
-        """Classification, then labels, then descriptions and OCR on the regions: each model loads once."""
+        """Classification, labels, then OCR and descriptions on the regions: the text is the figures' context."""
         fake = self._fake()
         self._run(fake)
         models = [m for m, _ in fake.calls]
         self.assertEqual(models[:2], ["cls", "region"])
-        self.assertEqual(models, sorted(models, key=["cls", "region", "desc", "ocr"].index))
-        self.assertEqual(self.preloaded, ["cls", "region", "desc", "ocr"])
+        self.assertEqual(models, sorted(models, key=["cls", "region", "ocr", "desc"].index))
+        self.assertEqual(self.preloaded, ["cls", "region", "ocr", "desc"])
 
     def test_model_coming_back_is_preloaded_again(self):
         """A call would load it without ``context_size``; a model already in use is left alone."""
         cfg = _region_config()
         cfg.ai.classification_model = "desc"
         self._run(FakeAi(["document_scan"], {"region": _labels(), "ocr": "Some text."}), config=cfg)
-        self.assertEqual(self.preloaded, ["desc", "region", "desc", "ocr"])
+        self.assertEqual(self.preloaded, ["desc", "region", "ocr", "desc"])
         cfg.ai.classification_model, cfg.ai.region_model = "cls", "desc"
         self._run(FakeAi(["document_scan"], {"desc": _labels(), "ocr": "Some text."}), config=cfg)
+        self.assertEqual(self.preloaded, ["cls", "desc", "ocr", "desc"])
+        cfg.ai.description_context = 0
+        self._run(FakeAi(["document_scan"], {"desc": _labels(), "ocr": "Some text."}), config=cfg)
         self.assertEqual(self.preloaded, ["cls", "desc", "ocr"])
+
+    def _reading(self, *texts):
+        """A fake model that transcribes the crops into ``texts``, in order."""
+        fake, answers = self._fake(), iter(texts)
+        return lambda **kwargs: MagicMock(text=next(answers)) if kwargs["model"] == "ocr" else fake(**kwargs)
+
+    def _description_prompts(self):
+        return [c.kwargs["prompt"] for c in self.call.call_args_list if c.kwargs["model"] == "desc"]
+
+    def test_figures_get_the_text_around_them(self):
+        self._run(self._reading("The Title\nFirst text.", "Second text."))
+        first, second = self._description_prompts()
+        self.assertIn("Title: The Title\nText before: The Title First text.\nText after: Second text.", first)
+        self.assertIn("Text before: The Title First text. Second text.", second)
+        self.assertNotIn("Text after", second)
+
+    def test_image_source_gets_the_text_of_its_page(self):
+        from textconverter.image_describer import transcribe_images
+        self.call = MagicMock(side_effect=self._reading("First text.", "Second text."))
+        with patch("unified_ai_client.call_ai", self.call), patch("unified_ai_client.preload_model"):
+            transcribe_images([ARTICLE], config=_region_config())
+        self.assertIn("Text after: Second text.", self._description_prompts()[0])
+
+    def test_failed_transcription_leaves_the_prompt_alone(self):
+        self._run(self._fake(ocr=""))
+        photo_prompt = _region_config().ai.prompts["photo_drawing_or_comic"]
+        self.assertEqual(self._description_prompts(), [photo_prompt, photo_prompt])
+
+    def test_no_context_keeps_the_prompts_and_the_phases(self):
+        cfg = _region_config()
+        cfg.ai.description_context = 0
+        fake = self._fake()
+        self._run(fake, config=cfg)
+        models = [m for m, _ in fake.calls]
+        self.assertEqual(models, sorted(models, key=["cls", "region", "desc", "ocr"].index))
+        self.assertEqual(set(self._description_prompts()), {cfg.ai.prompts["photo_drawing_or_comic"]})
+
+    def test_figures_in_a_row_see_the_text_and_not_each_other(self):
+        from textconverter.ast import Image
+        from textconverter.image_describer import Split, _region_contexts
+        photo = Image(src="", category="photo_drawing_or_comic", description="A photo.")
+        diagram = Image(src="", category="diagram")
+        regions = [Image(src="", category="text", description="Opening line\nBody."), photo, diagram,
+                   Image(src="", category="table", description="<table></table>"),
+                   Image(src="", category="text", description="x" * 100)]
+        contexts = _region_contexts(Split(regions, []), 12)
+        self.assertEqual(contexts[id(photo)], contexts[id(diagram)])
+        self.assertEqual(contexts[id(photo)], f"Title: Opening line\nText before: g line Body.\nText after: {'x' * 12}")
+
+    def test_page_title_is_cut(self):
+        from textconverter.ast import Image
+        from textconverter.image_describer import Split, _PAGE_TITLE_LENGTH, _region_contexts
+        photo = Image(src="", category="diagram")
+        contexts = _region_contexts(Split([photo, Image(src="", category="text", description="y" * 500)], []), 10)
+        self.assertIn(f"Title: {'y' * _PAGE_TITLE_LENGTH}\n", contexts[id(photo)])
 
     def test_labelling_call_has_the_tile_count_and_no_thinking(self):
         from textconverter.regions import find_blocks
@@ -508,6 +566,93 @@ class TestRegionsInOutput(BaseConverterTest):
         with patch("unified_ai_client.call_ai", side_effect=self._fake()), patch("unified_ai_client.preload_model"):
             textconverter.convert(ARTICLE, "markdown", output_dir=str(self.dir), config=_region_config())
         self.assertFalse(list(self.dir.glob("*_regions.png")))
+
+
+class TestDocumentContext(BaseConverterTest):
+
+    def setUp(self):
+        super().setUp()
+        self.path = _copies(1)[0]
+
+    def _prompts(self, doc, categories=("photo_drawing_or_comic",), config=None):
+        """The description prompts for ``doc``; other models are recorded in ``self.models``."""
+        from textconverter.image_describer import process_images
+        fake = FakeAi(list(categories), {"desc": "A description.", "ocr": "Some text."})
+        with patch("unified_ai_client.call_ai", side_effect=fake), patch("unified_ai_client.preload_model"):
+            process_images(doc, "", config=config or _config())
+        self.models = [model for model, _ in fake.calls]
+        return [prompt for model, prompt in fake.calls if model == "desc"]
+
+    def _report(self, **image):
+        from textconverter.ast import Document, Heading, Image, Paragraph, Text
+        return Document(title=[Text(content="The Report")], children=[
+            Heading(level=1, children=[Text(content="Machines")]),
+            Paragraph(children=[Text(content="Before the image.")]),
+            Paragraph(children=[Image(src=self.path, **image)]),
+            Paragraph(children=[Text(content="After the image.")]),
+        ])
+
+    def test_title_section_and_text_around(self):
+        (prompt,) = self._prompts(self._report())
+        self.assertIn("Title: The Report\nSection: Machines\nText before: Machines Before the image.\n"
+                      "Text after: After the image.", prompt)
+
+    def test_caption_opens_the_text_after(self):
+        from textconverter.ast import Text
+        (prompt,) = self._prompts(self._report(caption=[Text(content="The caption.")]))
+        self.assertIn("Text after: The caption. After the image.", prompt)
+
+    def test_text_is_cut_per_side(self):
+        cfg = _config()
+        cfg.ai.description_context = 6
+        (prompt,) = self._prompts(self._report(), config=cfg)
+        self.assertIn("Text before: mage.\nText after: After", prompt)
+
+    def test_image_in_a_table_cell(self):
+        from textconverter.ast import Document, Image, Table, TableCell, TableRow, Text
+        cells = [TableCell(children=[Text(content="Left")]), TableCell(children=[Image(src=self.path)]),
+                 TableCell(children=[Text(content="Right")])]
+        (prompt,) = self._prompts(Document(children=[Table(rows=[TableRow(cells=cells)])]))
+        self.assertIn("Text before: Left\nText after: Right", prompt)
+
+    def test_image_in_a_list(self):
+        from textconverter.ast import Document, Image, ListBlock, ListItem, Paragraph, Text
+        items = [ListItem(children=[Paragraph(children=[Text(content="First")])]),
+                 ListItem(children=[Paragraph(children=[Image(src=self.path)])])]
+        (prompt,) = self._prompts(Document(children=[ListBlock(ordered=False, items=items)]))
+        self.assertIn("Text before: First", prompt)
+
+    def test_copies_take_the_first_context(self):
+        from textconverter.ast import Document, Image, Paragraph, Text
+        doc = Document(children=[Paragraph(children=[Text(content="One"), Image(src=self.path)]),
+                                 Paragraph(children=[Text(content="Two"), Image(src=self.path)])])
+        (prompt,) = self._prompts(doc)
+        self.assertIn("Text before: One\nText after: Two", prompt)
+
+    def test_no_text_leaves_the_prompt_alone(self):
+        (prompt,) = self._prompts(_doc_with_images(1))
+        self.assertEqual(prompt, _config().ai.prompts["photo_drawing_or_comic"])
+
+    def test_no_context_setting(self):
+        cfg = _config()
+        cfg.ai.description_context = 0
+        (prompt,) = self._prompts(self._report(), config=cfg)
+        self.assertEqual(prompt, cfg.ai.prompts["photo_drawing_or_comic"])
+
+    def test_extracted_text_stays(self):
+        cfg = _config()
+        cfg.ai.provide_extracted_text_to_describer = True
+        (prompt,) = self._prompts(self._report(extracted_text="Text of the vector."), config=cfg)
+        self.assertIn("Text of the vector.", prompt)
+        self.assertIn("Section: Machines", prompt)
+
+    def test_without_split_pages_descriptions_stay_before_ocr(self):
+        """Nothing is read for a figure there, so reordering would only cost a model swap."""
+        from textconverter.ast import Image, Paragraph
+        doc = self._report()
+        doc.children.append(Paragraph(children=[Image(src=_copies(2)[1])]))
+        self._prompts(doc, categories=("photo_drawing_or_comic", "table"))
+        self.assertEqual(self.models, ["cls", "cls", "desc", "ocr"])
 
 
 class TestThinking(BaseConverterTest):
