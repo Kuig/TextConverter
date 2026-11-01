@@ -25,7 +25,13 @@ Loading is tolerant: a missing key takes its default, and an unknown key, or a s
       "document_scan": "Text Recognition:"
     },
     "classification_temperature": 0,
-    "ocr_temperature": 0
+    "ocr_temperature": 0,
+    "description_thinking": false,
+    "description_max_tokens": 4096,
+    "ocr_max_tokens": 4096,
+    "region_model": "gemma4:12b",
+    "region_prompt": "...",
+    "region_max_tokens": 1500
   },
   "html": {
     "site_cleanup": true,
@@ -38,7 +44,7 @@ Loading is tolerant: a missing key takes its default, and an unknown key, or a s
   },
   "ollama": {
     "url": "http://localhost:11434",
-    "timeout": 300,
+    "timeout": 600,
     "keep_alive": "15m",
     "context_size": 8192
   }
@@ -65,8 +71,16 @@ The file is split into three kinds of section:
 | `ocr_prompts` | `text`, `table`, `formula`, `document_scan` | OCR task prompt per category; its keys decide which categories are transcribed instead of described |
 | `classification_temperature` | `0` | Sampling temperature of the classification call; `null` leaves the model default |
 | `ocr_temperature` | `0` | Sampling temperature of the OCR call; `null` leaves the model default |
+| `description_thinking` | `false` | Leave thinking to the model in description calls; every other image call has it off |
+| `description_max_tokens` | `4096` | Limit of a description, thinking included; `null` means no limit |
+| `ocr_max_tokens` | `4096` | Limit of a transcription; `null` means no limit |
+| `region_model` | `"gemma4:12b"` | Vision model that labels the blocks of a page; empty turns regions off |
+| `region_prompt` | built-in | Prompt asking for a JSON object from tile number to label; `{count}` becomes the number of tiles |
+| `region_max_tokens` | `1500` | Limit of the labelling answer; `null` means no limit |
 
-Images are processed in three phases, one model each: every image is classified, then the non-OCR categories are described, then the OCR categories are transcribed. Each model is therefore loaded once per conversion, and an OCR model can sit next to the vision model without swapping on every image.
+Images are processed in phases, one model each: every image is classified, then pages are split into regions, then the non-OCR categories are described, then the OCR categories are transcribed. Each model is therefore loaded once per conversion, and an OCR model can sit next to the vision model without swapping on every image.
+
+A page is an image classified as `text` or `document_scan`. Its blocks are found with Pillow, and a page of plain text stops there, with no model involved. Otherwise `region_model` labels the blocks, shown to it as numbered tiles on one contact sheet, and a page with more than one kind of content is split: runs of text, tables and formulas are transcribed, the other regions are described and kept as files. Any failure leaves the page whole. Locating content is left to Pillow because the small vision models place boxes too loosely to crop from. The labels need a model of at least the size of `gemma4:12b`: `gemma4:e2b` answers with text copied from the tiles. Thinking stays off in the labelling call, where it can use up the token limit before any answer.
 
 With Ollama, the resolution at which Gemma 4 reads an image is chosen by the server from the image's size; it cannot be configured.
 

@@ -34,6 +34,7 @@ TextConverter/
     ├── _net.py                      ← Outbound HTTP(S) helper; single point of TLS trust-store config
     ├── image_describer.py           ← AI-assisted image classification and description
     ├── images.py                    ← Image passes: download, path resolution, embed, remove; link unwrapping
+    ├── regions.py                   ← Page segmentation with Pillow: blocks, reading order, contact sheet, crops
     ├── logger.py                    ← Dual-backend logger (console / Streamlit)
     ├── mcp_tools.py                 ← MCP tool definitions
     ├── options.py                   ← ConvertOptions dataclass (validated conversion options)
@@ -75,7 +76,7 @@ All four interfaces are thin wrappers around the same `convert()`/`convert_text(
 
 ## Cross-cutting concerns
 
-**AI image description** (`image_describer.py`): when `image_handling` requires it, the images are processed in three phases, one model per phase so that each is loaded once: every image is classified (photo, diagram, text, table, formula, chart, infographic, document scan, logo, map), then the non-text ones are described with a category-specific prompt, then text, tables, formulas and scans are transcribed by a dedicated OCR model (GLM-OCR). An image file shown several times is processed once. OCR answers, which may hold HTML tables, are parsed by `parsers/transcription_parser.py`, the same path image inputs take. All calls go through `unified_ai_client`'s `call_ai()`/`preload_model()`/`configure_provider()`.
+**AI image description** (`image_describer.py`): when `image_handling` requires it, the images are processed in phases, one model per phase so that each is loaded once: every image is classified (photo, diagram, text, table, formula, chart, infographic, document scan, logo, map), then pages holding more than text are split into regions, then the non-text ones are described with a category-specific prompt, then text, tables, formulas and scans are transcribed by a dedicated OCR model (GLM-OCR). Models name what they see better than they locate it, so `regions.py`, which calls no model, finds the blocks of a page with Pillow and shows them as numbered tiles on a contact sheet for one labelling call; a split page is replaced in the document by its regions, as ordinary nodes, and its figures are kept as files. An image file shown several times is processed once. OCR answers, which may hold HTML tables, are parsed by `parsers/transcription_parser.py`, the same path image inputs take. All calls go through `unified_ai_client`'s `call_ai()`/`preload_model()`/`configure_provider()`.
 
 **Configuration** (`config.py`): `config.json` is loaded into typed dataclasses (`AppConfig`/`AiConfig`/`HtmlConfig`/`WikipediaCleanupConfig`), resolved in priority order CWD, then package root, then built-in defaults, so the app always starts even without a `config.json` present. Provider connection settings (e.g. the `"ollama"` block) intentionally stay a plain `dict`: their shape is provider-specific and owned by `unified_ai_client`, not by TextConverter.
 

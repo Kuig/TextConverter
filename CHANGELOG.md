@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pages that mix text and figures are split into regions. A `text` or `document_scan` image holding more than text has its
+  blocks found with Pillow and labelled by a vision model on one contact sheet: runs of text and tables are transcribed, while
+  photos, diagrams and charts are described and kept as files in the image folder, all in reading order. Raster PDF pages and
+  image sources get the same treatment. `ai.region_model` (default `gemma4:12b`) turns it on; empty turns it off. A page of plain
+  text is recognized without a model and costs no extra call.
+- An image source leaves `<output stem>_regions.png` next to the output of `save_to_file()`: the image with what the AI found in
+  it, to check a detection by eye.
+- `ai.description_thinking`, off by default, leaves thinking to the model in description calls.
+- `ai.description_max_tokens` and `ai.ocr_max_tokens`, 4096 by default: a model that loops stops there instead of running until the
+  timeout.
+
+### Changed
+
+- The AI calls of image processing no longer think, unless `ai.description_thinking` is set: thinking cost minutes without
+  giving better classifications.
+- The default Ollama `timeout` goes from 300 to 600 seconds.
+- A described image embedded as a data URL shows the image instead of a reference line holding the whole file.
+
 ### Removed
 
 - The `ai.classification_visual_token_budget` and `ai.description_visual_token_budget` settings: Ollama has no such option, ignores

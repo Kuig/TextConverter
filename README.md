@@ -47,7 +47,7 @@ The `--image-handling` option (or the `image_handling` parameter in the API) det
 
 ### Supported Strategies
 
-* **`describe`**: AI-powered analysis and description. Classifies every image, then describes photos, diagrams, charts and the like with the description model, and transcribes text, tables, formulas and page scans with the OCR model (GLM-OCR by default; without one, the description model transcribes them). The calls are grouped by model, so each model is loaded once per conversion, and an image file shown several times is processed once. In the output, each image becomes a reference line followed by its description between `----- Start/End of picture description -----` markers (an image inside a link, a table cell or a heading keeps the reference line there, and its description follows the paragraph, table or heading; a figure's caption follows the description); tables, formulas and formatting in the answer become real tables, equations and text in every format (JSON output keeps the image node with its `description` and `category`).
+* **`describe`**: AI-powered analysis and description. Classifies every image, splits pages that mix text and figures into regions, then describes photos, diagrams, charts and the like with the description model, and transcribes text, tables, formulas and page scans with the OCR model (GLM-OCR by default; without one, the description model transcribes them). The calls are grouped by model, so each model is loaded once per conversion, and an image file shown several times is processed once. In the output, each image becomes a reference line followed by its description between `----- Start/End of picture description -----` markers (an image inside a link, a table cell or a heading keeps the reference line there, and its description follows the paragraph, table or heading; a figure's caption follows the description); tables, formulas and formatting in the answer become real tables, equations and text in every format (JSON output keeps the image node with its `description` and `category`).
 * **`embed`**: Base64 inline embedding. Reads local or downloaded images from disk, guesses their MIME types, and encodes their binary data into inline Data URLs (`data:image/...;base64,...`). Perfect for creating self-contained documents (like HTML): downloaded and PDF-extracted images only pass through a temporary folder, so no image folder is left next to the output. LaTeX cannot hold an image in its text: there `embed` acts as `link`, with a warning.
 * **`link`**: File-based referencing. Preserves or downloads images, sanitizing their filenames, and references them using standard relative paths (`![alt](path)` in Markdown, `<img>` in HTML, `\includegraphics{...}` in LaTeX). No AI processing is executed.
 * **`discard`**: Total removal. Strips all `Image` nodes from the AST, with their captions and any link left empty, omitting them entirely from the final rendered output.
@@ -67,6 +67,8 @@ When set to `auto` (the default), the tool dynamically maps the strategy based o
   - If the image is classified as any other type (e.g., diagrams or photos), the AI description is skipped to conserve resources, and standard `\includegraphics{...}` markup is rendered.
 
 * **Excel output (`.xlsx`)**: Resolves to **`embed`**; an image in a table cell is anchored to that cell.
+
+Whatever the output, a page holding more than text (a scan, a raster PDF page, an image file) is split into regions when `ai.region_model` is set: its text is transcribed and its figures are described and kept in the image folder, in reading order. With an image file as the source, `<output stem>_regions.png` next to the output shows what the AI found in it. To check an image classified badly inside a document, convert that image on its own.
 
 * **CSV output**: Resolves to **`discard`**: CSV holds text only.
 
@@ -108,7 +110,7 @@ textconverter convert https://example.com DocsOutput/example.md --extract-html
 textconverter convert https://en.wikipedia.org/wiki/Modena DocsOutput/modena.md --extract-html
 #   ...add --no-site-cleanup to fall back to generic extraction, or --discard-links to drop hyperlinks
 
-# Scanned PDF: render every page and transcribe it with AI (classification, then OCR or description)
+# Scanned PDF: render every page and transcribe it with AI (classification, regions, then OCR or description)
 textconverter convert DocsInput/scan.pdf DocsOutput/scan.md --pdf-mode raster
 
 # Any source to Word (images embedded, equations kept as LaTeX text, real footnotes)

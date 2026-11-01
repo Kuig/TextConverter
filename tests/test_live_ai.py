@@ -20,6 +20,7 @@ from _support import INPUT_DIR, setUpModule, tearDownModule
 LIVE_ENV = "TEXTCONVERTER_LIVE_AI"
 FIXTURES = {name: str(INPUT_DIR / name) for name in
             ("Foto.jpg", "OcrText.png", "OcrTable.png", "OcrFormula.png")}
+ARTICLE = str(INPUT_DIR / "Article_image.png")
 
 
 def _provider_answers(config) -> bool:
@@ -102,6 +103,23 @@ class TestLivePhases(LiveAiTest):
         self.assertEqual(len(preloaded), len(set(preloaded)), preloaded)
         summary = {img.src: (img.category, img.description) for img in images}
         self.assertTrue(all(img.description for img in images), summary)
+
+
+class TestLiveRegions(LiveAiTest):
+
+    def test_page_splits_into_text_and_figures(self):
+        """A page with two photos: text and photos come apart, and the overlay shows them."""
+        import textconverter
+        from _support import OUTPUT_DIR
+        OUTPUT_DIR.mkdir(exist_ok=True)
+        if not self.config.ai.region_model:
+            self.skipTest("no region_model configured")
+        output = OUTPUT_DIR / "live_regions.md"
+        written = textconverter.save_to_file(ARTICLE, str(output), config=self.config)
+        self.assertIn(str(OUTPUT_DIR / "live_regions_regions.png"), written)
+        markdown = output.read_text(encoding="utf-8")
+        self.assertIn("Castegnato", markdown, markdown[:500])
+        self.assertIn("live_regions_images/", markdown, markdown[:500])
 
 
 class TestLiveRasterPdf(LiveAiTest):
