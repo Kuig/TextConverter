@@ -241,6 +241,17 @@ class TestRegions(BaseConverterTest):
         self.assertEqual(len(self.saved), 2)
         self.assertTrue(all(data.startswith(b"\x89PNG") for data in self.saved))
 
+    def test_only_transcribed_crops_have_a_margin(self):
+        """A margin lets a line of text into a figure, and the model reads it as part of the picture."""
+        from textconverter.image_describer import _REGION_PADDING
+        from textconverter.regions import Crop, crop_image
+        with patch("textconverter.image_describer.crop_image", wraps=crop_image) as spy:
+            self._run(self._fake())
+        paddings = {c.args[1].box.label: c.args[2] for c in spy.call_args_list}
+        self.assertEqual(paddings, {"text": _REGION_PADDING, "photo_drawing_or_comic": 0})
+        figures = [c.args[1].box for c in spy.call_args_list if c.args[2] == 0]
+        self.assertEqual(self.saved, [crop_image(ARTICLE, Crop(box), 0) for box in figures])
+
     def test_text_runs_are_read_at_once(self):
         """Consecutive text blocks take one OCR call, not one each."""
         fake = self._fake()

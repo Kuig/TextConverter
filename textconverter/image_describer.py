@@ -20,7 +20,8 @@ LATEX_AUTO_CATEGORIES = ("text", "table", "formula")
 PAGE_CATEGORIES = ("text", "document_scan")
 # The labels the default ``region_prompt`` offers; a region's label is its category.
 REGION_LABELS = ("text", "table", "formula", "photo_drawing_or_comic", "diagram", "chart", "map", "logo_or_icon")
-# Margin around a crop, of the image's side: blocks are cut tight to the ink.
+# Margin around a transcribed crop, of the image's side: blocks are cut tight to the ink, and
+# what lies next to them is blanked. A figure gets none: the model reads a neighbour into it.
 _REGION_PADDING = 0.01
 
 # Writes a crop's PNG bytes where the output keeps its images; returns the ``src`` for the Image.
@@ -187,8 +188,9 @@ def _plan_split(img: Image, img_path: str, blocks: list[Block], tmp_dir: str, co
         regions = []
         for number, crop in enumerate(plan_crops(planned, ai.ocr_prompts)):
             path = os.path.join(tmp_dir, f"region_{id(img)}_{number}.png")
+            padding = _REGION_PADDING if crop.box.label in ai.ocr_prompts else 0
             with open(path, "wb") as f:
-                f.write(crop_image(img_path, crop, _REGION_PADDING))
+                f.write(crop_image(img_path, crop, padding))
             regions.append(Image(src=path, alt=img.alt, category=crop.box.label, render_metadata=img.render_metadata))
     except (OSError, ValueError) as exc:
         log_warning(f"Could not split {img_path} into regions, keeping the page whole: {exc}")
