@@ -3,6 +3,7 @@
 Usage: python -m unittest discover -s tests -p "test_image_describer.py"
 """
 from __future__ import annotations
+import json
 import shutil
 from unittest.mock import MagicMock, patch
 
@@ -157,6 +158,204 @@ class TestPhasedProcessing(BaseConverterTest):
             process_images(_doc_with_images(1), "", latex_auto=True, config=_config())
             with self.assertRaises(ImportError):
                 process_images(_doc_with_images(1), "", config=_config())
+
+
+ARTICLE = str(INPUT_DIR / "Article_image.png")
+
+
+def _region_config():
+    cfg = _config()
+    cfg.ai.region_model = "region"
+    return cfg
+
+
+def _labels(path: str = ARTICLE) -> str:
+    """A model's answer for a page: dense blocks are photos, the rest text."""
+    from textconverter.regions import find_blocks
+    return json.dumps({str(number): "photo_drawing_or_comic" if block.dense else "text"
+                       for number, block in enumerate(find_blocks(path), 1)})
+
+
+class TestRegions(BaseConverterTest):
+
+    def setUp(self):
+        super().setUp()
+        self.saved: list[bytes] = []
+
+    def _save(self, data: bytes) -> str:
+        self.saved.append(data)
+        return f"images/crop_{len(self.saved)}.png"
+
+    def _doc(self, *paths):
+        from textconverter.ast import Document, Image, Paragraph
+        return Document(children=[Paragraph(children=[Image(src=path, alt="page")]) for path in paths or (ARTICLE,)])
+
+    def _run(self, fake, doc=None, config=None, save_crop="default", **kwargs):
+        from textconverter.image_describer import process_images
+        doc = doc or self._doc()
+        self.call = MagicMock(side_effect=fake)
+        with patch("unified_ai_client.call_ai", self.call), patch("unified_ai_client.preload_model") as preload:
+            process_images(doc, "", config=config or _region_config(),
+                           save_crop=self._save if save_crop == "default" else save_crop, **kwargs)
+        self.preloaded = [c.args[1] for c in preload.call_args_list]
+        return doc
+
+    def _fake(self, categories=("document_scan",), region=None, ocr="Some text.", desc="A photo."):
+        return FakeAi(list(categories), {"region": _labels() if region is None else region, "desc": desc, "ocr": ocr})
+
+    def test_phases_stay_grouped_by_model(self):
+        """Classification, then labels, then descriptions and OCR on the regions: each model loads once."""
+        fake = self._fake()
+        self._run(fake)
+        models = [m for m, _ in fake.calls]
+        self.assertEqual(models[:2], ["cls", "region"])
+        self.assertEqual(models, sorted(models, key=["cls", "region", "desc", "ocr"].index))
+        self.assertEqual(self.preloaded, ["cls", "region", "desc", "ocr"])
+
+    def test_labelling_call_has_the_tile_count_and_no_thinking(self):
+        from textconverter.regions import find_blocks
+        self._run(self._fake())
+        (call,) = [c for c in self.call.call_args_list if c.kwargs["model"] == "region"]
+        self.assertIn(f"exactly {len(find_blocks(ARTICLE))} separate tiles", call.kwargs["prompt"])
+        self.assertIs(call.kwargs["thinking"], False)
+        self.assertEqual(call.kwargs["max_tokens"], 1500)
+        self.assertTrue(call.kwargs["format_json"])
+
+    def test_page_is_replaced_by_its_regions_in_reading_order(self):
+        from textconverter.ast import Image, Paragraph, Text
+        doc = self._run(self._fake())
+        kinds = [type(n.children[0]).__name__ for n in doc.children]
+        self.assertEqual(kinds, ["Text", "Image", "Text", "Image"])
+        self.assertEqual(doc.children[0], Paragraph(children=[Text(content="Some text.")]))
+        photo = doc.children[1].children[0]
+        self.assertIsInstance(photo, Image)
+        self.assertEqual((photo.src, photo.category, photo.description, photo.alt),
+                         ("images/crop_1.png", "photo_drawing_or_comic", "A photo.", "page"))
+
+    def test_only_what_is_not_transcribed_is_stored(self):
+        self._run(self._fake())
+        self.assertEqual(len(self.saved), 2)
+        self.assertTrue(all(data.startswith(b"\x89PNG") for data in self.saved))
+
+    def test_text_runs_are_read_at_once(self):
+        """Consecutive text blocks take one OCR call, not one each."""
+        fake = self._fake()
+        self._run(fake)
+        self.assertEqual(len([m for m, _ in fake.calls if m == "ocr"]), 2)
+
+    def test_failed_transcription_keeps_the_crop(self):
+        """Text that could not be read stays in the document as an image."""
+        doc = self._run(self._fake(ocr=""))
+        self.assertEqual(len(self.saved), 4)
+        self.assertEqual(doc.children[0].children[0].category, "text")
+
+    def test_without_storage_a_description_stays_as_text(self):
+        from textconverter.ast import Text
+        doc = self._run(self._fake(), save_crop=None)
+        self.assertEqual(doc.children[1].children, [Text(content="A photo.")])
+
+    def test_no_region_model_means_no_regions(self):
+        config = _region_config()
+        config.ai.region_model = ""
+        fake = self._fake()
+        doc = self._run(fake, config=config)
+        self.assertEqual([m for m, _ in fake.calls], ["cls", "ocr"])
+        self.assertEqual(doc.children[0].children[0].src, ARTICLE)
+
+    def test_other_categories_are_not_looked_at(self):
+        fake = self._fake(categories=["infographic_or_depliant"])
+        self._run(fake)
+        self.assertEqual([m for m, _ in fake.calls], ["cls", "desc"])
+        self.assertNotIn("region", self.preloaded)
+
+    def test_plain_text_page_loads_no_region_model(self):
+        """Pillow alone can tell, so a page of text costs no call and no model load."""
+        import pymupdf
+        path = str(OUTPUT_DIR / "regions_text_page.png")
+        OUTPUT_DIR.mkdir(exist_ok=True)
+        with pymupdf.open(INPUT_DIR / "Journal PDF.pdf") as pdf:
+            pdf[0].get_pixmap(dpi=200).save(path)
+        fake = self._fake()
+        self._run(fake, doc=self._doc(path))
+        self.assertEqual([m for m, _ in fake.calls], ["cls", "ocr"])
+        self.assertNotIn("region", self.preloaded)
+
+    def test_unusable_labels_leave_the_page_as_it_was(self):
+        """A partial or broken answer gives the behaviour with no regions."""
+        for answer in ("not json", '{"1": "text"}'):
+            fake = self._fake(region=answer)
+            doc = self._run(fake)
+            self.assertEqual([m for m, _ in fake.calls], ["cls", "region", "ocr"])
+            self.assertEqual(doc.children[0].children[0].description, "Some text.")
+
+    def test_one_kind_of_content_leaves_the_page_whole(self):
+        from textconverter.regions import find_blocks
+        labels = json.dumps({str(n): "text" for n in range(1, len(find_blocks(ARTICLE)) + 1)})
+        fake = self._fake(region=labels)
+        doc = self._run(fake)
+        self.assertEqual([m for m, _ in fake.calls], ["cls", "region", "ocr"])
+        self.assertEqual(doc.children[0].children[0].src, ARTICLE)
+
+    def test_failed_labelling_call_leaves_the_page_whole(self):
+        doc = self._run(self._fake(region=""))
+        self.assertEqual(doc.children[0].children[0].category, "document_scan")
+
+    def test_each_copy_of_a_file_gets_the_regions(self):
+        """A file shown twice is processed once; both places get their own nodes."""
+        fake = self._fake()
+        doc = self._run(fake, doc=self._doc(ARTICLE, ARTICLE))
+        self.assertEqual(len(doc.children), 8)
+        self.assertEqual(len([m for m, _ in fake.calls if m == "region"]), 1)
+        self.assertEqual(doc.children[1], doc.children[5])
+        self.assertIsNot(doc.children[1].children[0], doc.children[5].children[0])
+
+    def test_latex_auto_keeps_figures_as_plain_images(self):
+        from textconverter.ast import Image
+        fake = self._fake()
+        doc = self._run(fake, latex_auto=True)
+        self.assertNotIn("desc", [m for m, _ in fake.calls])
+        self.assertEqual(len(self.saved), 2)
+        photo = doc.children[1].children[0]
+        self.assertIsInstance(photo, Image)
+        self.assertIsNone(photo.description)
+
+    def test_render_metadata_reaches_the_regions(self):
+        from textconverter.ast import Document, Image, Paragraph
+        doc = Document(children=[Paragraph(children=[Image(src=ARTICLE, render_metadata=False)])])
+        self._run(self._fake(), doc=doc)
+        self.assertFalse(doc.children[1].children[0].render_metadata)
+
+    def test_in_a_table_cell_the_image_stays_and_regions_follow(self):
+        from textconverter.ast import Document, Image, Table, TableCell, TableRow
+        cell = TableCell(children=[Image(src=ARTICLE)])
+        doc = Document(children=[Table(rows=[TableRow(cells=[cell])])])
+        self._run(self._fake(), doc=doc)
+        self.assertEqual(cell.children[0].src, ARTICLE)
+        self.assertEqual(len(doc.children), 5)
+
+    def test_regions_lower_to_text_in_every_format(self):
+        """A stored crop is an ordinary described image for the renderers."""
+        from textconverter.images import lower_image_descriptions
+        from textconverter.renderers.markdown_renderer import render_markdown
+        doc = self._run(self._fake())
+        lower_image_descriptions(doc)
+        markdown = render_markdown(doc)
+        self.assertLess(markdown.index("Some text."), markdown.index("images/crop_1.png"))
+        self.assertIn("A photo.", markdown)
+
+    def test_transcribe_images_uses_the_regions(self):
+        from textconverter.image_describer import transcribe_images
+        fake = self._fake()
+        with patch("unified_ai_client.call_ai", side_effect=fake), patch("unified_ai_client.preload_model"):
+            doc = transcribe_images([ARTICLE], config=_region_config(), save_crop=self._save)
+        self.assertEqual([type(n.children[0]).__name__ for n in doc.children], ["Text", "Image", "Text", "Image"])
+
+    def test_description_and_ocr_have_a_token_limit(self):
+        from textconverter.config import AppConfig
+        ai = AppConfig().ai
+        self._run(self._fake())
+        limits = {c.kwargs["model"]: c.kwargs["max_tokens"] for c in self.call.call_args_list}
+        self.assertEqual((limits["desc"], limits["ocr"]), (ai.description_max_tokens, ai.ocr_max_tokens))
 
 
 class TestTranscribeImages(BaseConverterTest):

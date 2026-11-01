@@ -43,7 +43,7 @@ def _filetypes(formats: dict, all_label: str | None) -> list[tuple[str, str]]:
 INPUT_FILETYPES = _filetypes(INPUT_FORMATS, "All Supported Files")
 OUTPUT_FILETYPES = _filetypes(OUTPUT_FORMATS, None)
 # Session keys of the AI selection, each mirroring the AiConfig field of the same name.
-MODEL_KEYS = ("classification_model", "description_model", "ocr_model")
+MODEL_KEYS = ("classification_model", "description_model", "ocr_model", "region_model")
 NO_OCR_LABEL = "(none: description model transcribes)"
 CONTEXT_SIZES = (4096, 8192, 16384, 32768, 65536, 131072, 262144)
 
@@ -205,6 +205,7 @@ with st.sidebar:
         _model_picker("Classification model", "classification_model", provider)
         _model_picker("Description model", "description_model", provider)
         _model_picker("OCR model", "ocr_model", provider, optional=True)
+        _model_picker("Region model", "region_model", provider, optional=True)
         _context_size_picker()
         col_refresh, col_save = st.columns(2)
         with col_refresh:

@@ -98,9 +98,10 @@ class BaseConverterTest(unittest.TestCase):
 class FakeAi:
     """Stands in for ``call_ai``: classifies images in order, then answers per model.
 
-    JSON-mode calls (classification) return the next category; other calls
-    return the answer keyed by prompt, else by model, else "". Every
-    (model, prompt) pair is recorded so tests can check routing and ordering.
+    JSON-mode calls (classification) return the next category, unless their
+    model has an answer of its own (region labels); other calls return the
+    answer keyed by prompt, else by model, else "". Every (model, prompt)
+    pair is recorded so tests can check routing and ordering.
     """
 
     def __init__(self, categories: list[str], answers: dict[str, str]):
@@ -110,7 +111,7 @@ class FakeAi:
 
     def __call__(self, **kwargs):
         self.calls.append((kwargs["model"], kwargs["prompt"]))
-        if kwargs.get("format_json"):
+        if kwargs.get("format_json") and kwargs["model"] not in self.answers:
             text = f'{{"category": "{next(self.categories)}"}}'
         else:
             text = self.answers.get(kwargs["prompt"], self.answers.get(kwargs["model"], ""))

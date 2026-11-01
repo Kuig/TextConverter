@@ -57,6 +57,19 @@ _DEFAULT_OCR_PROMPTS: dict[str, str] = {
     "document_scan": "Text Recognition:",
 }
 
+# ``{count}`` becomes the number of tiles; ``str.format`` would trip on the JSON braces.
+_DEFAULT_REGION_PROMPT = (
+    "This image is a contact sheet of exactly {count} separate tiles cut from one page, each with "
+    "its number in a black tag above it, numbered 1 to {count}. Classify each tile by what it shows. "
+    "Reply ONLY with a JSON object of the form {\"1\": \"text\", \"2\": \"table\"}, no markdown, with "
+    "exactly the {count} keys from 1 to {count}. Each value must be exactly one of: text, table, "
+    "formula, photo_drawing_or_comic, diagram, chart, map, logo_or_icon. Never write any other word "
+    "as a value and never copy text from the image. Use text for titles, paragraphs and captions, "
+    "also when a paragraph contains a formula; use formula only for a tile that shows nothing but a "
+    "formula; table for rows and columns of data; logo_or_icon for logos, icons and QR codes. Text "
+    "inside a figure belongs to the figure, so a tile with a figure and its labels is still a figure."
+)
+
 # Images and answer share the window: an A3 page at 200 DPI alone takes about 4k tokens.
 DEFAULT_CONTEXT_SIZE = 8192
 
@@ -77,7 +90,13 @@ class AiConfig:
     Images whose category is a key of ``ocr_prompts`` are transcribed rather
     than described: by ``ocr_model`` with the matching OCR prompt when it is
     set, otherwise by ``description_model`` with the category's entry in
-    ``prompts``. A temperature of ``None`` leaves the model default in place.
+    ``prompts``. A temperature of ``None`` leaves the model default in place,
+    and so does a token limit of ``None``; a limit stops a model that loops, and
+    it also counts the tokens a model spends thinking.
+
+    Pages (``text`` and ``document_scan`` images) holding more than text are
+    split into regions when ``region_model`` is set: it labels the blocks of
+    the page, shown to it on a contact sheet.
     """
 
     provider: str = "ollama"
@@ -90,6 +109,11 @@ class AiConfig:
     ocr_prompts: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_OCR_PROMPTS))
     classification_temperature: float | None = 0.0
     ocr_temperature: float | None = 0.0
+    description_max_tokens: int | None = 4096
+    ocr_max_tokens: int | None = 4096
+    region_model: str = "gemma4:12b"
+    region_prompt: str = _DEFAULT_REGION_PROMPT
+    region_max_tokens: int | None = 1500
 
 
 @dataclass

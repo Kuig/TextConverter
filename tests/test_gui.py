@@ -26,6 +26,7 @@ class _Info:
 PROVIDERS = [_Info(name="ollama", file_types=frozenset({"image"})),
              _Info(name="script", file_types=frozenset())]
 MODELS = [_Info(id="gemma4:e2b", file_types=frozenset({"image"}), embeddings=False),
+          _Info(id="gemma4:12b", file_types=frozenset({"image"}), embeddings=False),
           _Info(id="glm-ocr:latest", file_types=frozenset({"image"}), embeddings=False),
           _Info(id="embed:1b", file_types=frozenset(), embeddings=True)]
 
@@ -49,7 +50,7 @@ class TestGui(BaseConverterTest):
         app = self._run()
         self.assertEqual(self._selectbox(app, "Provider").options, ["ollama"])
         self.assertEqual(self._selectbox(app, "Description model").options,
-                         ["gemma4:e2b", "glm-ocr:latest"])
+                         ["gemma4:e2b", "gemma4:12b", "glm-ocr:latest"])
 
     def test_plain_ollama_name_matches_latest_tag(self):
         """config.json's 'glm-ocr' selects the listed 'glm-ocr:latest' without a warning."""

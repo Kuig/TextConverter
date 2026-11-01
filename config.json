@@ -26,7 +26,12 @@
       "document_scan": "Text Recognition:"
     },
     "classification_temperature": 0,
-    "ocr_temperature": 0
+    "ocr_temperature": 0,
+    "description_max_tokens": 4096,
+    "ocr_max_tokens": 4096,
+    "region_model": "gemma4:12b",
+    "region_prompt": "This image is a contact sheet of exactly {count} separate tiles cut from one page, each with its number in a black tag above it, numbered 1 to {count}. Classify each tile by what it shows. Reply ONLY with a JSON object of the form {\"1\": \"text\", \"2\": \"table\"}, no markdown, with exactly the {count} keys from 1 to {count}. Each value must be exactly one of: text, table, formula, photo_drawing_or_comic, diagram, chart, map, logo_or_icon. Never write any other word as a value and never copy text from the image. Use text for titles, paragraphs and captions, also when a paragraph contains a formula; use formula only for a tile that shows nothing but a formula; table for rows and columns of data; logo_or_icon for logos, icons and QR codes. Text inside a figure belongs to the figure, so a tile with a figure and its labels is still a figure.",
+    "region_max_tokens": 1500
   },
   "html": {
     "site_cleanup": true,
