@@ -76,7 +76,7 @@ DEFAULT_CONTEXT_SIZE = 8192
 _DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
     "ollama": {
         "url": "http://localhost:11434",
-        "timeout": 300,
+        "timeout": 600,
         "keep_alive": "15m",
         "context_size": DEFAULT_CONTEXT_SIZE,
     },
@@ -92,7 +92,9 @@ class AiConfig:
     set, otherwise by ``description_model`` with the category's entry in
     ``prompts``. A temperature of ``None`` leaves the model default in place,
     and so does a token limit of ``None``; a limit stops a model that loops, and
-    it also counts the tokens a model spends thinking.
+    it also counts the tokens a model spends thinking. Thinking is left to the
+    model only in descriptions, if ``description_thinking`` is set: elsewhere,
+    and by default there too, it costs minutes without a better answer.
 
     Pages (``text`` and ``document_scan`` images) holding more than text are
     split into regions when ``region_model`` is set: it labels the blocks of
@@ -109,6 +111,7 @@ class AiConfig:
     ocr_prompts: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_OCR_PROMPTS))
     classification_temperature: float | None = 0.0
     ocr_temperature: float | None = 0.0
+    description_thinking: bool = False
     description_max_tokens: int | None = 4096
     ocr_max_tokens: int | None = 4096
     region_model: str = "gemma4:12b"

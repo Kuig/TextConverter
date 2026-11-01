@@ -5,6 +5,7 @@ import tempfile
 from ..ast import Document, Image, walk
 from ..config import AppConfig
 from ..formats import PDF_MODES, check_choice
+from ..images import ImageStore
 from ..logger import log_action, log_warning
 from .markdown_parser import parse_markdown
 
@@ -49,7 +50,8 @@ def parse_pdf(
         code_parsing: Enable heuristic code-block detection (``text`` mode only).
         output_dir: Base directory for extracted images (current directory if None).
         image_dir_name: Image subdirectory name inside ``output_dir``.
-        write_images: Extract embedded images (``text`` mode only).
+        write_images: Extract embedded images, or keep the crops of the regions
+            of a page in ``raster`` mode.
 
     Raises:
         ValueError: If ``pdf_mode`` is not one of ``formats.PDF_MODES``.
@@ -57,7 +59,7 @@ def parse_pdf(
     """
     check_choice("pdf_mode", pdf_mode, PDF_MODES)
     if pdf_mode == "raster":
-        return _parse_raster(file_path, output_dir, image_dir_name, config)
+        return _parse_raster(file_path, output_dir, image_dir_name, config, write_images)
 
     pymupdf4llm = _import_pymupdf4llm()
 
@@ -101,13 +103,15 @@ def _parse_raster(
     output_dir: str | None,
     image_dir_name: str | None,
     config: AppConfig,
+    write_images: bool,
 ) -> Document:
     """Render each page to an image and let the AI describer transcribe the pages.
 
-    Pages go through the whole image pipeline (classification, then OCR or
-    description), batched so each model loads once. The page images live in a
-    temporary folder; a page that could not be transcribed is kept as an image
-    in the output image folder, so the content is not lost.
+    Pages go through the whole image pipeline (classification, regions, then
+    OCR or description), batched so each model loads once. The page images
+    live in a temporary folder; a page that could not be transcribed is kept
+    as an image in the output image folder, so the content is not lost, and
+    so are the figures cut out of a page.
     """
     import pymupdf
     from ..image_describer import ai_client_available, transcribe_images
@@ -127,7 +131,8 @@ def _parse_raster(
                 page.get_pixmap(dpi=RASTER_DPI).save(path)
                 page_paths.append(path)
 
-        doc = transcribe_images(page_paths, config=config)
+        save_crop = ImageStore(output_dir, image_dir_name).save_png if write_images else None
+        doc = transcribe_images(page_paths, config=config, save_crop=save_crop)
 
         keep_dir = os.path.join(output_dir or os.getcwd(), image_dir_name or "")
         for node in walk(doc):

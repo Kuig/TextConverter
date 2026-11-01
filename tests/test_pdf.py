@@ -62,7 +62,7 @@ class TestRasterMode(BaseConverterTest):
         """One rendered page per PDF page, passed in order; the answers form the document."""
         seen = []
 
-        def fake(paths, config=None):
+        def fake(paths, config=None, save_crop=None):
             seen.extend(paths)
             self.assertTrue(all(os.path.exists(p) for p in paths))
             return Document(children=[Paragraph(children=[Text(content=os.path.basename(p))]) for p in paths])
@@ -75,7 +75,7 @@ class TestRasterMode(BaseConverterTest):
 
     def test_failed_page_is_kept_as_image(self):
         """A page the describer could not transcribe stays as an image in the output folder."""
-        def fake(paths, config=None):
+        def fake(paths, config=None, save_crop=None):
             return Document(children=[Paragraph(children=[Image(src=paths[1])])])
 
         doc, img_dir = self._parse(fake)

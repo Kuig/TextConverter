@@ -14,7 +14,7 @@ from . import _net
 from .ast import Document, Table, walk
 from .code_detector import fence_code_paragraphs
 from .images import (
-    ImagePaths, discard_links, embed_images, lower_image_descriptions, neutralize_links, remove_images,
+    ImagePaths, ImageStore, discard_links, embed_images, lower_image_descriptions, neutralize_links, remove_images,
 )
 from .logger import log_action, log_warning
 
@@ -101,12 +101,14 @@ def _parse(
     image_dir_name: str | None = None,
     source_url: str | None = None,
     source_path: str | None = None,
+    overlay_path: str | None = None,
 ) -> Document:
     """Parse a source; a bibliography shown as macros becomes a node, as a LaTeX source gives it."""
     if path is not None:
         _check_file_format(path, from_format)
     doc = _read_source(from_format, options, config, text=text, path=path, output_dir=output_dir,
-                       image_dir_name=image_dir_name, source_url=source_url, source_path=source_path)
+                       image_dir_name=image_dir_name, source_url=source_url, source_path=source_path,
+                       overlay_path=overlay_path)
     if from_format in _MACRO_BIBLIOGRAPHY:
         lift_bibliography(doc)
     return doc
@@ -123,6 +125,7 @@ def _read_source(
     image_dir_name: str | None,
     source_url: str | None,
     source_path: str | None,
+    overlay_path: str | None,
 ) -> Document:
     """Run the parser for ``from_format``: binary formats read ``path``, the others ``text``."""
     if from_format == "pdf":
@@ -142,7 +145,8 @@ def _read_source(
         return parse_xlsx(path, output_dir=output_dir, image_dir_name=image_dir_name,
                           write_images=options.image_handling != "discard")
     if from_format == "image":
-        return parse_image(path, config=config)
+        return parse_image(path, config=config, output_dir=output_dir, image_dir_name=image_dir_name,
+                           write_images=options.image_handling != "discard", overlay_path=overlay_path)
     if from_format == "csv":
         return parse_csv(text)
     if from_format == "markdown":
@@ -202,14 +206,13 @@ def _image_folder(handling: str, output_dir: str | None, image_dir_name: str | N
 def _doc_dir(from_format: str, output_dir: str | None, source_path: str | None) -> str:
     """Directory the parsed document's relative image paths resolve against.
 
-    The PDF, Word, PowerPoint and Excel parsers write their images under ``output_dir`` (or the
-    current directory); an image source path is relative to the current directory;
-    a text source references images next to the source file; text given
-    directly resolves against the current directory.
+    The PDF, Word, PowerPoint, Excel and image parsers write their images under ``output_dir``
+    (or the current directory); a text source references images next to the source file;
+    text given directly resolves against the current directory.
     """
-    if from_format in ("pdf", "docx", "pptx", "xlsx"):
+    if from_format in ("pdf", "docx", "pptx", "xlsx", "image"):
         return output_dir or os.getcwd()
-    if source_path and from_format != "image":
+    if source_path:
         return os.path.dirname(os.path.abspath(source_path))
     return os.getcwd()
 
@@ -257,7 +260,9 @@ def _transform_and_render(
             transcribed = from_format == "image" or (from_format == "pdf" and options.pdf_mode == "raster")
             if handling in ("describe", "auto_latex") and not transcribed:
                 from .image_describer import process_images
-                process_images(doc, doc_dir, config=config, latex_auto=handling == "auto_latex")
+                # With these handlings the image folder is the output's, so the paths need no rewriting.
+                process_images(doc, doc_dir, config=config, latex_auto=handling == "auto_latex",
+                               save_crop=ImageStore(image_parent or out_dir, image_dir_name).save_png)
             elif handling == "embed":
                 embed_images(doc)
             paths.relativize(doc, out_dir)
@@ -389,15 +394,18 @@ def _convert(
     output_dir: str | None,
     image_dir_name: str | None,
     render: Render,
+    overlay_path: str | None = None,
 ) -> Any:
     """Parse a file or URL, transform it and pass the document to ``render`` (what ``convert`` does).
 
     ``render`` runs while the conversion's temporary image folder still
-    exists, so a renderer can read the images from disk.
+    exists, so a renderer can read the images from disk. An image source is
+    saved to ``overlay_path`` with what was found in it.
     """
     if _is_url(source):
         return _convert_url(source, from_format, to_format, options, config,
-                            output_dir=output_dir, image_dir_name=image_dir_name, render=render)
+                            output_dir=output_dir, image_dir_name=image_dir_name, render=render,
+                            overlay_path=overlay_path)
 
     if not os.path.isfile(source):
         raise FileNotFoundError(f"Source file not found: {source}")
@@ -407,7 +415,8 @@ def _convert(
             raise ValueError(f"Could not infer the input format from the extension of {source}; pass from_format.")
     with _image_folder(_image_handling(options, to_format), output_dir, image_dir_name) as (parent, name):
         if INPUT_FORMATS[from_format].binary:
-            doc = _parse(from_format, options, config, path=source, output_dir=parent, image_dir_name=name)
+            doc = _parse(from_format, options, config, path=source, output_dir=parent, image_dir_name=name,
+                         overlay_path=overlay_path)
         else:
             doc = _parse(from_format, options, config, text=_read_text(source, from_format), source_path=source)
         return _transform_and_render(doc, from_format, to_format, options, config,
@@ -448,6 +457,7 @@ def _convert_url(
     output_dir: str | None,
     image_dir_name: str | None,
     render: Render,
+    overlay_path: str | None,
 ) -> Any:
     """Download ``url`` and convert it; binary formats go through a temporary file."""
     log_action(f"Downloading remote source: {url}")
@@ -472,8 +482,8 @@ def _convert_url(
         with os.fdopen(fd, "wb") as f:
             f.write(download.data)
         with folder as (parent, name):
-            doc = _parse(from_format, options, config, path=temp_path,
-                         output_dir=parent, image_dir_name=name, source_url=url)
+            doc = _parse(from_format, options, config, path=temp_path, output_dir=parent, image_dir_name=name,
+                         source_url=url, overlay_path=overlay_path)
             return _transform_and_render(doc, from_format, to_format, options, config,
                                          output_dir=output_dir, image_parent=parent, image_dir_name=name,
                                          source_url=url, source_path=temp_path, render=render)
@@ -503,6 +513,7 @@ def _save_office(
     options: ConvertOptions,
     from_format: str | None,
     config: AppConfig | None,
+    overlay_path: str | None,
 ) -> None:
     """Write the converted ``source`` as a Word, PowerPoint or Excel file; the file appears only once complete."""
     write = _office_writer(to_format)
@@ -514,7 +525,7 @@ def _save_office(
     try:
         _convert(source, to_format, office_options, config or load_config(), from_format=from_format,
                  output_dir=directory, image_dir_name=f"{pathlib.Path(output_path).stem}_images",
-                 render=lambda doc: write(doc, temp_path, base_dir=directory))
+                 render=lambda doc: write(doc, temp_path, base_dir=directory), overlay_path=overlay_path)
         os.replace(temp_path, output_path)
     finally:
         if os.path.exists(temp_path):
@@ -527,6 +538,7 @@ def _save_pdf(
     options: ConvertOptions,
     from_format: str | None,
     config: AppConfig | None,
+    overlay_path: str | None,
 ) -> None:
     """Print the converted ``source`` as a PDF: nothing reads it back, so references show what they stand for."""
     from .renderers.pdf_renderer import render_pdf
@@ -534,7 +546,7 @@ def _save_pdf(
     pdf_options = replace(options, template=PDF_TEMPLATE, image_handling=handling)
     with tempfile.TemporaryDirectory(prefix="textconverter_pdf_") as tmp:
         html = _convert(source, "html", pdf_options, config or load_config(), from_format=from_format,
-                        output_dir=tmp, image_dir_name="images",
+                        output_dir=tmp, image_dir_name="images", overlay_path=overlay_path,
                         render=lambda doc: render_html(doc, template_name=PDF_TEMPLATE, printed=True))
         render_pdf(html, output_path, base_dir=tmp)
 
@@ -545,6 +557,7 @@ def _save_csv(
     options: ConvertOptions,
     from_format: str | None,
     config: AppConfig | None,
+    overlay_path: str | None,
 ) -> list[str]:
     """Write the tables of ``source`` as CSV: ``output_path``, or ``<stem>_<sheet>.csv`` for each of several.
 
@@ -554,7 +567,7 @@ def _save_csv(
     out_path = pathlib.Path(output_path)
     files = _convert(source, "csv", options, config or load_config(), from_format=from_format,
                      output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images",
-                     render=render_csv_files)
+                     render=render_csv_files, overlay_path=overlay_path)
     written = []
     for suffix, text in files:
         target = out_path.with_name(f"{out_path.stem}{suffix}{out_path.suffix}")
@@ -588,6 +601,8 @@ def save_to_file(
     (the latter keeps only the tables, one sheet each). A ``.csv`` output holds the
     document's tables only: one file, or ``<stem>_<sheet name>.csv`` per table
     when there are several (the name is the nearest heading above the table).
+    An image source also leaves ``<output stem>_regions.png`` next to the
+    output: the image with what the AI found in it, to check a detection by eye.
 
     Args:
         source: A file path, or an ``http://``/``https://`` URL.
@@ -598,7 +613,7 @@ def save_to_file(
 
     Returns:
         The paths written: ``[output_path]``, or one path per table for a
-        ``.csv`` output with several tables.
+        ``.csv`` output with several tables, then the overlay if there is one.
 
     Raises:
         ValueError: If the output format cannot be inferred, the output path
@@ -622,18 +637,40 @@ def save_to_file(
         out_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise OSError(f"Cannot create the output folder {out_path.parent}: {exc}") from exc
+    overlay = out_path.with_name(f"{out_path.stem}_regions.png")
+    before = _modified(overlay)
+    written = _save(source, output_path, to_format, options, from_format, config, str(overlay))
+    return [*written, str(overlay)] if _modified(overlay) != before else written
+
+
+def _modified(path: pathlib.Path) -> int | None:
+    """When a file was last written, or None if it does not exist."""
+    return path.stat().st_mtime_ns if path.exists() else None
+
+
+def _save(
+    source: str,
+    output_path: str,
+    to_format: str,
+    options: ConvertOptions,
+    from_format: str | None,
+    config: AppConfig | None,
+    overlay_path: str,
+) -> list[str]:
+    """Write ``source`` converted to ``to_format``, the way that format needs; returns the paths written."""
     if to_format == "csv":
-        return _save_csv(source, output_path, options, from_format, config)
+        return _save_csv(source, output_path, options, from_format, config, overlay_path)
     if to_format in ("docx", "pptx", "xlsx"):
-        _save_office(source, output_path, to_format, options, from_format, config)
+        _save_office(source, output_path, to_format, options, from_format, config, overlay_path)
         return [output_path]
     if to_format == "pdf":
-        _save_pdf(source, output_path, options, from_format, config)
+        _save_pdf(source, output_path, options, from_format, config, overlay_path)
         return [output_path]
 
-    result = convert(source, to_format, options, from_format=from_format,
-                     output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images",
-                     config=config)
+    out_path = pathlib.Path(output_path)
+    result = _convert(source, to_format, options, config or load_config(), from_format=from_format,
+                      output_dir=str(out_path.parent), image_dir_name=f"{out_path.stem}_images",
+                      render=_text_render(to_format, options), overlay_path=overlay_path)
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(result)
     return [output_path]

@@ -143,6 +143,10 @@ class ImageStore:
             self._by_digest[digest] = f"{self.image_dir_name}/{basename}" if self.image_dir_name else basename
         return self._by_digest[digest]
 
+    def save_png(self, blob: bytes) -> str:
+        """Write PNG bytes and return the ``src`` for the Image node."""
+        return self.save(blob, "png")
+
 
 class ImagePaths:
     """Tracks the image paths rewritten during one conversion.
@@ -402,7 +406,9 @@ def _description_blocks(img: Image) -> Expansion | None:
     if not img.render_metadata:
         return Expansion(body, inline=[replace(img, description=None)])
     category = f" - Class: {img.category}" if img.category else ""
-    reference = Text(content=f"[Image Reference: {img.src}{category}]", bold=True)
+    # An embedded image is its own reference: its source is the whole file in base64.
+    reference: Node = (replace(img, description=None, caption=[], label=None) if img.src.startswith("data:")
+                       else Text(content=f"[Image Reference: {img.src}{category}]", bold=True))
     header = Paragraph(children=[replace(reference), LineBreak(), Text(content=DESCRIPTION_START, bold=True)])
     return Expansion([header, *body, Paragraph(children=[Text(content=DESCRIPTION_END, bold=True)])],
                      inline=[reference])

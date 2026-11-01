@@ -10,7 +10,8 @@ from .config import AppConfig
 from .images import Expansion, expand_images, resolve_local
 from .parsers.transcription_parser import normalize_transcription, transcription_nodes
 from .regions import (
-    Block, contact_sheet, crop_image, find_blocks, needs_labels, parse_labels, plan_crops, plan_regions,
+    Block, contact_sheet, crop_image, draw_overlay, find_blocks, needs_labels, parse_labels, plan_crops,
+    plan_regions,
 )
 
 # Categories that ``auto_latex`` transcribes; every other image keeps a plain reference.
@@ -137,12 +138,18 @@ def _classify(img_path: str, config: AppConfig) -> str:
         config,
         temperature=ai.classification_temperature,
         format_json=True,
+        thinking=False,
     )
     try:
         category = json.loads(answer).get("category")
     except (TypeError, ValueError, AttributeError):
         return "default"
     return category if category in ai.prompts or category in ai.ocr_prompts else "default"
+
+
+def _description_thinking(config: AppConfig) -> bool | str:
+    """The ``thinking`` argument of a description call: the model's default, or off."""
+    return "default" if config.ai.description_thinking else False
 
 
 def _description_prompt(img: Image, config: AppConfig) -> str:
@@ -358,7 +365,7 @@ def _run_phases(
 
     def describe(img: Image, img_path: str) -> None:
         img.description = _ask(ai.description_model, _description_prompt(img, config), img_path, config,
-                               max_tokens=ai.description_max_tokens)
+                               max_tokens=ai.description_max_tokens, thinking=_description_thinking(config))
 
     def transcribe(img: Image, img_path: str) -> None:
         if ai.ocr_model:
@@ -366,7 +373,7 @@ def _run_phases(
                         temperature=ai.ocr_temperature, max_tokens=ai.ocr_max_tokens)
         else:
             text = _ask(ai.description_model, _description_prompt(img, config), img_path, config,
-                        max_tokens=ai.ocr_max_tokens)
+                        max_tokens=ai.ocr_max_tokens, thinking=_description_thinking(config))
         img.description = normalize_transcription(text) if text else None
 
     run_phase("Describing", ai.description_model, to_describe, describe)
@@ -443,7 +450,24 @@ def process_images(
     log_success("Image description completed.")
 
 
-def transcribe_images(paths: list[str], *, config: AppConfig, save_crop: SaveCrop | None = None) -> Document:
+def _write_overlay(img: Image, img_path: str, split: Split | None, overlay_path: str) -> None:
+    """Save the image with what was found in it, or one box with its category; a failure is only reported."""
+    if img.category in (None, "error"):
+        return
+    blocks = split.blocks if split else [Block(0.0, 0.0, 1.0, 1.0, label=img.category)]
+    try:
+        draw_overlay(img_path, blocks, overlay_path)
+    except (OSError, ValueError) as exc:
+        log_warning(f"Could not write the region overlay {overlay_path}: {exc}")
+
+
+def transcribe_images(
+    paths: list[str],
+    *,
+    config: AppConfig,
+    save_crop: SaveCrop | None = None,
+    overlay_path: str | None = None,
+) -> Document:
     """Turn image files into a Document, one block of content per image, in order.
 
     Each image is classified, then described or transcribed (see
@@ -455,6 +479,7 @@ def transcribe_images(paths: list[str], *, config: AppConfig, save_crop: SaveCro
         paths: Image file paths.
         config: Application configuration.
         save_crop: Stores the crops worth keeping; without it they are dropped.
+        overlay_path: Where to save the first image with what was found in it.
 
     Raises:
         ImportError: If ``unified_ai_client`` is not installed.
@@ -463,6 +488,8 @@ def transcribe_images(paths: list[str], *, config: AppConfig, save_crop: SaveCro
         raise ImportError(_MISSING_CLIENT)
     images = [Image(src=path, alt=os.path.basename(path)) for path in paths]
     splits = describe_images(images, "", config=config, save_crop=save_crop)
+    if overlay_path and images:
+        _write_overlay(images[0], paths[0], splits.get(id(images[0])), overlay_path)
 
     doc = Document()
     for img in images:

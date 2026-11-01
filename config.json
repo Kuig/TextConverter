@@ -27,6 +27,7 @@
     },
     "classification_temperature": 0,
     "ocr_temperature": 0,
+    "description_thinking": false,
     "description_max_tokens": 4096,
     "ocr_max_tokens": 4096,
     "region_model": "gemma4:12b",
@@ -48,7 +49,7 @@
   },
   "ollama": {
     "url": "http://localhost:11434",
-    "timeout": 300,
+    "timeout": 600,
     "keep_alive": "15m",
     "context_size": 8192
   }

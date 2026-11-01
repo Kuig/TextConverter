@@ -5,7 +5,11 @@ Usage: python -m unittest discover -s tests -p "test_image_describer.py"
 from __future__ import annotations
 import json
 import shutil
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+from PIL import Image as PilImage
 
 from _support import BaseConverterTest, FakeAi, setUpModule, tearDownModule, INPUT_DIR, OUTPUT_DIR
 
@@ -356,6 +360,153 @@ class TestRegions(BaseConverterTest):
         self._run(self._fake())
         limits = {c.kwargs["model"]: c.kwargs["max_tokens"] for c in self.call.call_args_list}
         self.assertEqual((limits["desc"], limits["ocr"]), (ai.description_max_tokens, ai.ocr_max_tokens))
+
+
+class TestRegionsInOutput(BaseConverterTest):
+    """A split image, through a whole conversion: files, paths and the overlay."""
+
+    def setUp(self):
+        super().setUp()
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.dir = Path(folder.name)
+
+    def _fake(self, ocr="Some text."):
+        return FakeAi(["document_scan"], {"region": _labels(), "desc": "A photo.", "ocr": ocr})
+
+    def _save(self, source=ARTICLE, name="out.md", fake=None, config=None, **options):
+        import textconverter
+        output = self.dir / name
+        with patch("unified_ai_client.call_ai", side_effect=fake or self._fake()), \
+             patch("unified_ai_client.preload_model"):
+            written = textconverter.save_to_file(source, str(output), textconverter.ConvertOptions(**options),
+                                                 config=config or _region_config())
+        return output, written
+
+    def _images(self):
+        folder = self.dir / "out_images"
+        return sorted(p.name for p in folder.iterdir()) if folder.exists() else []
+
+    def test_markdown_links_the_stored_figures(self):
+        output, _ = self._save()
+        self.assertEqual(self._images(), ["image_1.png", "image_2.png"])
+        text = output.read_text(encoding="utf-8")
+        self.assertIn("out_images/image_1.png", text)
+        self.assertNotIn(str(self.dir), text)
+        self.assertIn("A photo.", text)
+        self.assertIn("Some text.", text)
+
+    def test_latex_links_the_stored_figures(self):
+        output, _ = self._save(name="out.tex")
+        self.assertIn(r"out\_images/image\_1.png", output.read_text(encoding="utf-8"))
+        self.assertEqual(len(self._images()), 2)
+
+    def test_json_holds_the_figures_with_relative_paths(self):
+        output, _ = self._save(name="out.json")
+        text = output.read_text(encoding="utf-8")
+        self.assertIn('"out_images/image_1.png"', text)
+        self.assertIn('"photo_drawing_or_comic"', text)
+
+    def test_html_embeds_the_figures_and_leaves_no_folder(self):
+        """An embedded figure is shown, not quoted as a reference holding the whole file."""
+        output, _ = self._save(name="out.html")
+        text = output.read_text(encoding="utf-8")
+        self.assertIn('src="data:image/png;base64,', text)
+        self.assertNotIn("Image Reference: data:", text)
+        self.assertIn("A photo.", text)
+        self.assertEqual(self._images(), [])
+
+    def test_discard_writes_no_file_and_keeps_the_descriptions(self):
+        output, _ = self._save(image_handling="discard")
+        self.assertEqual(self._images(), [])
+        self.assertIn("A photo.", output.read_text(encoding="utf-8"))
+
+    def test_failed_ocr_keeps_the_text_as_images(self):
+        self._save(fake=self._fake(ocr=""))
+        self.assertEqual(len(self._images()), 4)
+
+    def test_failed_image_still_points_to_its_source(self):
+        """With nothing transcribed the document refers to the source, from where the output is."""
+        import os
+        config = _region_config()
+        config.ai.region_model = ""
+        output, _ = self._save(source=os.path.relpath(ARTICLE), fake=FakeAi(["document_scan"], {}), config=config)
+        text = output.read_text(encoding="utf-8")
+        target = text[text.index("](") + 2:text.index(")")].strip("<>")
+        self.assertTrue(os.path.samefile(self.dir / target, ARTICLE), text)
+
+    def test_document_images_are_stored_next_to_the_output_too(self):
+        import shutil
+        shutil.copyfile(ARTICLE, self.dir / "page.png")
+        source = self.dir / "doc.md"
+        source.write_text("![page](page.png)\n", encoding="utf-8")
+        output, written = self._save(source=str(source), image_handling="describe")
+        self.assertEqual(len(self._images()), 2)
+        self.assertEqual(written, [str(output)])
+        self.assertIn("out_images/image_1.png", output.read_text(encoding="utf-8"))
+
+    def test_raster_pdf_page_stores_its_figures(self):
+        import pymupdf
+        pdf_path, page_path = self.dir / "page.pdf", str(self.dir / "page.png")
+        with pymupdf.open() as pdf:
+            page = pdf.new_page()
+            page.insert_image(page.rect, filename=ARTICLE)
+            pdf.save(pdf_path)
+            page.get_pixmap(dpi=200).save(page_path)
+        fake = FakeAi(["document_scan"], {"region": _labels(page_path), "desc": "A photo.", "ocr": "Some text."})
+        output, _ = self._save(source=str(pdf_path), fake=fake, pdf_mode="raster")
+        self.assertGreaterEqual(len(self._images()), 1)
+        self.assertIn("out_images/image_1.png", output.read_text(encoding="utf-8"))
+
+    def test_image_source_leaves_the_overlay_next_to_the_output(self):
+        for name in ("out.md", "out.html", "out.docx"):
+            with self.subTest(name):
+                output, written = self._save(name=name)
+                overlay = self.dir / "out_regions.png"
+                self.assertEqual(written, [str(output), str(overlay)])
+                with PilImage.open(overlay) as image, PilImage.open(ARTICLE) as source:
+                    self.assertEqual(image.size, source.size)
+                overlay.unlink()
+
+    def test_overlay_of_an_image_that_was_not_split_shows_its_category(self):
+        fake = FakeAi(["photo_drawing_or_comic"], {"desc": "A photo."})
+        _, written = self._save(source=FOTO, fake=fake)
+        self.assertEqual(len(written), 2)
+
+    def test_a_file_with_the_overlay_name_is_left_alone_by_other_sources(self):
+        overlay = self.dir / "out_regions.png"
+        overlay.write_bytes(b"mine")
+        source = self.dir / "doc.md"
+        source.write_text("Text.\n", encoding="utf-8")
+        output, written = self._save(source=str(source))
+        self.assertEqual(written, [str(output)])
+        self.assertEqual(overlay.read_bytes(), b"mine")
+
+    def test_convert_writes_no_overlay(self):
+        import textconverter
+        with patch("unified_ai_client.call_ai", side_effect=self._fake()), patch("unified_ai_client.preload_model"):
+            textconverter.convert(ARTICLE, "markdown", output_dir=str(self.dir), config=_region_config())
+        self.assertFalse(list(self.dir.glob("*_regions.png")))
+
+
+class TestThinking(BaseConverterTest):
+
+    def _calls(self, config):
+        from textconverter.image_describer import process_images
+        fake = FakeAi(["diagram"], {"desc": "A diagram."})
+        call = MagicMock(side_effect=fake)
+        with patch("unified_ai_client.call_ai", call), patch("unified_ai_client.preload_model"):
+            process_images(_doc_with_images(1), "", config=config)
+        return {c.kwargs["model"]: c.kwargs["thinking"] for c in call.call_args_list}
+
+    def test_off_by_default(self):
+        self.assertEqual(self._calls(_config()), {"cls": False, "desc": False})
+
+    def test_description_thinking_leaves_it_to_the_model(self):
+        """The setting is for descriptions only: classification stays off."""
+        config = _config()
+        config.ai.description_thinking = True
+        self.assertEqual(self._calls(config), {"cls": False, "desc": "default"})
 
 
 class TestTranscribeImages(BaseConverterTest):
