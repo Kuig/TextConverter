@@ -260,8 +260,8 @@ def describe_images(
     Every image is classified first; then pages holding more than text are
     split into regions; then the description model describes the images
     outside ``ai.ocr_prompts``; finally the OCR model (or, without one, the
-    description model) transcribes the rest. Grouping the calls by model means
-    each model is loaded at most once per run. Sets ``category`` and
+    description model) transcribes the rest. The calls are grouped by model, so
+    models swap between phases and never image by image. Sets ``category`` and
     ``description`` on each Image in place; a missing file gets category
     ``"error"`` and a failed call leaves ``description`` unset. A file used by
     several images is processed once, and its result is given to all of them.
@@ -323,16 +323,21 @@ def _run_phases(
 
     init_ai(config)
     total = len(jobs)
-    loaded: set[str] = set()
+    current_model = ""
 
     def run_phase(verb: str, model: str, phase_jobs: list[tuple[Image, str]],
                   ask: Callable[[Image, str], None]) -> None:
-        """Load ``model`` once, then run ``ask`` on each job with a progress line."""
+        """Load ``model`` unless it is the one in use, then run ``ask`` on each job with a progress line.
+
+        A model coming back after another is loaded again here: left to the
+        call, it would not get ``context_size`` (see ``init_ai``).
+        """
+        nonlocal current_model
         if not phase_jobs:
             return
-        if model not in loaded:
+        if model != current_model:
             _preload(model, config)
-            loaded.add(model)
+            current_model = model
         for i, (img, img_path) in enumerate(phase_jobs, 1):
             log_action(f"[{i}/{len(phase_jobs)}] {verb}: {img.src}")
             ask(img, img_path)

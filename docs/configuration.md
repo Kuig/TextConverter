@@ -78,7 +78,7 @@ The file is split into three kinds of section:
 | `region_prompt` | built-in | Prompt asking for a JSON object from tile number to label; `{count}` becomes the number of tiles |
 | `region_max_tokens` | `1500` | Limit of the labelling answer; `null` means no limit |
 
-Images are processed in phases, one model each: every image is classified, then pages are split into regions, then the non-OCR categories are described, then the OCR categories are transcribed. Each model is therefore loaded once per conversion, and an OCR model can sit next to the vision model without swapping on every image.
+Images are processed in phases, one model each: every image is classified, then pages are split into regions, then the non-OCR categories are described, then the OCR categories are transcribed. Models therefore swap between phases and never image by image, so an OCR model can sit next to the vision model.
 
 A page is an image classified as `text` or `document_scan`. Its blocks are found with Pillow, and a page of plain text stops there, with no model involved. Otherwise `region_model` labels the blocks, shown to it as numbered tiles on one contact sheet, and a page with more than one kind of content is split: runs of text, tables and formulas are transcribed, the other regions are described and kept as files. Any failure leaves the page whole. Locating content is left to Pillow because the small vision models place boxes too loosely to crop from. The labels need a model of at least the size of `gemma4:12b`: `gemma4:e2b` answers with text copied from the tiles. Thinking stays off in the labelling call, where it can use up the token limit before any answer.
 

@@ -216,6 +216,16 @@ class TestRegions(BaseConverterTest):
         self.assertEqual(models, sorted(models, key=["cls", "region", "desc", "ocr"].index))
         self.assertEqual(self.preloaded, ["cls", "region", "desc", "ocr"])
 
+    def test_model_coming_back_is_preloaded_again(self):
+        """A call would load it without ``context_size``; a model already in use is left alone."""
+        cfg = _region_config()
+        cfg.ai.classification_model = "desc"
+        self._run(FakeAi(["document_scan"], {"region": _labels(), "ocr": "Some text."}), config=cfg)
+        self.assertEqual(self.preloaded, ["desc", "region", "desc", "ocr"])
+        cfg.ai.classification_model, cfg.ai.region_model = "cls", "desc"
+        self._run(FakeAi(["document_scan"], {"desc": _labels(), "ocr": "Some text."}), config=cfg)
+        self.assertEqual(self.preloaded, ["cls", "desc", "ocr"])
+
     def test_labelling_call_has_the_tile_count_and_no_thinking(self):
         from textconverter.regions import find_blocks
         self._run(self._fake())

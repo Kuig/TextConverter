@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   giving better classifications.
 - The default Ollama `timeout` goes from 300 to 600 seconds.
 - A described image embedded as a data URL shows the image instead of a reference line holding the whole file.
+- A model that comes back after another one is preloaded again: left to the next call, it lost `context_size`.
 
 ### Removed
 

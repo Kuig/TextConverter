@@ -108,7 +108,7 @@ def _parse_raster(
     """Render each page to an image and let the AI describer transcribe the pages.
 
     Pages go through the whole image pipeline (classification, regions, then
-    OCR or description), batched so each model loads once. The page images
+    OCR or description), batched by model. The page images
     live in a temporary folder; a page that could not be transcribed is kept
     as an image in the output image folder, so the content is not lost, and
     so are the figures cut out of a page.
