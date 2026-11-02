@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-02
+
 ### Added
 
 - `ai.min_image_pixels`, 1024 by default: images of a document smaller than that (width times height) cost no AI call and stay as they
@@ -603,7 +605,8 @@ owcolor`, ...), and a row or cell no longer ends inside a group or a nested tabl
   classification and description, heuristic code detection, equations, and CLI, MCP, GUI and
   library interfaces.
 
-[Unreleased]: https://github.com/Kuig/TextConverter/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/Kuig/TextConverter/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Kuig/TextConverter/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Kuig/TextConverter/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Kuig/TextConverter/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Kuig/TextConverter/compare/v0.3.0...v0.3.1

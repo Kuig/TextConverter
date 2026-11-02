@@ -113,8 +113,8 @@ class TestPhasedProcessing(BaseConverterTest):
         self.assertEqual(fake.calls[1], ("desc", AppConfig().ai.prompts["formula"]))
         self.assertEqual(preloaded, ["cls", "desc"])
 
-    def test_latex_auto_replaces_transcribed_images(self):
-        """auto_latex: a bare formula becomes an Equation, text a paragraph, a photo is not described."""
+    def test_transcribe_replaces_text_images(self):
+        """transcribe: a bare formula becomes an Equation, text a paragraph, a photo is not described."""
         from textconverter.ast import Equation, Paragraph, Text
         fake = FakeAi(["formula", "text", "photo_drawing_or_comic"],
                        {"Formula Recognition:": "E = mc^2", "Text Recognition:": "Some words."})
@@ -125,7 +125,7 @@ class TestPhasedProcessing(BaseConverterTest):
         self.assertIsNone(doc.children[2].children[0].description)
         self.assertNotIn("desc", [m for m, _ in fake.calls])
 
-    def test_latex_auto_table_in_a_paragraph_becomes_a_table(self):
+    def test_transcribe_table_in_a_paragraph_becomes_a_table(self):
         """A table image amid text splits the paragraph: text, real Table, text."""
         from textconverter.ast import Document, Image, Paragraph, Table, Text
         fake = FakeAi(["table"], {"Table Recognition:": HTML_TABLE})
@@ -135,7 +135,7 @@ class TestPhasedProcessing(BaseConverterTest):
         self.assertEqual([type(n) for n in doc.children], [Paragraph, Table, Paragraph])
         self.assertEqual(doc.children[2].children, [Text(content="After.")])
 
-    def test_latex_auto_in_a_table_cell_stays_inline(self):
+    def test_transcribe_in_a_table_cell_stays_inline(self):
         """Where blocks cannot go, a transcribed formula becomes an inline Equation."""
         from textconverter.ast import Document, Equation, Image, Table, TableCell, TableRow
         fake = FakeAi(["formula"], {"Formula Recognition:": "$$a+b$$"})
@@ -399,7 +399,7 @@ class TestRegions(BaseConverterTest):
         self.assertEqual(doc.children[1], doc.children[5])
         self.assertIsNot(doc.children[1].children[0], doc.children[5].children[0])
 
-    def test_latex_auto_keeps_figures_as_plain_images(self):
+    def test_transcribe_keeps_figures_as_plain_images(self):
         from textconverter.ast import Image
         fake = self._fake()
         doc = self._run(fake, handling="transcribe")
