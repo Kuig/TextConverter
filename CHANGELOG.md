@@ -7,34 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Breaking:** the image options are two. `image_handling` (`--image-handling`) says what happens to the images in the document:
-  `discard`, `keep`, `split`, `transcribe`, `describe`, `replace` or `append`. The new `image_output` (`--image-output`) says how the
-  ones left are written: `embed` or `link`. `embed`, `link` and `auto_latex` are no longer `image_handling` values. See the README's
-  Image Handling.
-- An image that keeps its description is a real image, followed by the description between marker lines that now name its category:
-  the `[Image Reference: ...]` line is gone, and Markdown reads the new form back. A text image transcribed by `describe` is replaced by
-  its text, without markers. `Image.render_metadata` is gone.
-- An image that has a description already (a JSON or Markdown document read back) is not analyzed again.
-- Image sources and raster PDF pages go through the same analysis as the images of a document and take every `image_handling` value:
-  `keep` gives the pages as images, without the AI client. `auto` transcribes their text and leaves figures as images, so a photo as
-  the source needs `describe` to get a description. `discard` on them is an error, with `replace` for the text alone.
-- `parse_image()` and `parse_pdf()` no longer take `config` and call no model; `transcribe_images()` is gone.
-- `auto` no longer calls the AI for JSON output, which keeps the images, embedded. JSON is an ordinary source: `discard`, the image
-  output and the analysis apply to it.
-
-### Fixed
-
-- `auto` to CSV no longer leaves an image folder next to the output.
-- A PDF or Word file converted from a URL no longer tries to download its own extracted images from the site.
-- `transcribe` also reads a whole-page scan, which `auto` used to leave as an image unless it held a figure.
-- `describe` keeps the image in Word, PowerPoint, Excel and PDF, where it used to leave only a reference to a file.
-- An image in a `data:` URL reaches the AI models with any output, and `link` writes it to a file with any output, not only LaTeX.
-- A way of writing images that a format lacks gives the same warning everywhere, where Word, PowerPoint, Excel and PDF were silent.
-
 ### Added
 
+- `ai.min_image_pixels`, 1024 by default: images of a document smaller than that (width times height) cost no AI call and stay as they
+  are, and so do those in a form no model reads, such as SVG. 0 turns the limit off.
+- A phase of the image analysis stops after three failed calls in a row, instead of trying every image in turn, and a stopped
+  classification ends the analysis. The log says how many images were read.
 - Pages that mix text and figures are split into regions. A `text` or `document_scan` image holding more than text has its
   blocks found with Pillow and labelled by a vision model on one contact sheet: runs of text and tables are transcribed, while
   photos, diagrams and charts are described and kept as files in the image folder, all in reading order. Raster PDF pages and
@@ -51,11 +29,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** the image options are two. `image_handling` (`--image-handling`) says what happens to the images in the document:
+  `discard`, `keep`, `split`, `transcribe`, `describe`, `replace` or `append`. The new `image_output` (`--image-output`) says how the
+  ones left are written: `embed` or `link`. `embed`, `link` and `auto_latex` are no longer `image_handling` values. See the README's
+  Image Handling.
+- An image that keeps its description is a real image, followed by the description between marker lines that now name its category:
+  the `[Image Reference: ...]` line is gone, and Markdown reads the new form back. A text image transcribed by `describe` is replaced by
+  its text, without markers. `Image.render_metadata` is gone.
+- An image that has a description already (a JSON or Markdown document read back) is not analyzed again.
+- Image sources and raster PDF pages go through the same analysis as the images of a document and take every `image_handling` value:
+  `keep` gives the pages as images, without the AI client. `auto` transcribes their text and leaves figures as images, so a photo as
+  the source needs `describe` to get a description. `discard` on them is an error, with `replace` for the text alone.
+- `parse_image()` and `parse_pdf()` no longer take `config` and call no model; `transcribe_images()` is gone.
+- `auto` no longer calls the AI for JSON output, which keeps the images, embedded. JSON is an ordinary source: `discard`, the image
+  output and the analysis apply to it.
 - The AI calls of image processing no longer think, unless `ai.description_thinking` is set: thinking cost minutes without
   giving better classifications.
 - The default Ollama `timeout` goes from 300 to 600 seconds.
 - A described image embedded as a data URL shows the image instead of a reference line holding the whole file.
 - A model that comes back after another one is preloaded again: left to the next call, it lost `context_size`.
+
+### Fixed
+
+- `auto` to CSV no longer leaves an image folder next to the output.
+- A PDF or Word file converted from a URL no longer tries to download its own extracted images from the site.
+- `transcribe` also reads a whole-page scan, which `auto` used to leave as an image unless it held a figure.
+- `describe` keeps the image in Word, PowerPoint, Excel and PDF, where it used to leave only a reference to a file.
+- An image in a `data:` URL reaches the AI models with any output, and `link` writes it to a file with any output, not only LaTeX.
+- A way of writing images that a format lacks gives the same warning everywhere, where Word, PowerPoint, Excel and PDF were silent.
 
 ### Removed
 

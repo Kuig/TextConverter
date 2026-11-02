@@ -28,6 +28,7 @@ Loading is tolerant: a missing key takes its default, and an unknown key, or a s
     "ocr_temperature": 0,
     "description_thinking": false,
     "description_context": 500,
+    "min_image_pixels": 1024,
     "description_max_tokens": 4096,
     "ocr_max_tokens": 4096,
     "region_model": "gemma4:12b",
@@ -74,13 +75,14 @@ The file is split into three kinds of section:
 | `ocr_temperature` | `0` | Sampling temperature of the OCR call; `null` leaves the model default |
 | `description_thinking` | `false` | Leave thinking to the model in description calls; every other image call has it off |
 | `description_context` | `500` | Characters of text around an image given to the description call, per side; `0` turns it off |
+| `min_image_pixels` | `1024` | Width times height under which an image of a document is left out of the analysis; `0` turns it off |
 | `description_max_tokens` | `4096` | Limit of a description, thinking included; `null` means no limit |
 | `ocr_max_tokens` | `4096` | Limit of a transcription; `null` means no limit |
 | `region_model` | `"gemma4:12b"` | Vision model that labels the blocks of a page; empty turns regions off |
 | `region_prompt` | built-in | Prompt asking for a JSON object from tile number to label; `{count}` becomes the number of tiles |
 | `region_max_tokens` | `1500` | Limit of the labelling answer; `null` means no limit |
 
-Images are processed in phases, one model each: every image is classified, then pages are split into regions, then the non-OCR categories are described, then the OCR categories are transcribed. Models therefore swap between phases and never image by image, so an OCR model can sit next to the vision model.
+Images are processed in phases, one model each: every image is classified, then pages are split into regions, then the non-OCR categories are described, then the OCR categories are transcribed. Models therefore swap between phases and never image by image, so an OCR model can sit next to the vision model. Before that, the images of a document under `min_image_pixels` (32 by 32 by default: tracking pixels and icons) and those in a form no model reads (SVG, EMF, WMF, anything Pillow cannot open) are left out and stay as they are; an image that is the source itself is always read. Three failed calls in a row, an empty answer included, stop a phase and leave the rest as images; a stopped classification ends the analysis. Each of those calls has the provider's own retries behind it.
 
 A description is told what surrounds its image, so that the model can recognize what a picture alone does not say: the document's title, the section, and `description_context` characters of text on each side, a caption included. On a split page that text is the transcription of the page, so the OCR phase runs before the descriptions; with the same model for labels and descriptions this costs one more swap, and `description_context: 0` avoids it.
 

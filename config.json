@@ -29,6 +29,7 @@
     "ocr_temperature": 0,
     "description_thinking": false,
     "description_context": 500,
+    "min_image_pixels": 1024,
     "description_max_tokens": 4096,
     "ocr_max_tokens": 4096,
     "region_model": "gemma4:12b",

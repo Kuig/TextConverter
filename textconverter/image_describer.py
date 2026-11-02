@@ -5,6 +5,7 @@ import tempfile
 from textconverter.logger import log_action, log_info, log_success, log_warning
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from PIL import Image as PilImage
 from .ast import Document, Heading, Image, Node, Paragraph, Text, walk
 from .config import AppConfig
 from .images import Expansion, expand_images, resolve_local
@@ -24,6 +25,10 @@ REGION_LABELS = ("text", "table", "formula", "photo_drawing_or_comic", "diagram"
 _REGION_PADDING = 0.01
 # The first line of a page's text, cut to this length, stands for its title.
 _PAGE_TITLE_LENGTH = 120
+# Vector formats: Pillow reads their header, but no model reads the file.
+_VECTOR_FORMATS = ("EMF", "WMF")
+# Failed calls in a row after which a phase stops: past this the provider is down, not the image.
+_MAX_FAILURES = 3
 
 # Writes a crop's PNG bytes where the output keeps its images; returns the ``src`` for the Image.
 SaveCrop = Callable[[bytes], str]
@@ -160,8 +165,16 @@ def _ask(
     return response.text.strip()
 
 
+class _NoAnswer(Exception):
+    """A model call failed; ``_ask`` has reported why."""
+
+
 def _classify(img_path: str, config: AppConfig) -> str:
-    """Return the image category, or ``"default"`` when the answer is not a known one."""
+    """Return the image category, or ``"default"`` when the answer is not a known one.
+
+    Raises:
+        _NoAnswer: If the call failed.
+    """
     ai = config.ai
     answer = _ask(
         ai.classification_model,
@@ -172,6 +185,8 @@ def _classify(img_path: str, config: AppConfig) -> str:
         format_json=True,
         thinking=False,
     )
+    if answer is None:
+        raise _NoAnswer
     try:
         category = json.loads(answer).get("category")
     except (TypeError, ValueError, AttributeError):
@@ -242,6 +257,9 @@ def _plan_split(img: Image, img_path: str, blocks: list[Block], tmp_dir: str, co
     this plain, it costs minutes and can use up the token limit before any
     answer. Anything that goes wrong here leaves the image as it would be with
     no regions at all.
+
+    Raises:
+        _NoAnswer: If the call failed.
     """
     ai = config.ai
     try:
@@ -250,6 +268,8 @@ def _plan_split(img: Image, img_path: str, blocks: list[Block], tmp_dir: str, co
             f.write(contact_sheet(img_path, blocks))
         answer = _ask(ai.region_model, ai.region_prompt.replace("{count}", str(len(blocks))), sheet_path, config,
                       temperature=0.0, format_json=True, max_tokens=ai.region_max_tokens, thinking=False)
+        if answer is None:
+            raise _NoAnswer
         labels = parse_labels(answer, len(blocks), REGION_LABELS)
         if labels is None:
             log_warning(f"Unusable region labels for {img_path}, keeping the page whole.")
@@ -280,6 +300,15 @@ def _region_contexts(split: Split, chars: int) -> dict[int, str]:
     return {id(region): _context_text(title, "", "\n".join(filter(None, texts[:number]))[-chars:],
                                       "\n".join(filter(None, texts[number + 1:]))[:chars])
             for number, region in enumerate(split.regions)}
+
+
+def _worth_reading(path: str, min_pixels: int) -> bool:
+    """False for an image no model should see: too small to hold anything, or in a form none reads."""
+    try:
+        with PilImage.open(path) as image:
+            return image.format not in _VECTOR_FORMATS and image.width * image.height >= min_pixels
+    except (OSError, ValueError, PilImage.DecompressionBombError):
+        return False
 
 
 def _page_blocks(jobs: list[tuple[Image, str]], config: AppConfig) -> dict[int, list[Block]]:
@@ -325,6 +354,7 @@ def describe_images(
     treatment: Treatment,
     save_crop: SaveCrop,
     contexts: dict[int, str] | None = None,
+    screen: bool = True,
 ) -> dict[int, Split]:
     """Classify, describe and transcribe images in phases, one model per phase.
 
@@ -337,8 +367,10 @@ def describe_images(
     description can use the text around it. The calls are grouped by model, so
     models swap between phases and never image by image. Sets ``category`` and
     ``description`` on each Image in place; a missing file gets category
-    ``"error"`` and a failed call leaves ``description`` unset. A file used by
-    several images is processed once, and its result is given to all of them.
+    ``"error"`` and a failed call leaves ``description`` unset. A phase stops
+    after ``_MAX_FAILURES`` failed calls in a row, and after a stopped
+    classification nothing runs. A file used by several images is processed
+    once, and its result is given to all of them.
     The regions of a split page take its place in the later phases, so the
     page itself gets no ``description``.
 
@@ -349,12 +381,14 @@ def describe_images(
         treatment: What is kept of each image.
         save_crop: Stores the crops the document keeps.
         contexts: Text for the description of an image, by ``id`` of its node.
+        screen: Leave out the images too small to matter or that no model reads.
 
     Returns:
         The split pages, by ``id`` of their Image node.
     """
     jobs: list[tuple[Image, str]] = []
     copies: dict[str, list[Image]] = {}  # file -> the other images showing it
+    left_out = 0
     for img in images:
         img_path = resolve_local(img.src, base_dir)
         if img_path is None:
@@ -363,6 +397,8 @@ def describe_images(
         elif not os.path.exists(img_path):
             img.category = "error"
             log_warning(f"Image file not found, skipping description: {img_path}")
+        elif screen and not _worth_reading(img_path, config.ai.min_image_pixels):
+            left_out += 1
         else:
             key = os.path.normcase(os.path.abspath(img_path))
             if key in copies:
@@ -370,6 +406,8 @@ def describe_images(
             else:
                 copies[key] = []
                 jobs.append((img, img_path))
+    if left_out:
+        log_info(f"{left_out} image(s) left out of the analysis: too small, or in a form no model reads.")
     if not jobs:
         return {}
     splits: dict[int, Split] = {}
@@ -404,27 +442,42 @@ def _run_phases(
     current_model = ""
 
     def run_phase(verb: str, model: str, phase_jobs: list[tuple[Image, str]],
-                  ask: Callable[[Image, str], None]) -> None:
+                  ask: Callable[[Image, str], None]) -> bool:
         """Load ``model`` unless it is the one in use, then run ``ask`` on each job with a progress line.
 
         A model coming back after another is loaded again here: left to the
         call, it would not get ``context_size`` (see ``init_ai``).
+
+        Returns:
+            False if the phase stopped because too many calls failed in a row.
         """
         nonlocal current_model
         if not phase_jobs:
-            return
+            return True
         if model != current_model:
             _preload(model, config)
             current_model = model
+        failures = 0
         for i, (img, img_path) in enumerate(phase_jobs, 1):
             log_action(f"[{i}/{len(phase_jobs)}] {verb}: {img.src}")
-            ask(img, img_path)
+            try:
+                ask(img, img_path)
+                failures = 0
+            except _NoAnswer:
+                failures += 1
+            if failures == _MAX_FAILURES and i < len(phase_jobs):
+                log_warning(f"{verb} stopped: {failures} calls in a row failed, "
+                            f"{len(phase_jobs) - i} image(s) left as they are.")
+                return False
+        return True
 
     def classify(img: Image, img_path: str) -> None:
+        img.category = "default"  # what a failed call leaves
         img.category = _classify(img_path, config)
         log_action(f"Classified as: {img.category}")
 
-    run_phase("Classifying", ai.classification_model, jobs, classify)
+    if not run_phase("Classifying", ai.classification_model, jobs, classify):
+        return
 
     page_blocks = _page_blocks(jobs, config)
 
@@ -446,6 +499,8 @@ def _run_phases(
         prompt = _description_prompt(img, config, contexts.get(id(img), ""))
         img.description = _ask(ai.description_model, prompt, img_path, config,
                                max_tokens=ai.description_max_tokens, thinking=_description_thinking(config))
+        if img.description is None:
+            raise _NoAnswer
 
     def transcribe(img: Image, img_path: str) -> None:
         if ai.ocr_model:
@@ -454,7 +509,9 @@ def _run_phases(
         else:
             text = _ask(ai.description_model, _description_prompt(img, config), img_path, config,
                         max_tokens=ai.ocr_max_tokens, thinking=_description_thinking(config))
-        img.description = normalize_transcription(text) if text else None
+        if text is None:
+            raise _NoAnswer
+        img.description = normalize_transcription(text)
 
     text_first = bool(splits and ai.description_context)
     if text_first:
@@ -464,6 +521,8 @@ def _run_phases(
     run_phase("Describing", ai.description_model, to_describe, describe)
     if not text_first:
         run_phase("Transcribing", ai.ocr_model or ai.description_model, to_transcribe, transcribe)
+    wanted = [*to_describe, *to_transcribe]
+    log_info(f"{sum(1 for img, _ in wanted if img.description)} of {len(wanted)} images read.")
 
 
 def _apply_treatment(node: Node, treatment: Treatment, config: AppConfig) -> None:
@@ -495,6 +554,7 @@ def process_images(
     save_crop: SaveCrop,
     required: bool = True,
     overlay_path: str | None = None,
+    screen: bool = True,
 ) -> None:
     """Analyze the Image nodes of a document AST and treat them as ``handling`` says, in place.
 
@@ -512,6 +572,8 @@ def process_images(
         required: Without ``unified_ai_client``, raise ImportError; when False,
             keep the images with a warning.
         overlay_path: Where to save the first image with what was found in it.
+        screen: Leave out the images too small to matter or that no model
+            reads; off when the images are the source itself.
 
     Raises:
         ImportError: If ``required`` and ``unified_ai_client`` is not installed.
@@ -534,7 +596,7 @@ def process_images(
             f"OCR: {ai.ocr_model or ai.description_model})..."
         )
         splits = describe_images(images, base_dir, config=config, treatment=treatment, save_crop=save_crop,
-                                 contexts=_document_contexts(doc, ai.description_context))
+                                 contexts=_document_contexts(doc, ai.description_context), screen=screen)
         if overlay_path:
             _write_overlay(images[0], resolve_local(images[0].src, base_dir), splits.get(id(images[0])), overlay_path)
         log_success("Image description completed.")

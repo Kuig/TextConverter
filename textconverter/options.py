@@ -59,10 +59,12 @@ class ImagePlan:
         output: ``"embed"`` or ``"link"``; None for a format that holds no images.
         ai_required: An analysis cannot go without the AI models. False when
             it comes from ``"auto"`` on a document, which reads fine without it.
+        page_source: The source is made of images: they are the document.
     """
     handling: str
     output: str | None
     ai_required: bool = True
+    page_source: bool = False
 
     @property
     def analyzes(self) -> bool:
@@ -116,4 +118,4 @@ def resolve_images(options: ConvertOptions, from_format: str, to_format: str) ->
                          "use image_handling 'replace' to keep their text only.")
     implicit = options.image_handling == "auto"
     handling = _auto_handling(page_source, to_format) if implicit else options.image_handling
-    return ImagePlan(handling, _image_output(options, to_format), page_source or not implicit)
+    return ImagePlan(handling, _image_output(options, to_format), page_source or not implicit, page_source)

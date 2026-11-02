@@ -99,6 +99,10 @@ class AiConfig:
     A description gets the text around its image, up to ``description_context``
     characters per side; 0 turns this off.
 
+    An image of a document smaller than ``min_image_pixels`` (its width times
+    its height) is left out of the analysis: pixels and icons hold nothing to
+    read. 0 turns this off. An image that is the source itself is always read.
+
     Pages (``text`` and ``document_scan`` images) holding more than text are
     split into regions when ``region_model`` is set: it labels the blocks of
     the page, shown to it on a contact sheet.
@@ -116,6 +120,7 @@ class AiConfig:
     ocr_temperature: float | None = 0.0
     description_thinking: bool = False
     description_context: int = 500
+    min_image_pixels: int = 1024
     description_max_tokens: int | None = 4096
     ocr_max_tokens: int | None = 4096
     region_model: str = "gemma4:12b"

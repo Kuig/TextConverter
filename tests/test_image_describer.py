@@ -88,7 +88,7 @@ class TestPhasedProcessing(BaseConverterTest):
 
     def test_ocr_categories_use_ocr_prompts(self):
         """Text, table, formula and document scans get the OCR model's task prompt."""
-        fake = FakeAi(["text", "table", "formula", "document_scan"], {})
+        fake = FakeAi(["text", "table", "formula", "document_scan"], {"ocr": "x"})
         self._run(fake, _doc_with_images(4))
         self.assertEqual([p for m, p in fake.calls if m == "ocr"],
                          ["Text Recognition:", "Table Recognition:",

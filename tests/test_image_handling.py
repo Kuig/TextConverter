@@ -5,9 +5,10 @@ import base64
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import openpyxl
+from PIL import Image as PilImage
 
 import textconverter
 from textconverter import ConvertOptions
@@ -403,6 +404,146 @@ class TestImageSource(BaseConverterTest):
         with self.assertRaises(ValueError):
             textconverter.save_to_file(str(PNG), str(self.dir / "out.md"), ConvertOptions(image_handling="discard"))
         self.assertEqual(list(self.dir.iterdir()), [])
+
+
+class TestScreening(BaseConverterTest):
+    """What never reaches a model: images too small to hold anything, or in a form none reads."""
+
+    def setUp(self):
+        super().setUp()
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.dir = Path(folder.name)
+        PilImage.new("RGB", (16, 16), "white").save(self.dir / "icon.png")
+        (self.dir / "p.png").write_bytes(PNG.read_bytes())
+        (self.dir / "v.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8")
+
+    def _convert(self, *names, config=None):
+        source = self.dir / "doc.md"
+        source.write_text("\n\n".join(f"![{name}]({name})" for name in names) + "\n", encoding="utf-8")
+        self.fake = FakeAi(["photo_drawing_or_comic"] * 3, {"desc": "A logo."})
+        with patch("unified_ai_client.call_ai", side_effect=self.fake), patch("unified_ai_client.preload_model"):
+            return textconverter.convert(str(source), "markdown", ConvertOptions(image_handling="describe"),
+                                         output_dir=str(self.dir), config=config or _config())
+
+    def test_a_small_image_stays_as_it_is_without_a_call(self):
+        text = self._convert("icon.png")
+        self.assertEqual(self.fake.calls, [])
+        self.assertIn("![icon.png](icon.png)", text)
+
+    def test_the_other_images_are_still_read(self):
+        text = self._convert("icon.png", "p.png")
+        self.assertEqual(len(self.fake.calls), 2)
+        self.assertEqual(text.count("A logo."), 1)
+
+    def test_the_limit_is_the_area(self):
+        config = _config()
+        config.ai.min_image_pixels = 16 * 16
+        self._convert("icon.png", config=config)
+        self.assertEqual(len(self.fake.calls), 2)
+
+    def test_zero_turns_the_limit_off(self):
+        config = _config()
+        config.ai.min_image_pixels = 0
+        self._convert("icon.png", config=config)
+        self.assertEqual(len(self.fake.calls), 2)
+
+    def test_a_form_no_model_reads_is_left_out_whatever_the_limit(self):
+        config = _config()
+        config.ai.min_image_pixels = 0
+        self.assertIn("![v.svg](v.svg)", self._convert("v.svg", config=config))
+        self.assertEqual(self.fake.calls, [])
+
+    def test_an_image_source_is_read_however_small(self):
+        fake = FakeAi(["text"], {"ocr": "Read."})
+        with patch("unified_ai_client.call_ai", side_effect=fake), patch("unified_ai_client.preload_model"):
+            text = textconverter.convert(str(self.dir / "icon.png"), "markdown", output_dir=str(self.dir),
+                                         config=_config())
+        self.assertIn("Read.", text)
+
+
+class TestFailures(BaseConverterTest):
+    """A phase stops when calls keep failing, so a provider that is down costs a few calls only."""
+
+    IMAGES = 6
+
+    def setUp(self):
+        super().setUp()
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.dir = Path(folder.name)
+        self.source = self.dir / "doc.md"
+        for n in range(self.IMAGES):
+            PilImage.new("RGB", (100, 100), (n, 0, 0)).save(self.dir / f"{n}.png")
+        self.source.write_text("\n\n".join(f"![{n}]({n}.png)" for n in range(self.IMAGES)) + "\n", encoding="utf-8")
+        self.calls = []
+
+    def _convert(self, answer, handling="describe"):
+        """The document as Markdown; ``answer(model, number of the call to it)`` raises to fail a call."""
+        def call(**kwargs):
+            self.calls.append(kwargs["model"])
+            return MagicMock(text=answer(kwargs["model"], self.calls.count(kwargs["model"])))
+
+        with patch("unified_ai_client.call_ai", side_effect=call), patch("unified_ai_client.preload_model"), \
+             patch("textconverter.image_describer.log_info") as info:
+            text = textconverter.convert(str(self.source), "markdown", ConvertOptions(image_handling=handling),
+                                         output_dir=str(self.dir), config=_config())
+        self.logged = [c.args[0] for c in info.call_args_list]
+        return text
+
+    @staticmethod
+    def _photo(model, number):
+        if model == "cls":
+            return '{"category": "photo_drawing_or_comic"}'
+        raise ConnectionError("down")
+
+    def test_a_stopped_classification_ends_the_analysis(self):
+        def down(model, number):
+            raise ConnectionError("down")
+        text = self._convert(down)
+        self.assertEqual(self.calls, ["cls"] * 3)
+        self.assertEqual(text.count("!["), self.IMAGES)
+
+    def test_a_stopped_phase_leaves_the_images_as_they_are(self):
+        text = self._convert(self._photo)
+        self.assertEqual(self.calls.count("desc"), 3)
+        self.assertEqual(text.count("!["), self.IMAGES)
+        self.assertNotIn("picture description", text)
+
+    def test_an_empty_answer_counts_as_a_failure(self):
+        self._convert(lambda model, number: '{"category": "photo_drawing_or_comic"}' if model == "cls" else "")
+        self.assertEqual(self.calls.count("desc"), 3)
+
+    def test_a_good_answer_starts_the_count_again(self):
+        def every_third(model, number):
+            if model == "cls":
+                return '{"category": "photo_drawing_or_comic"}'
+            if number % 3:
+                raise ConnectionError("down")
+            return "A photo."
+        self._convert(every_third)
+        self.assertEqual(self.calls.count("desc"), self.IMAGES)
+
+    def test_a_stopped_phase_leaves_the_next_one_to_try(self):
+        def by_model(model, number):
+            if model == "cls":
+                return '{"category": "%s"}' % ("table" if number % 2 else "photo_drawing_or_comic")
+            if model == "desc":
+                raise ConnectionError("down")
+            return "| a |\n|---|\n| 1 |"
+        self._convert(by_model)
+        self.assertEqual((self.calls.count("desc"), self.calls.count("ocr")), (3, 3))
+
+    def test_the_last_image_failing_is_no_stop(self):
+        with patch("textconverter.image_describer.log_warning") as warn:
+            self._convert(lambda model, number: '{"category": "text"}' if model == "cls" else
+                          ("Read." if number <= self.IMAGES - 3 else ""))
+        self.assertFalse(any("stopped" in c.args[0] for c in warn.call_args_list))
+
+    def test_the_summary_counts_what_was_read(self):
+        self._convert(lambda model, number: '{"category": "text"}' if model == "cls" else
+                      ("" if number == 2 else "Read."))
+        self.assertIn(f"{self.IMAGES - 1} of {self.IMAGES} images read.", self.logged)
 
 
 class TestJsonIsParsable(BaseConverterTest):
