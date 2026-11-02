@@ -121,6 +121,29 @@ class TestImageDownload(_WebTest):
         self.assertEqual(self.requested, ["https://x.test/a/page"])
         self.assertFalse((self.tmp / "imgs").exists())
 
+    def test_one_content_from_two_urls_is_one_file(self):
+        from textconverter.ast import Document, Image, Paragraph
+        from textconverter._net import Download
+        from textconverter.images import ImagePaths
+        images = [Image(src="https://a.test/one.png"), Image(src="https://b.test/two.png")]
+        doc = Document(children=[Paragraph(children=images)])
+        download = Download(data=b"same", content_type="image/png", charset=None)
+        with patch("textconverter._net.fetch", return_value=download):
+            ImagePaths(str(self.tmp)).download(doc, str(self.tmp / "imgs"), None)
+        self.assertEqual(images[0].src, images[1].src)
+        self.assertEqual(len(list((self.tmp / "imgs").iterdir())), 1)
+
+    def test_two_contents_under_one_name_are_two_files(self):
+        from textconverter.ast import Document, Image, Paragraph
+        from textconverter._net import Download
+        from textconverter.images import ImagePaths
+        images = [Image(src="https://a.test/one.png"), Image(src="https://b.test/one.png")]
+        doc = Document(children=[Paragraph(children=images)])
+        downloads = [Download(data=data, content_type="image/png", charset=None) for data in (b"a", b"b")]
+        with patch("textconverter._net.fetch", side_effect=downloads):
+            ImagePaths(str(self.tmp)).download(doc, str(self.tmp / "imgs"), None)
+        self.assertNotEqual(images[0].src, images[1].src)
+
     def test_octet_stream_keeps_the_url_extension(self):
         md = self._page('<img src="pic.png">', {"https://x.test/a/pic.png": (PNG, "application/octet-stream")})
         self.assertIn("(imgs/pic.png)", md)

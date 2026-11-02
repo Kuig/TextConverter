@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 import json
 import os
 import tempfile
@@ -311,6 +312,12 @@ def _worth_reading(path: str, min_pixels: int) -> bool:
         return False
 
 
+def _digest(path: str) -> str:
+    """What identifies the content of a file."""
+    with open(path, "rb") as f:
+        return hashlib.sha1(f.read()).hexdigest()
+
+
 def _page_blocks(jobs: list[tuple[Image, str]], config: AppConfig) -> dict[int, list[Block]]:
     """The blocks of each page worth labelling, by ``id`` of its Image: no model is involved yet."""
     blocks_by_image = {}
@@ -369,8 +376,9 @@ def describe_images(
     ``description`` on each Image in place; a missing file gets category
     ``"error"`` and a failed call leaves ``description`` unset. A phase stops
     after ``_MAX_FAILURES`` failed calls in a row, and after a stopped
-    classification nothing runs. A file used by several images is processed
-    once, and its result is given to all of them.
+    classification nothing runs. Images with the same content, in one file or
+    in several, are processed once, and the result is given to all of them,
+    so they share the context of the first.
     The regions of a split page take its place in the later phases, so the
     page itself gets no ``description``.
 
@@ -387,7 +395,8 @@ def describe_images(
         The split pages, by ``id`` of their Image node.
     """
     jobs: list[tuple[Image, str]] = []
-    copies: dict[str, list[Image]] = {}  # file -> the other images showing it
+    first: dict[str, Image] = {}  # content -> the image processed for it
+    copies: dict[int, list[Image]] = {}  # id of an image processed -> the others with its content
     left_out = 0
     for img in images:
         img_path = resolve_local(img.src, base_dir)
@@ -400,11 +409,12 @@ def describe_images(
         elif screen and not _worth_reading(img_path, config.ai.min_image_pixels):
             left_out += 1
         else:
-            key = os.path.normcase(os.path.abspath(img_path))
-            if key in copies:
-                copies[key].append(img)
+            digest = _digest(img_path)
+            if digest in first:
+                copies[id(first[digest])].append(img)
             else:
-                copies[key] = []
+                first[digest] = img
+                copies[id(img)] = []
                 jobs.append((img, img_path))
     if left_out:
         log_info(f"{left_out} image(s) left out of the analysis: too small, or in a form no model reads.")
@@ -416,8 +426,8 @@ def describe_images(
             _run_phases(jobs, config, treatment, tmp_dir, splits, dict(contexts or {}))
             _keep_crops(splits, treatment, config, save_crop)
         finally:
-            for img, img_path in jobs:
-                for copy in copies[os.path.normcase(os.path.abspath(img_path))]:
+            for img, _ in jobs:
+                for copy in copies[id(img)]:
                     copy.category, copy.description = img.category, img.description
                     if id(img) in splits:
                         splits[id(copy)] = splits[id(img)]

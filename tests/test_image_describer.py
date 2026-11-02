@@ -53,12 +53,12 @@ def _no_crop(data: bytes) -> str:
 
 
 def _copies(n: int) -> list[str]:
-    """Paths of ``n`` distinct image files (a file shown twice is processed once)."""
+    """Paths of ``n`` image files of distinct content (the same content is processed once)."""
     paths = []
+    OUTPUT_DIR.mkdir(exist_ok=True)
     for i in range(n):
         path = OUTPUT_DIR / f"describer_{i}.jpg"
-        OUTPUT_DIR.mkdir(exist_ok=True)
-        shutil.copyfile(FOTO, path)
+        path.write_bytes(Path(FOTO).read_bytes() + bytes([i]))
         paths.append(str(path))
     return paths
 
@@ -143,6 +143,17 @@ class TestPhasedProcessing(BaseConverterTest):
         doc = Document(children=[Table(rows=[TableRow(cells=[cell])])])
         self._run(fake, doc, handling="transcribe")
         self.assertEqual(cell.children, [Equation(code="a+b", inline=True)])
+
+    def test_one_content_in_two_files_is_processed_once(self):
+        from textconverter.ast import Document, Image, Paragraph
+        first, second = OUTPUT_DIR / "same_a.jpg", OUTPUT_DIR / "same_b.jpg"
+        for path in (first, second):
+            shutil.copyfile(FOTO, path)
+        images = [Image(src=str(first)), Image(src=str(second))]
+        fake = FakeAi(["map"], {"desc": "A map."})
+        self._run(fake, Document(children=[Paragraph(children=[image]) for image in images]))
+        self.assertEqual([m for m, _ in fake.calls], ["cls", "desc"])
+        self.assertEqual([(image.category, image.description) for image in images], [("map", "A map.")] * 2)
 
     def test_one_file_is_processed_once(self):
         """Four images of one file (relative and absolute paths): one call per phase, shared result."""

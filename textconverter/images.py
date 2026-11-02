@@ -159,6 +159,8 @@ class ImagePaths:
         self.doc_dir = os.path.abspath(doc_dir)
         # id(node) -> (node, original src); holding the node keeps its id unique.
         self._original: dict[int, tuple[Image, str]] = {}
+        # Content of a download -> the file it went to.
+        self._downloaded: dict[str, str] = {}
 
     def _rewrite(self, node: Image, new_src: str) -> None:
         self._original.setdefault(id(node), (node, node.src))
@@ -183,7 +185,8 @@ class ImagePaths:
         page). On a URL page, relative sources resolve against ``page_url``.
         Empty and fragment-only sources are skipped, and so is a response
         typed as something other than an image (an HTML error page, say). A
-        failed download keeps the absolute URL, with a warning.
+        failed download keeps the absolute URL, with a warning. The same
+        content from several URLs is one file.
         """
         scheme = urllib.parse.urlparse(page_url).scheme if page_url else "https"
         for node in walk(doc):
@@ -211,8 +214,11 @@ class ImagePaths:
                 continue
             basename = _with_image_extension(_sanitize_filename(_extract_image_filename(url)),
                                              download.content_type)
+            digest = hashlib.sha1(download.data).hexdigest()
             try:
-                self._rewrite(node, store_image(download.data, target_dir, basename))
+                if digest not in self._downloaded:
+                    self._downloaded[digest] = store_image(download.data, target_dir, basename)
+                self._rewrite(node, self._downloaded[digest])
             except OSError as exc:
                 log_warning(f"Could not save image {url}: {exc}")
                 self._rewrite(node, url)

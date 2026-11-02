@@ -52,6 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `auto` to CSV no longer leaves an image folder next to the output.
+- The same image under different names costs one AI call, and the same image downloaded from several URLs one file.
 - A PDF or Word file converted from a URL no longer tries to download its own extracted images from the site.
 - `transcribe` also reads a whole-page scan, which `auto` used to leave as an image unless it held a figure.
 - `describe` keeps the image in Word, PowerPoint, Excel and PDF, where it used to leave only a reference to a file.
