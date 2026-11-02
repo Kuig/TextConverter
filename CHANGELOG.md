@@ -55,7 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The same image under different names costs one AI call, and the same image downloaded from several URLs one file.
 - A PDF or Word file converted from a URL no longer tries to download its own extracted images from the site.
 - `transcribe` also reads a whole-page scan, which `auto` used to leave as an image unless it held a figure.
-- `describe` keeps the image in Word, PowerPoint, Excel and PDF, where it used to leave only a reference to a file.
+- `describe` keeps the image in Word, PowerPoint, Excel and PDF, where it used to leave only a reference to a file. In Excel the
+  description of an image in a cell, which used to be lost, is the cell's comment.
 - An image in a `data:` URL reaches the AI models with any output, and `link` writes it to a file with any output, not only LaTeX.
 - A way of writing images that a format lacks gives the same warning everywhere, where Word, PowerPoint, Excel and PDF were silent.
 

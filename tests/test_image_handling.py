@@ -406,6 +406,46 @@ class TestImageSource(BaseConverterTest):
         self.assertEqual(list(self.dir.iterdir()), [])
 
 
+class TestDescriptionInACell(BaseConverterTest):
+
+    def setUp(self):
+        super().setUp()
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.dir = Path(folder.name)
+        (self.dir / "p.png").write_bytes(PNG.read_bytes())
+        self.source = self.dir / "doc.md"
+        self.source.write_text("| a | b |\n|---|---|\n| ![x](p.png) | 1 |\n\nAfter.\n", encoding="utf-8")
+
+    def _save(self, name, answer="A logo.", handling="describe", category="photo_drawing_or_comic"):
+        out = self.dir / name
+        fake = FakeAi([category], {"desc": answer, "ocr": answer})
+        with patch("unified_ai_client.call_ai", side_effect=fake), patch("unified_ai_client.preload_model"):
+            textconverter.save_to_file(str(self.source), str(out), ConvertOptions(image_handling=handling),
+                                       config=_config())
+        return out
+
+    def test_excel_keeps_it_as_the_comment_of_the_cell(self):
+        sheet = openpyxl.load_workbook(self._save("out.xlsx")).active
+        self.assertEqual(len(sheet._images), 1)
+        self.assertEqual(sheet["A2"].comment.text.strip(), "A logo.")
+        self.assertEqual(sheet["B2"].value, 1)
+
+    def test_excel_holds_a_transcription_of_several_blocks(self):
+        sheet = openpyxl.load_workbook(self._save("out.xlsx", "First.\n\nSecond.", "append", "text")).active
+        self.assertIn("First.", sheet["A2"].comment.text)
+        self.assertIn("Second.", sheet["A2"].comment.text)
+
+    def test_excel_with_replace_has_the_text_in_the_cell(self):
+        sheet = openpyxl.load_workbook(self._save("out.xlsx", handling="replace")).active
+        self.assertEqual((sheet["A2"].value, len(sheet._images)), ("A logo.", 0))
+
+    def test_other_formats_keep_it_after_the_table(self):
+        text = self._save("out.md").read_text(encoding="utf-8")
+        self.assertLess(text.index("| 1 |"), text.index("A logo."))
+        self.assertLess(text.index("A logo."), text.index("After."))
+
+
 class TestScreening(BaseConverterTest):
     """What never reaches a model: images too small to hold anything, or in a form none reads."""
 

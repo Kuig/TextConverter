@@ -20,8 +20,8 @@ from dataclasses import dataclass, replace
 
 from . import _net
 from .ast import (
-    DESCRIPTION_END, Abstract, BlockQuote, Document, Equation, Image, LineBreak, Link, ListItem, Node,
-    Paragraph, Text, child_lists, description_start, walk,
+    DESCRIPTION_END, Abstract, BlockQuote, Document, Equation, Footnote, Image, LineBreak, Link, ListItem,
+    Node, Paragraph, TableCell, Text, child_lists, description_start, walk,
 )
 from .logger import log_action, log_warning
 from .renderers._common import caption_paragraphs, safe_href
@@ -431,6 +431,19 @@ def _description_blocks(img: Image) -> Expansion | None:
                       *transcription_nodes(img.description, img.category),
                       Paragraph(children=[Text(content=DESCRIPTION_END, bold=True)])],
                      inline=[replace(img, description=None, caption=[], label=None)], opens=True)
+
+
+def cell_notes(doc: Node) -> None:
+    """Turn the description of an image in a table cell into a footnote of the cell.
+
+    For a format that keeps tables only: what follows a table would be lost,
+    while a cell's footnote is its comment.
+    """
+    from .parsers.transcription_parser import transcription_nodes
+    for cell in [node for node in walk(doc) if isinstance(node, TableCell)]:
+        for image in [node for node in walk(cell) if isinstance(node, Image) and node.description]:
+            cell.children.append(Footnote(content=_as_inline(transcription_nodes(image.description, image.category))))
+            image.description = None
 
 
 def lower_image_descriptions(doc: Node) -> None:

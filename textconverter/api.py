@@ -13,8 +13,8 @@ from . import _net
 from .ast import Document, Table, walk
 from .code_detector import fence_code_paragraphs
 from .images import (
-    ImagePaths, ImageStore, discard_links, embed_images, keep_scratch_images, lower_image_descriptions,
-    neutralize_links, remove_images,
+    ImagePaths, ImageStore, cell_notes, discard_links, embed_images, keep_scratch_images,
+    lower_image_descriptions, neutralize_links, remove_images,
 )
 from .logger import log_action, log_warning
 
@@ -260,6 +260,8 @@ def _transform_and_render(
 
     if to_format != "json":
         neutralize_links(doc)
+        if to_format == "xlsx":
+            cell_notes(doc)
         lower_image_descriptions(doc)
     if plan.output is None:
         remove_images(doc)
