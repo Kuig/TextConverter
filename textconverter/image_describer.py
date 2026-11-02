@@ -298,17 +298,14 @@ def _page_blocks(jobs: list[tuple[Image, str]], config: AppConfig) -> dict[int, 
     return blocks_by_image
 
 
-def _keep_crops(splits: dict[int, Split], treatment: Treatment, config: AppConfig,
-                save_crop: SaveCrop | None) -> None:
+def _keep_crops(splits: dict[int, Split], treatment: Treatment, config: AppConfig, save_crop: SaveCrop) -> None:
     """Store the crops the document keeps: the treatment's, and what could not be read.
 
-    Called while the temporary folder exists; a crop that is not stored loses
-    its ``src``, and with no ``save_crop`` none is.
+    Called while the temporary folder exists; a crop that is not stored loses its ``src``.
     """
     for split in splits.values():
         for region in split.regions:
-            replaced = treatment.of(region.category, config) == "text" and region.description
-            if save_crop is None or replaced:
+            if treatment.of(region.category, config) == "text" and region.description:
                 region.src = ""
                 continue
             with open(region.src, "rb") as f:
@@ -316,14 +313,8 @@ def _keep_crops(splits: dict[int, Split], treatment: Treatment, config: AppConfi
 
 
 def _region_nodes(split: Split) -> list[Node]:
-    """The regions of a split page as Image nodes, in reading order; one with no content is reported."""
-    nodes: list[Node] = []
-    for region in split.regions:
-        if region.src or region.description:
-            nodes.append(Paragraph(children=[replace(region)]))
-        else:
-            log_warning(f"A region labelled {region.category} could not be processed and is missing.")
-    return nodes
+    """The regions of a split page as Image nodes, in reading order."""
+    return [Paragraph(children=[replace(region)]) for region in split.regions]
 
 
 def describe_images(
@@ -332,7 +323,7 @@ def describe_images(
     *,
     config: AppConfig,
     treatment: Treatment,
-    save_crop: SaveCrop | None = None,
+    save_crop: SaveCrop,
     contexts: dict[int, str] | None = None,
 ) -> dict[int, Split]:
     """Classify, describe and transcribe images in phases, one model per phase.
@@ -356,7 +347,7 @@ def describe_images(
         base_dir: Directory that relative image paths resolve against.
         config: The application configuration.
         treatment: What is kept of each image.
-        save_crop: Stores the crops worth keeping; without it they are dropped.
+        save_crop: Stores the crops the document keeps.
         contexts: Text for the description of an image, by ``id`` of its node.
 
     Returns:
@@ -475,7 +466,7 @@ def _run_phases(
         run_phase("Transcribing", ai.ocr_model or ai.description_model, to_transcribe, transcribe)
 
 
-def apply_treatment(node: Node, treatment: Treatment, config: AppConfig) -> None:
+def _apply_treatment(node: Node, treatment: Treatment, config: AppConfig) -> None:
     """Make each analyzed image what ``treatment`` says, in place.
 
     What stays as text replaces the image as AST nodes: a formula becomes an
@@ -490,9 +481,7 @@ def apply_treatment(node: Node, treatment: Treatment, config: AppConfig) -> None
         kept = treatment.of(img.category, config)
         if kept == "image":
             img.description = None
-        if kept == "text" or (kept == "both" and not img.src):
-            return Expansion(transcription_nodes(img.description, img.category))
-        return None
+        return Expansion(transcription_nodes(img.description, img.category)) if kept == "text" else None
 
     expand_images(node, blocks)
 
@@ -503,8 +492,9 @@ def process_images(
     *,
     config: AppConfig,
     handling: str,
+    save_crop: SaveCrop,
     required: bool = True,
-    save_crop: SaveCrop | None = None,
+    overlay_path: str | None = None,
 ) -> None:
     """Analyze the Image nodes of a document AST and treat them as ``handling`` says, in place.
 
@@ -518,10 +508,17 @@ def process_images(
         base_dir: Base directory for resolving relative image paths.
         config: Application configuration.
         handling: A key of ``TREATMENTS``.
-        required: Without ``unified_ai_client``, raise ImportError; when False
-            (nobody asked for the AI by name), keep the images with a warning.
-        save_crop: Stores the crops worth keeping; without it they are dropped.
+        save_crop: Stores the crops the document keeps.
+        required: Without ``unified_ai_client``, raise ImportError; when False,
+            keep the images with a warning.
+        overlay_path: Where to save the first image with what was found in it.
+
+    Raises:
+        ImportError: If ``required`` and ``unified_ai_client`` is not installed.
+        ValueError: If ``handling`` is ``"split"`` and no ``ai.region_model`` is set.
     """
+    if handling == "split" and not config.ai.region_model:
+        raise ValueError("image_handling 'split' needs ai.region_model in config.json.")
     treatment = TREATMENTS[handling]
     images = [node for node in walk(doc) if isinstance(node, Image) and not node.description]
     splits: dict[int, Split] = {}
@@ -538,6 +535,8 @@ def process_images(
         )
         splits = describe_images(images, base_dir, config=config, treatment=treatment, save_crop=save_crop,
                                  contexts=_document_contexts(doc, ai.description_context))
+        if overlay_path:
+            _write_overlay(images[0], resolve_local(images[0].src, base_dir), splits.get(id(images[0])), overlay_path)
         log_success("Image description completed.")
 
     def regions(img: Image) -> Expansion | None:
@@ -547,7 +546,7 @@ def process_images(
 
     if splits:
         expand_images(doc, regions)
-    apply_treatment(doc, treatment, config)
+    _apply_treatment(doc, treatment, config)
 
 
 def _write_overlay(img: Image, img_path: str, split: Split | None, overlay_path: str) -> None:
@@ -559,48 +558,3 @@ def _write_overlay(img: Image, img_path: str, split: Split | None, overlay_path:
         draw_overlay(img_path, blocks, overlay_path)
     except (OSError, ValueError) as exc:
         log_warning(f"Could not write the region overlay {overlay_path}: {exc}")
-
-
-def transcribe_images(
-    paths: list[str],
-    *,
-    config: AppConfig,
-    save_crop: SaveCrop | None = None,
-    overlay_path: str | None = None,
-) -> Document:
-    """Turn image files into a Document, one block of content per image, in order.
-
-    Each image is classified, then described or transcribed (see
-    ``describe_images``), and the answer is parsed into AST nodes; a page split
-    into regions gives their nodes. An image whose processing fails stays as a
-    plain image reference.
-
-    Args:
-        paths: Image file paths.
-        config: Application configuration.
-        save_crop: Stores the crops worth keeping; without it they are dropped.
-        overlay_path: Where to save the first image with what was found in it.
-
-    Raises:
-        ImportError: If ``unified_ai_client`` is not installed.
-    """
-    if not ai_client_available():
-        raise ImportError(_MISSING_CLIENT)
-    images = [Image(src=path, alt=os.path.basename(path)) for path in paths]
-    treatment = TREATMENTS["describe"]
-    splits = describe_images(images, "", config=config, treatment=treatment, save_crop=save_crop)
-    if overlay_path and images:
-        _write_overlay(images[0], paths[0], splits.get(id(images[0])), overlay_path)
-
-    doc = Document()
-    for img in images:
-        if id(img) in splits:
-            doc.children.extend(_region_nodes(splits[id(img)]))
-            continue
-        if not img.description:
-            log_warning(f"No description generated for image {img.src}; keeping image reference.")
-            doc.children.append(Paragraph(children=[img]))
-            continue
-        doc.children.extend(transcription_nodes(img.description, img.category))
-    apply_treatment(doc, treatment, config)
-    return doc

@@ -48,6 +48,10 @@ def _config(ocr_model: str = "ocr"):
     return cfg
 
 
+def _no_crop(data: bytes) -> str:
+    raise AssertionError("no crop expected")
+
+
 def _copies(n: int) -> list[str]:
     """Paths of ``n`` distinct image files (a file shown twice is processed once)."""
     paths = []
@@ -71,7 +75,7 @@ class TestPhasedProcessing(BaseConverterTest):
         from textconverter.image_describer import process_images
         with patch("unified_ai_client.call_ai", side_effect=fake), \
              patch("unified_ai_client.preload_model") as preload:
-            process_images(doc, "", handling=handling, config=config or _config())
+            process_images(doc, "", handling=handling, config=config or _config(), save_crop=_no_crop)
         return [c.args[1] for c in preload.call_args_list]
 
     def test_calls_are_grouped_by_model(self):
@@ -150,7 +154,7 @@ class TestPhasedProcessing(BaseConverterTest):
         fake = FakeAi(["photo_drawing_or_comic"], {"desc": "A description."})
         from textconverter.image_describer import process_images
         with patch("unified_ai_client.call_ai", side_effect=fake), patch("unified_ai_client.preload_model"):
-            process_images(doc, str(OUTPUT_DIR.parent), handling="describe", config=_config())
+            process_images(doc, str(OUTPUT_DIR.parent), handling="describe", config=_config(), save_crop=_no_crop)
         self.assertEqual([m for m, _ in fake.calls], ["cls", "desc"])
         self.assertEqual({(n.category, n.description) for n in walk(doc) if isinstance(n, Image)},
                          {("photo_drawing_or_comic", "A description.")})
@@ -159,9 +163,10 @@ class TestPhasedProcessing(BaseConverterTest):
         """Without unified_ai_client an analysis nobody asked for leaves plain references."""
         from textconverter.image_describer import process_images
         with patch("textconverter.image_describer.ai_client_available", return_value=False):
-            process_images(_doc_with_images(1), "", handling="transcribe", required=False, config=_config())
+            process_images(_doc_with_images(1), "", handling="transcribe", required=False, config=_config(),
+                           save_crop=_no_crop)
             with self.assertRaises(ImportError):
-                process_images(_doc_with_images(1), "", handling="describe", config=_config())
+                process_images(_doc_with_images(1), "", handling="describe", config=_config(), save_crop=_no_crop)
 
 
 ARTICLE = str(INPUT_DIR / "Article_image.png")
@@ -194,13 +199,12 @@ class TestRegions(BaseConverterTest):
         from textconverter.ast import Document, Image, Paragraph
         return Document(children=[Paragraph(children=[Image(src=path, alt="page")]) for path in paths or (ARTICLE,)])
 
-    def _run(self, fake, doc=None, config=None, save_crop="default", handling="describe"):
+    def _run(self, fake, doc=None, config=None, handling="describe"):
         from textconverter.image_describer import process_images
         doc = doc or self._doc()
         self.call = MagicMock(side_effect=fake)
         with patch("unified_ai_client.call_ai", self.call), patch("unified_ai_client.preload_model") as preload:
-            process_images(doc, "", handling=handling, config=config or _region_config(),
-                           save_crop=self._save if save_crop == "default" else save_crop)
+            process_images(doc, "", handling=handling, config=config or _region_config(), save_crop=self._save)
         self.preloaded = [c.args[1] for c in preload.call_args_list]
         return doc
 
@@ -245,10 +249,7 @@ class TestRegions(BaseConverterTest):
         self.assertNotIn("Text after", second)
 
     def test_image_source_gets_the_text_of_its_page(self):
-        from textconverter.image_describer import transcribe_images
-        self.call = MagicMock(side_effect=self._reading("First text.", "Second text."))
-        with patch("unified_ai_client.call_ai", self.call), patch("unified_ai_client.preload_model"):
-            transcribe_images([ARTICLE], config=_region_config())
+        self._run(self._reading("First text.", "Second text."))
         self.assertIn("Text after: Second text.", self._description_prompts()[0])
 
     def test_failed_transcription_leaves_the_prompt_alone(self):
@@ -331,11 +332,6 @@ class TestRegions(BaseConverterTest):
         doc = self._run(self._fake(ocr=""))
         self.assertEqual(len(self.saved), 4)
         self.assertEqual(doc.children[0].children[0].category, "text")
-
-    def test_without_storage_a_description_stays_as_text(self):
-        from textconverter.ast import Text
-        doc = self._run(self._fake(), save_crop=None)
-        self.assertEqual(doc.children[1].children, [Text(content="A photo.")])
 
     def test_no_region_model_means_no_regions(self):
         config = _region_config()
@@ -442,13 +438,6 @@ class TestRegions(BaseConverterTest):
         self.assertLess(markdown.index("Some text."), markdown.index("images/crop_1.png"))
         self.assertIn("A photo.", markdown)
 
-    def test_transcribe_images_uses_the_regions(self):
-        from textconverter.image_describer import transcribe_images
-        fake = self._fake()
-        with patch("unified_ai_client.call_ai", side_effect=fake), patch("unified_ai_client.preload_model"):
-            doc = transcribe_images([ARTICLE], config=_region_config(), save_crop=self._save)
-        self.assertEqual([type(n.children[0]).__name__ for n in doc.children], ["Text", "Image", "Text", "Image"])
-
     def test_description_and_ocr_have_a_token_limit(self):
         from textconverter.config import AppConfig
         ai = AppConfig().ai
@@ -469,8 +458,9 @@ class TestRegionsInOutput(BaseConverterTest):
     def _fake(self, ocr="Some text."):
         return FakeAi(["document_scan"], {"region": _labels(), "desc": "A photo.", "ocr": ocr})
 
-    def _save(self, source=ARTICLE, name="out.md", fake=None, config=None, **options):
+    def _save(self, source=ARTICLE, name="out.md", fake=None, config=None, image_handling="describe", **options):
         import textconverter
+        options["image_handling"] = image_handling
         output = self.dir / name
         with patch("unified_ai_client.call_ai", side_effect=fake or self._fake()), \
              patch("unified_ai_client.preload_model"):
@@ -510,8 +500,8 @@ class TestRegionsInOutput(BaseConverterTest):
         self.assertIn("A photo.", text)
         self.assertEqual(self._images(), [])
 
-    def test_discard_writes_no_file_and_keeps_the_descriptions(self):
-        output, _ = self._save(image_handling="discard")
+    def test_replace_writes_no_file_and_keeps_the_descriptions(self):
+        output, _ = self._save(image_handling="replace")
         self.assertEqual(self._images(), [])
         self.assertIn("A photo.", output.read_text(encoding="utf-8"))
 
@@ -594,7 +584,7 @@ class TestDocumentContext(BaseConverterTest):
         from textconverter.image_describer import process_images
         fake = FakeAi(list(categories), {"desc": "A description.", "ocr": "Some text."})
         with patch("unified_ai_client.call_ai", side_effect=fake), patch("unified_ai_client.preload_model"):
-            process_images(doc, "", handling="describe", config=config or _config())
+            process_images(doc, "", handling="describe", config=config or _config(), save_crop=_no_crop)
         self.models = [model for model, _ in fake.calls]
         return [prompt for model, prompt in fake.calls if model == "desc"]
 
@@ -677,7 +667,7 @@ class TestThinking(BaseConverterTest):
         fake = FakeAi(["diagram"], {"desc": "A diagram."})
         call = MagicMock(side_effect=fake)
         with patch("unified_ai_client.call_ai", call), patch("unified_ai_client.preload_model"):
-            process_images(_doc_with_images(1), "", handling="describe", config=config)
+            process_images(_doc_with_images(1), "", handling="describe", config=config, save_crop=_no_crop)
         return {c.kwargs["model"]: c.kwargs["thinking"] for c in call.call_args_list}
 
     def test_off_by_default(self):
@@ -690,17 +680,20 @@ class TestThinking(BaseConverterTest):
         self.assertEqual(self._calls(config), {"cls": False, "desc": "default"})
 
 
-class TestTranscribeImages(BaseConverterTest):
+class TestAnswers(BaseConverterTest):
 
     def setUp(self):
         super().setUp()
         self.paths = _copies(3)
 
     def _transcribe(self, fake):
-        from textconverter.image_describer import transcribe_images
+        from textconverter.ast import Document, Image, Paragraph
+        from textconverter.image_describer import process_images
+        doc = Document(children=[Paragraph(children=[Image(src=path)]) for path in self.paths])
         with patch("unified_ai_client.call_ai", side_effect=fake), \
              patch("unified_ai_client.preload_model"):
-            return transcribe_images(self.paths, config=_config())
+            process_images(doc, "", handling="describe", config=_config(), save_crop=_no_crop)
+        return doc
 
     def test_answers_become_ast_nodes_in_order(self):
         """HTML table → Table, formula → Equation, failed call → image reference."""

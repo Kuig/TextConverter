@@ -13,7 +13,8 @@ from . import _net
 from .ast import Document, Table, walk
 from .code_detector import fence_code_paragraphs
 from .images import (
-    ImagePaths, ImageStore, discard_links, embed_images, lower_image_descriptions, neutralize_links, remove_images,
+    ImagePaths, ImageStore, discard_links, embed_images, keep_scratch_images, lower_image_descriptions,
+    neutralize_links, remove_images,
 )
 from .logger import log_action, log_warning
 
@@ -100,15 +101,15 @@ def _parse(
     image_dir_name: str | None = None,
     source_url: str | None = None,
     source_path: str | None = None,
-    overlay_path: str | None = None,
     write_images: bool = True,
+    scratch: str | None = None,
 ) -> Document:
     """Parse a source; a bibliography shown as macros becomes a node, as a LaTeX source gives it."""
     if path is not None:
         _check_file_format(path, from_format)
     doc = _read_source(from_format, options, config, text=text, path=path, output_dir=output_dir,
                        image_dir_name=image_dir_name, source_url=source_url, source_path=source_path,
-                       overlay_path=overlay_path, write_images=write_images)
+                       write_images=write_images, scratch=scratch)
     if from_format in _MACRO_BIBLIOGRAPHY:
         lift_bibliography(doc)
     return doc
@@ -125,14 +126,14 @@ def _read_source(
     image_dir_name: str | None,
     source_url: str | None,
     source_path: str | None,
-    overlay_path: str | None,
     write_images: bool,
+    scratch: str | None,
 ) -> Document:
     """Run the parser for ``from_format``: binary formats read ``path``, the others ``text``."""
     if from_format == "pdf":
         return parse_pdf(
-            path, config=config, pdf_mode=options.pdf_mode, code_parsing=options.code_parsing,
-            output_dir=output_dir, image_dir_name=image_dir_name, write_images=write_images,
+            path, pdf_mode=options.pdf_mode, code_parsing=options.code_parsing, output_dir=output_dir,
+            image_dir_name=image_dir_name, write_images=write_images, pages_dir=scratch,
         )
     if from_format in ("docx", "pptx"):
         parser = parse_docx if from_format == "docx" else parse_pptx
@@ -144,8 +145,7 @@ def _read_source(
     if from_format == "xlsx":
         return parse_xlsx(path, output_dir=output_dir, image_dir_name=image_dir_name, write_images=write_images)
     if from_format == "image":
-        return parse_image(path, config=config, output_dir=output_dir, image_dir_name=image_dir_name,
-                           write_images=write_images, overlay_path=overlay_path)
+        return parse_image(path, output_dir=output_dir)
     if from_format == "csv":
         return parse_csv(text)
     if from_format == "markdown":
@@ -218,6 +218,8 @@ def _transform_and_render(
     source_url: str | None,
     source_path: str | None,
     render: Render,
+    scratch: str | None = None,
+    overlay_path: str | None = None,
 ) -> Any:
     """Apply the image and link passes to a parsed document, then render it with ``render``.
 
@@ -225,7 +227,9 @@ def _transform_and_render(
     folder, the embedder and the AI describer agree on every file; the paths
     are made relative to the output directory again before rendering.
     Images are written to ``image_dir_name`` under ``image_parent`` (see
-    ``_image_folder``), else under the output directory.
+    ``_image_folder``), else under the output directory. Those still in the
+    ``scratch`` folder after the analysis are copied there. An image source is
+    saved to ``overlay_path`` with what the analysis found in it.
     """
     if plan.handling == "discard":
         remove_images(doc)
@@ -235,16 +239,17 @@ def _transform_and_render(
         paths = ImagePaths(doc_dir)
         # Download first: on a web page, relative sources are remote.
         image_folder = os.path.join(image_parent or out_dir, image_dir_name or "")
+        store = ImageStore(image_parent or out_dir, image_dir_name)
         paths.download(doc, image_folder, source_url)
         if plan.output == "link" or plan.analyzes:
             paths.save_data_images(doc, image_folder)
         paths.absolutize(doc)
-        # Image sources and raster PDF pages have been through the AI already.
-        transcribed = from_format == "image" or (from_format == "pdf" and options.pdf_mode == "raster")
-        if plan.analyzes and not transcribed:
+        if plan.analyzes:
             from .image_describer import process_images
-            process_images(doc, doc_dir, config=config, handling=plan.handling, required=not plan.implicit,
-                           save_crop=ImageStore(image_parent or out_dir, image_dir_name).save_png)
+            process_images(doc, doc_dir, config=config, handling=plan.handling, required=plan.ai_required,
+                           save_crop=store.save_png, overlay_path=overlay_path if from_format == "image" else None)
+        if scratch:
+            keep_scratch_images(doc, scratch, store)
         if plan.output == "embed":
             embed_images(doc, image_parent or out_dir)
         paths.relativize(doc, out_dir)
@@ -384,8 +389,7 @@ def _convert(
     """Parse a file or URL, transform it and pass the document to ``render`` (what ``convert`` does).
 
     ``render`` runs while the conversion's temporary image folder still
-    exists, so a renderer can read the images from disk. An image source is
-    saved to ``overlay_path`` with what was found in it.
+    exists, so a renderer can read the images from disk.
     """
     if _is_url(source):
         return _convert_url(source, from_format, to_format, options, config,
@@ -399,15 +403,17 @@ def _convert(
         if from_format is None:
             raise ValueError(f"Could not infer the input format from the extension of {source}; pass from_format.")
     plan = resolve_images(options, from_format, to_format)
-    with _image_folder(plan.output, output_dir, image_dir_name) as (parent, name):
+    with (_image_folder(plan.output, output_dir, image_dir_name) as (parent, name),
+          tempfile.TemporaryDirectory(prefix="textconverter_scratch_") as scratch):
         if INPUT_FORMATS[from_format].binary:
             doc = _parse(from_format, options, config, path=source, output_dir=parent, image_dir_name=name,
-                         overlay_path=overlay_path, write_images=plan.handling != "discard")
+                         write_images=plan.handling != "discard", scratch=scratch)
         else:
             doc = _parse(from_format, options, config, text=_read_text(source, from_format), source_path=source)
         return _transform_and_render(doc, from_format, to_format, options, plan, config,
                                      output_dir=output_dir, image_parent=parent, image_dir_name=name,
-                                     source_url=None, source_path=source, render=render)
+                                     source_url=None, source_path=source, render=render,
+                                     scratch=scratch, overlay_path=overlay_path)
 
 
 _META_CHARSET = re.compile(rb'<meta[^>]+charset\s*=\s*["\']?([\w.:-]+)', re.IGNORECASE)
@@ -464,21 +470,17 @@ def _convert_url(
                                          source_url=url, source_path=None, render=render)
 
     ext = os.path.splitext(url_path)[1].lower()
-    fd, temp_path = tempfile.mkstemp(suffix=ext if ext in fmt.extensions else fmt.extensions[0])
-    try:
-        with os.fdopen(fd, "wb") as f:
+    with tempfile.TemporaryDirectory(prefix="textconverter_scratch_") as scratch:
+        temp_path = os.path.join(scratch, f"source{ext if ext in fmt.extensions else fmt.extensions[0]}")
+        with open(temp_path, "wb") as f:
             f.write(download.data)
         with folder as (parent, name):
             doc = _parse(from_format, options, config, path=temp_path, output_dir=parent, image_dir_name=name,
-                         source_url=url, overlay_path=overlay_path, write_images=plan.handling != "discard")
+                         source_url=url, write_images=plan.handling != "discard", scratch=scratch)
             return _transform_and_render(doc, from_format, to_format, options, plan, config,
                                          output_dir=output_dir, image_parent=parent, image_dir_name=name,
-                                         source_url=url, source_path=temp_path, render=render)
-    finally:
-        try:
-            os.remove(temp_path)
-        except OSError as exc:
-            log_warning(f"Could not remove temporary file {temp_path}: {exc}")
+                                         source_url=None, source_path=temp_path, render=render,
+                                         scratch=scratch, overlay_path=overlay_path)
 
 
 def _office_writer(to_format: str) -> Callable[..., None]:

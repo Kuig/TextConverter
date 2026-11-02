@@ -98,7 +98,7 @@ class TestLivePhases(LiveAiTest):
         images = [Image(src=p) for p in FIXTURES.values()]
         doc = Document(children=[Paragraph(children=[img]) for img in images])
         with patch("unified_ai_client.preload_model", wraps=preload_model) as spy:
-            process_images(doc, "", handling="describe", config=self.config)
+            process_images(doc, "", handling="describe", config=self.config, save_crop=lambda data: "crop.png")
         preloaded = [c.args[1] for c in spy.call_args_list]
         self.assertEqual(len(preloaded), len(set(preloaded)), preloaded)
         summary = {img.src: (img.category, img.description) for img in images}
@@ -126,10 +126,9 @@ class TestLiveRasterPdf(LiveAiTest):
 
     def test_single_page_pdf_is_transcribed(self):
         """Simple Pdf.pdf (one page) in raster mode: the page text comes back."""
-        from textconverter.parsers.pdf_parser import parse_pdf
-        from textconverter.renderers.markdown_renderer import render_markdown
+        import textconverter
         from _support import OUTPUT_DIR
-        doc = parse_pdf(str(INPUT_DIR / "Simple Pdf.pdf"), config=self.config, pdf_mode="raster",
-                        output_dir=str(OUTPUT_DIR), image_dir_name="live_raster_images")
-        md = render_markdown(doc)
+        md = textconverter.convert(str(INPUT_DIR / "Simple Pdf.pdf"), "markdown",
+                                   textconverter.ConvertOptions(pdf_mode="raster"), output_dir=str(OUTPUT_DIR),
+                                   image_dir_name="live_raster_images", config=self.config)
         self.assertIn("Lorem ipsum", md, md[:500])

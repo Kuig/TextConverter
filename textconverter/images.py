@@ -251,6 +251,15 @@ class ImagePaths:
             node.src = original if same else rel
 
 
+def keep_scratch_images(doc: Node, scratch: str, store: ImageStore) -> None:
+    """Copy to ``store`` the images left in the ``scratch`` folder, which goes away with the conversion."""
+    prefix = os.path.normcase(os.path.join(os.path.abspath(scratch), ""))
+    for node in walk(doc):
+        if isinstance(node, Image) and os.path.normcase(os.path.abspath(node.src)).startswith(prefix):
+            with open(node.src, "rb") as f:
+                node.src = store.save(f.read(), os.path.splitext(node.src)[1])
+
+
 def embed_images(doc: Node, base_dir: str) -> None:
     """Replace the src of every local image file with a base64 data URL.
 

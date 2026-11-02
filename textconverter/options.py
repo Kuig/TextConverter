@@ -28,7 +28,7 @@ class ConvertOptions:
         site_cleanup: Run site-specific cleanup (e.g. Wikipedia) during
             ``extract_html``; None follows ``html.site_cleanup`` in config.json.
         pdf_mode: ``"text"`` reads a PDF's text layer; ``"raster"`` renders
-            every page and transcribes it with the AI describer.
+            every page to an image, for the image passes to read.
 
     Raises:
         ValueError: If ``template``, ``image_handling``, ``image_output`` or
@@ -57,11 +57,12 @@ class ImagePlan:
     Attributes:
         handling: One of ``formats.IMAGE_HANDLING_CHOICES``, never ``"auto"``.
         output: ``"embed"`` or ``"link"``; None for a format that holds no images.
-        implicit: The handling comes from ``"auto"``: nobody asked for the AI by name.
+        ai_required: An analysis cannot go without the AI models. False when
+            it comes from ``"auto"`` on a document, which reads fine without it.
     """
     handling: str
     output: str | None
-    implicit: bool = False
+    ai_required: bool = True
 
     @property
     def analyzes(self) -> bool:
@@ -69,9 +70,14 @@ class ImagePlan:
         return self.handling not in ("discard", "keep")
 
 
-def _auto_handling(options: ConvertOptions, from_format: str, to_format: str) -> str:
-    """What ``image_handling="auto"`` means: a source made of page images is read, whatever the target."""
-    if from_format == "image" or (from_format == "pdf" and options.pdf_mode == "raster") or to_format == "latex":
+def _is_page_source(options: ConvertOptions, from_format: str) -> bool:
+    """True for a source that is made of images: the images are the document."""
+    return from_format == "image" or (from_format == "pdf" and options.pdf_mode == "raster")
+
+
+def _auto_handling(page_source: bool, to_format: str) -> str:
+    """What ``image_handling="auto"`` means: a source made of pages is read, whatever the target."""
+    if page_source or to_format == "latex":
         return "transcribe"
     return "discard" if to_format == "csv" else "keep"
 
@@ -99,7 +105,15 @@ def resolve_images(options: ConvertOptions, from_format: str, to_format: str) ->
 
     Returns:
         The plan every step of the conversion reads.
+
+    Raises:
+        ValueError: If ``discard`` is asked of a source made of images, which
+            would leave nothing.
     """
+    page_source = _is_page_source(options, from_format)
+    if page_source and options.image_handling == "discard":
+        raise ValueError("Cannot discard the images of a source made of images; "
+                         "use image_handling 'replace' to keep their text only.")
     implicit = options.image_handling == "auto"
-    handling = _auto_handling(options, from_format, to_format) if implicit else options.image_handling
-    return ImagePlan(handling, _image_output(options, to_format), implicit)
+    handling = _auto_handling(page_source, to_format) if implicit else options.image_handling
+    return ImagePlan(handling, _image_output(options, to_format), page_source or not implicit)

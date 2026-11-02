@@ -33,7 +33,7 @@ How a document is converted. Values are checked on creation: an unknown `templat
 - `extract_html`: Strip boilerplate and isolate main content when parsing HTML.
 - `discard_links`: Replace every hyperlink with its visible text (any source format).
 - `site_cleanup`: Override for site-specific HTML cleanup during `extract_html`. `None` uses the `html.site_cleanup` config default; `False` disables it for this call.
-- `pdf_mode`: How PDF input is read. `"text"` (default) uses the text layer; `"raster"` renders every page at 200 DPI and sends it through the AI image pipeline (each page is classified, then transcribed by the OCR model or described), for scans or PDFs whose text layer is unusable. In raster mode `image_handling` only applies to pages that could not be transcribed, which are kept as images.
+- `pdf_mode`: How PDF input is read. `"text"` (default) uses the text layer; `"raster"` renders every page at 200 DPI to an image, which `image_handling` then treats like any other (by default each page is classified and its text transcribed), for scans or PDFs whose text layer is unusable. `"discard"` raises `ValueError` there and on an image source, whose images are the document.
 
 ## `convert()`
 

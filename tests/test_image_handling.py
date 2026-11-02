@@ -46,11 +46,13 @@ class TestResolution(BaseConverterTest):
             self.assertEqual(self._handling("image", to_format), "transcribe", to_format)
             self.assertEqual(self._handling("pdf", to_format, pdf_mode="raster"), "transcribe", to_format)
 
-    def test_a_handling_by_name_is_kept_and_is_not_implicit(self):
+    def test_a_handling_by_name_is_kept_and_needs_its_models(self):
         for handling in IMAGE_HANDLING_CHOICES[1:]:
             for from_format in INPUT_FORMATS:
+                if handling == "discard" and from_format == "image":
+                    continue
                 plan = resolve_images(ConvertOptions(image_handling=handling), from_format, "html")
-                self.assertEqual((plan.handling, plan.implicit), (handling, False))
+                self.assertEqual((plan.handling, plan.ai_required), (handling, True))
 
     def test_only_keep_and_discard_leave_the_models_alone(self):
         analyzed = {h for h in IMAGE_HANDLING_CHOICES[1:]
@@ -213,7 +215,7 @@ class TestTreatments(BaseConverterTest):
     """What each handling leaves of a text image and of a figure, in Markdown and in the AST."""
 
     PHOTO = "photo_drawing_or_comic"
-    ANSWERS = {"desc": "A logo.", "ocr": "Read text."}
+    ANSWERS = {"desc": "A logo.", "ocr": "Read text.", "region": ""}
 
     def setUp(self):
         super().setUp()
@@ -226,10 +228,12 @@ class TestTreatments(BaseConverterTest):
 
     def _convert(self, category, handling, to_format="markdown", source=None, **kwargs):
         self.fake = FakeAi([category], self.ANSWERS)
+        config = _config()
+        config.ai.region_model = "region"
         with patch("unified_ai_client.call_ai", side_effect=self.fake), patch("unified_ai_client.preload_model"):
             return textconverter.convert(str(source or self.source), to_format,
                                          ConvertOptions(image_handling=handling, **kwargs), output_dir=str(self.dir),
-                                         config=_config())
+                                         config=config)
 
     def test_what_stays_of_each_kind_of_image(self):
         expected = {  # handling: (figure: image, description; text image: image, text)
@@ -251,7 +255,7 @@ class TestTreatments(BaseConverterTest):
                   "append": {"cls", "ocr"}}
         for handling, models in needed.items():
             self._convert("text", handling)
-            self.assertEqual({model for model, _ in self.fake.calls}, models, handling)
+            self.assertEqual({model for model, _ in self.fake.calls} - {"region"}, models, handling)
         self._convert(self.PHOTO, "transcribe")
         self.assertEqual({model for model, _ in self.fake.calls}, {"cls"})
         self._convert(self.PHOTO, "describe")
@@ -317,6 +321,88 @@ class TestTreatments(BaseConverterTest):
         with pymupdf.open(pdf) as printed:
             self.assertEqual(sum(len(page.get_images()) for page in printed), 1)
             self.assertIn("A logo.", printed[0].get_text())
+
+
+class TestImageSource(BaseConverterTest):
+    """An image file as the source goes through the same options as an image in a document."""
+
+    PHOTO = "photo_drawing_or_comic"
+    ANSWERS = {"desc": "A logo.", "ocr": "Read text."}
+
+    def setUp(self):
+        super().setUp()
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.dir = Path(folder.name)
+
+    def _convert(self, category="text", to_format="markdown", **options):
+        self.fake = FakeAi([category], self.ANSWERS)
+        with patch("unified_ai_client.call_ai", side_effect=self.fake), patch("unified_ai_client.preload_model"):
+            return textconverter.convert(str(PNG), to_format, ConvertOptions(**options), output_dir=str(self.dir),
+                                         image_dir_name="imgs", config=_config())
+
+    def test_auto_transcribes_text_for_every_output(self):
+        for to_format in ("markdown", "html", "latex", "json"):
+            self.assertIn("Read text.", self._convert(to_format=to_format), to_format)
+
+    def test_auto_leaves_a_photo_as_an_image(self):
+        text = self._convert(self.PHOTO)
+        self.assertIn("![googlelogo_color_272x92dp.png](", text)
+        self.assertNotIn("A logo.", text)
+        self.assertEqual({model for model, _ in self.fake.calls}, {"cls"})
+
+    def test_describe_keeps_a_photo_with_its_description(self):
+        text = self._convert(self.PHOTO, image_handling="describe")
+        self.assertIn("![googlelogo_color_272x92dp.png](", text)
+        self.assertIn("A logo.", text)
+
+    def test_replace_leaves_the_text_only(self):
+        text = self._convert(self.PHOTO, image_handling="replace")
+        self.assertEqual(text.strip(), "A logo.")
+
+    def test_append_keeps_the_text_image_too(self):
+        text = self._convert(image_handling="append")
+        self.assertIn("Read text.", text)
+        self.assertIn("![", text)
+
+    def test_keep_calls_no_model_and_needs_no_client(self):
+        with patch("textconverter.image_describer.ai_client_available", return_value=False):
+            html = self._convert(to_format="html", image_handling="keep")
+        self.assertEqual(self.fake.calls, [])
+        self.assertIn('src="data:image/png;base64,', html)
+
+    def test_a_kept_image_links_to_its_source(self):
+        text = self._convert(image_handling="keep")
+        target = text[text.index("](") + 2:text.index(")")].strip("<>")
+        self.assertTrue((self.dir / target).samefile(PNG), text)
+
+    def test_discard_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "replace"):
+            self._convert(image_handling="discard")
+
+    def test_auto_needs_the_client(self):
+        with patch("textconverter.image_describer.ai_client_available", return_value=False):
+            with self.assertRaises(ImportError):
+                self._convert()
+
+    def test_split_needs_a_region_model(self):
+        with self.assertRaisesRegex(ValueError, "region_model"):
+            self._convert(image_handling="split")
+        self.assertEqual(self.fake.calls, [])
+
+    def test_an_image_from_a_url_outlives_the_conversion(self):
+        from textconverter._net import Download
+        download = Download(data=PNG.read_bytes(), content_type="image/png", charset=None)
+        with patch("textconverter._net.fetch", return_value=download):
+            text = textconverter.convert("https://x.test/logo.png", "markdown", ConvertOptions(image_handling="keep"),
+                                         output_dir=str(self.dir), image_dir_name="imgs")
+        self.assertIn("(imgs/image_1.png)", text)
+        self.assertTrue((self.dir / "imgs" / "image_1.png").exists())
+
+    def test_no_model_touches_a_refused_source_in_save_to_file(self):
+        with self.assertRaises(ValueError):
+            textconverter.save_to_file(str(PNG), str(self.dir / "out.md"), ConvertOptions(image_handling="discard"))
+        self.assertEqual(list(self.dir.iterdir()), [])
 
 
 class TestJsonIsParsable(BaseConverterTest):

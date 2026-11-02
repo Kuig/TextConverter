@@ -1,11 +1,7 @@
 from __future__ import annotations
 import os
-import shutil
-import tempfile
-from ..ast import Document, Image, walk
-from ..config import AppConfig
+from ..ast import Document, Image, Paragraph, walk
 from ..formats import PDF_MODES, check_choice
-from ..images import ImageStore
 from ..logger import log_action, log_warning
 from .markdown_parser import parse_markdown
 
@@ -32,34 +28,32 @@ def _import_pymupdf4llm():
 def parse_pdf(
     file_path: str,
     *,
-    config: AppConfig,
     pdf_mode: str = "text",
     code_parsing: bool = False,
     output_dir: str | None = None,
     image_dir_name: str | None = None,
     write_images: bool = True,
+    pages_dir: str | None = None,
 ) -> Document:
     """Parse a PDF into an AST Document.
 
     Args:
         file_path: PDF file path.
-        config: Application configuration (used by ``raster`` mode).
         pdf_mode: ``"text"`` reads the text layer with pymupdf4llm; ``"raster"``
-            renders every page to an image and transcribes it with the AI
-            describer, for scans or PDFs whose text layer is unusable.
+            renders every page to an image, for the image passes to read, for
+            scans or PDFs whose text layer is unusable.
         code_parsing: Enable heuristic code-block detection (``text`` mode only).
         output_dir: Base directory for extracted images (current directory if None).
         image_dir_name: Image subdirectory name inside ``output_dir``.
-        write_images: Extract embedded images, or keep the crops of the regions
-            of a page in ``raster`` mode.
+        write_images: Extract embedded images (``text`` mode only).
+        pages_dir: Folder for the page images of ``raster`` mode (``output_dir`` if None).
 
     Raises:
         ValueError: If ``pdf_mode`` is not one of ``formats.PDF_MODES``.
-        ImportError: If ``raster`` mode is requested without ``unified_ai_client``.
     """
     check_choice("pdf_mode", pdf_mode, PDF_MODES)
     if pdf_mode == "raster":
-        return _parse_raster(file_path, output_dir, image_dir_name, config, write_images)
+        return _parse_raster(file_path, pages_dir or output_dir or os.getcwd())
 
     pymupdf4llm = _import_pymupdf4llm()
 
@@ -98,47 +92,15 @@ def parse_pdf(
     return doc
 
 
-def _parse_raster(
-    file_path: str,
-    output_dir: str | None,
-    image_dir_name: str | None,
-    config: AppConfig,
-    write_images: bool,
-) -> Document:
-    """Render each page to an image and let the AI describer transcribe the pages.
-
-    Pages go through the whole image pipeline (classification, regions, then
-    OCR or description), batched by model. The page images
-    live in a temporary folder; a page that could not be transcribed is kept
-    as an image in the output image folder, so the content is not lost, and
-    so are the figures cut out of a page.
-    """
+def _parse_raster(file_path: str, pages_dir: str) -> Document:
+    """Render each page to an image file: a Document of one image per page, in order."""
     import pymupdf
-    from ..image_describer import ai_client_available, transcribe_images
 
-    if not ai_client_available():
-        raise ImportError(
-            "PDF raster mode needs the 'unified_ai_client' package to transcribe the pages. "
-            "Please install it first (e.g. via requirements_prod.txt)."
-        )
-
-    with tempfile.TemporaryDirectory(prefix="textconverter_pages_") as tmp:
-        with pymupdf.open(file_path) as pdf:
-            log_action(f"Rendering {pdf.page_count} pages at {RASTER_DPI} DPI...")
-            page_paths = []
-            for number, page in enumerate(pdf, 1):
-                path = os.path.join(tmp, f"page_{number:04d}.png")
-                page.get_pixmap(dpi=RASTER_DPI).save(path)
-                page_paths.append(path)
-
-        save_crop = ImageStore(output_dir, image_dir_name).save_png if write_images else None
-        doc = transcribe_images(page_paths, config=config, save_crop=save_crop)
-
-        keep_dir = os.path.join(output_dir or os.getcwd(), image_dir_name or "")
-        for node in walk(doc):
-            if isinstance(node, Image) and node.src in page_paths:
-                os.makedirs(keep_dir, exist_ok=True)
-                basename = os.path.basename(node.src)
-                shutil.copy(node.src, os.path.join(keep_dir, basename))
-                node.src = f"{image_dir_name}/{basename}" if image_dir_name else basename
+    doc = Document()
+    with pymupdf.open(file_path) as pdf:
+        log_action(f"Rendering {pdf.page_count} pages at {RASTER_DPI} DPI...")
+        for number, page in enumerate(pdf, 1):
+            path = os.path.abspath(os.path.join(pages_dir, f"page_{number:04d}.png"))
+            page.get_pixmap(dpi=RASTER_DPI).save(path)
+            doc.children.append(Paragraph(children=[Image(src=path, alt=os.path.basename(path))]))
     return doc

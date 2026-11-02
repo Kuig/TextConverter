@@ -17,12 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `[Image Reference: ...]` line is gone, and Markdown reads the new form back. A text image transcribed by `describe` is replaced by
   its text, without markers. `Image.render_metadata` is gone.
 - An image that has a description already (a JSON or Markdown document read back) is not analyzed again.
+- Image sources and raster PDF pages go through the same analysis as the images of a document and take every `image_handling` value:
+  `keep` gives the pages as images, without the AI client. `auto` transcribes their text and leaves figures as images, so a photo as
+  the source needs `describe` to get a description. `discard` on them is an error, with `replace` for the text alone.
+- `parse_image()` and `parse_pdf()` no longer take `config` and call no model; `transcribe_images()` is gone.
 - `auto` no longer calls the AI for JSON output, which keeps the images, embedded. JSON is an ordinary source: `discard`, the image
   output and the analysis apply to it.
 
 ### Fixed
 
 - `auto` to CSV no longer leaves an image folder next to the output.
+- A PDF or Word file converted from a URL no longer tries to download its own extracted images from the site.
 - `transcribe` also reads a whole-page scan, which `auto` used to leave as an image unless it held a figure.
 - `describe` keeps the image in Word, PowerPoint, Excel and PDF, where it used to leave only a reference to a file.
 - An image in a `data:` URL reaches the AI models with any output, and `link` writes it to a file with any output, not only LaTeX.

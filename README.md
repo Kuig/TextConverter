@@ -26,7 +26,7 @@ pip install .
 
 Core conversion features (such as Markdown, HTML, LaTeX, PDF, and heuristic code detection) run locally without any external AI dependencies.
 
-If you want to use AI-powered image descriptions (`image_handling="describe"`, `image_handling="auto_latex"` or converting standalone image inputs), you must install the `unified_ai_client` package:
+If you want the AI to read images (any `image_handling` from `split` on, LaTeX output with `auto`, or converting image files and raster PDFs), you must install the `unified_ai_client` package:
 ```powershell
 pip install -r requirements_prod.txt
 ```
@@ -59,7 +59,7 @@ The AI models tell two kinds of image apart: *text images*, whose category is in
 | `replace` | + OCR, description | its text | its description |
 | `append` | + OCR, description | the image and its text | the image and its description |
 
-From `split` on, a page holding more than text (a scan, a raster PDF page, an image file) is cut into regions when `ai.region_model` is set, in reading order, and each region is treated like an image. Tables, formulas and formatting in an answer become real tables, equations and text in every format. Next to an image that stays, its text goes between `----- Start/End of picture description -----` lines, after the paragraph, table or heading when the image is in a link, a table cell or a heading; JSON output keeps it in the image's `description`. An image the AI could not process stays an image. With an image file as the source, `<output stem>_regions.png` next to the output shows what the AI found in it. To check an image classified badly inside a document, convert that image on its own.
+From `split` on, a page holding more than text (a scan, a raster PDF page, an image file) is cut into regions when `ai.region_model` is set, in reading order, and each region is treated like an image. Tables, formulas and formatting in an answer become real tables, equations and text in every format. Next to an image that stays, its text goes between `----- Start/End of picture description -----` lines, after the paragraph, table or heading when the image is in a link, a table cell or a heading; JSON output keeps it in the image's `description`. An image the AI could not process stays an image. An image file or a raster PDF is the document itself, so it takes the same values, except `discard`, which raises an error (`replace` leaves the text alone). With an image file as the source and an analysis, `<output stem>_regions.png` next to the output shows what the AI found in it. To check an image classified badly inside a document, convert that image on its own.
 
 `auto`, the default, depends on the conversion:
 
@@ -191,7 +191,7 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
 * **Every conversion**: Each source offers Markdown, LaTeX, HTML (no theme, light, dark), PDF, Word, PowerPoint, Excel and CSV, except its own format. Excel and CSV keep the tables only, and fail on a document without tables. JSON is reached through the CLI: it is the AST, for debugging or for reusing a parsed document.
   * **PDFs**: Each entry also comes in a "(raster)" variant that renders the pages and transcribes them with AI (`--pdf-mode raster`), for scanned PDFs.
   * **HTML / HTM**: HTML is a target too, to clean a page up, and each entry also comes in a "main content" variant (`--extract-html` to filter out boilerplate).
-  * **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`): The image is transcribed or described by the AI models of `config.json`.
+  * **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`): The text in the image is transcribed by the AI models of `config.json`.
 * **Nothing is overwritten**: The result goes next to the source file as `<name>_converted<ext>`, then `<name>_converted2<ext>` and so on.
 * **Same behavior as the CLI**: Every entry runs `Windows Integration/convert.cmd`, which calls `textconverter convert` with its default options (so `--image-handling auto`). PDF sources in text mode also get `--code-parsing`. If a conversion fails, the window stays open to show the error.
 
