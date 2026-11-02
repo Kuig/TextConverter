@@ -43,7 +43,6 @@ class Image(Node):
     description: str | None = None
     category: str | None = None
     extracted_text: str | None = None
-    render_metadata: bool = True
     caption: list['InlineElement'] = field(default_factory=list)
     label: str | None = None
 
@@ -224,8 +223,13 @@ NODE_TYPES: dict[str, type[Node]] = {
 
 # Lines that frame an image description when it is rendered as text, so the
 # Markdown parser can rebuild Image.description from a rendered document.
-DESCRIPTION_START = "----- Start of picture description -----"
+DESCRIPTION_START = "----- Start of picture description"
 DESCRIPTION_END = "----- End of picture description -----"
+
+
+def description_start(category: str | None) -> str:
+    """The line that opens the description of an image of ``category``."""
+    return f"{DESCRIPTION_START}{f' ({category})' if category else ''} -----"
 
 
 # Every attribute through which a node can hold child nodes. A new container

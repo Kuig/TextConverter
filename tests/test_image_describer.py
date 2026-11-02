@@ -67,11 +67,11 @@ def _doc_with_images(n: int):
 
 class TestPhasedProcessing(BaseConverterTest):
 
-    def _run(self, fake, doc, latex_auto=False, config=None):
+    def _run(self, fake, doc, handling="describe", config=None):
         from textconverter.image_describer import process_images
         with patch("unified_ai_client.call_ai", side_effect=fake), \
              patch("unified_ai_client.preload_model") as preload:
-            process_images(doc, "", latex_auto=latex_auto, config=config or _config())
+            process_images(doc, "", handling=handling, config=config or _config())
         return [c.args[1] for c in preload.call_args_list]
 
     def test_calls_are_grouped_by_model(self):
@@ -95,7 +95,7 @@ class TestPhasedProcessing(BaseConverterTest):
         from textconverter.ast import Image, walk
         fake = FakeAi(["table"], {"Table Recognition:": HTML_TABLE})
         doc = _doc_with_images(1)
-        self._run(fake, doc)
+        self._run(fake, doc, handling="append")
         (img,) = [n for n in walk(doc) if isinstance(n, Image)]
         # GLM-OCR writes every row with <td>: the first row is the header
         self.assertIn("| a | b |\n|---|---|\n| 1 | 2 |", img.description)
@@ -115,7 +115,7 @@ class TestPhasedProcessing(BaseConverterTest):
         fake = FakeAi(["formula", "text", "photo_drawing_or_comic"],
                        {"Formula Recognition:": "E = mc^2", "Text Recognition:": "Some words."})
         doc = _doc_with_images(3)
-        self._run(fake, doc, latex_auto=True)
+        self._run(fake, doc, handling="transcribe")
         self.assertEqual(doc.children[0], Equation(code="E = mc^2", inline=False))
         self.assertEqual(doc.children[1], Paragraph(children=[Text(content="Some words.")]))
         self.assertIsNone(doc.children[2].children[0].description)
@@ -127,7 +127,7 @@ class TestPhasedProcessing(BaseConverterTest):
         fake = FakeAi(["table"], {"Table Recognition:": HTML_TABLE})
         doc = Document(children=[Paragraph(children=[
             Text(content="Before."), Image(src=FOTO), Text(content="After.")])])
-        self._run(fake, doc, latex_auto=True)
+        self._run(fake, doc, handling="transcribe")
         self.assertEqual([type(n) for n in doc.children], [Paragraph, Table, Paragraph])
         self.assertEqual(doc.children[2].children, [Text(content="After.")])
 
@@ -137,7 +137,7 @@ class TestPhasedProcessing(BaseConverterTest):
         fake = FakeAi(["formula"], {"Formula Recognition:": "$$a+b$$"})
         cell = TableCell(children=[Image(src=FOTO)])
         doc = Document(children=[Table(rows=[TableRow(cells=[cell])])])
-        self._run(fake, doc, latex_auto=True)
+        self._run(fake, doc, handling="transcribe")
         self.assertEqual(cell.children, [Equation(code="a+b", inline=True)])
 
     def test_one_file_is_processed_once(self):
@@ -150,7 +150,7 @@ class TestPhasedProcessing(BaseConverterTest):
         fake = FakeAi(["photo_drawing_or_comic"], {"desc": "A description."})
         from textconverter.image_describer import process_images
         with patch("unified_ai_client.call_ai", side_effect=fake), patch("unified_ai_client.preload_model"):
-            process_images(doc, str(OUTPUT_DIR.parent), config=_config())
+            process_images(doc, str(OUTPUT_DIR.parent), handling="describe", config=_config())
         self.assertEqual([m for m, _ in fake.calls], ["cls", "desc"])
         self.assertEqual({(n.category, n.description) for n in walk(doc) if isinstance(n, Image)},
                          {("photo_drawing_or_comic", "A description.")})
@@ -159,9 +159,9 @@ class TestPhasedProcessing(BaseConverterTest):
         """Without unified_ai_client an analysis nobody asked for leaves plain references."""
         from textconverter.image_describer import process_images
         with patch("textconverter.image_describer.ai_client_available", return_value=False):
-            process_images(_doc_with_images(1), "", latex_auto=True, required=False, config=_config())
+            process_images(_doc_with_images(1), "", handling="transcribe", required=False, config=_config())
             with self.assertRaises(ImportError):
-                process_images(_doc_with_images(1), "", config=_config())
+                process_images(_doc_with_images(1), "", handling="describe", config=_config())
 
 
 ARTICLE = str(INPUT_DIR / "Article_image.png")
@@ -194,13 +194,13 @@ class TestRegions(BaseConverterTest):
         from textconverter.ast import Document, Image, Paragraph
         return Document(children=[Paragraph(children=[Image(src=path, alt="page")]) for path in paths or (ARTICLE,)])
 
-    def _run(self, fake, doc=None, config=None, save_crop="default", **kwargs):
+    def _run(self, fake, doc=None, config=None, save_crop="default", handling="describe"):
         from textconverter.image_describer import process_images
         doc = doc or self._doc()
         self.call = MagicMock(side_effect=fake)
         with patch("unified_ai_client.call_ai", self.call), patch("unified_ai_client.preload_model") as preload:
-            process_images(doc, "", config=config or _region_config(),
-                           save_crop=self._save if save_crop == "default" else save_crop, **kwargs)
+            process_images(doc, "", handling=handling, config=config or _region_config(),
+                           save_crop=self._save if save_crop == "default" else save_crop)
         self.preloaded = [c.args[1] for c in preload.call_args_list]
         return doc
 
@@ -341,7 +341,7 @@ class TestRegions(BaseConverterTest):
         config = _region_config()
         config.ai.region_model = ""
         fake = self._fake()
-        doc = self._run(fake, config=config)
+        doc = self._run(fake, config=config, handling="append")
         self.assertEqual([m for m, _ in fake.calls], ["cls", "ocr"])
         self.assertEqual(doc.children[0].children[0].src, ARTICLE)
 
@@ -367,7 +367,7 @@ class TestRegions(BaseConverterTest):
         """A partial or broken answer gives the behaviour with no regions."""
         for answer in ("not json", '{"1": "text"}'):
             fake = self._fake(region=answer)
-            doc = self._run(fake)
+            doc = self._run(fake, handling="append")
             self.assertEqual([m for m, _ in fake.calls], ["cls", "region", "ocr"])
             self.assertEqual(doc.children[0].children[0].description, "Some text.")
 
@@ -375,12 +375,12 @@ class TestRegions(BaseConverterTest):
         from textconverter.regions import find_blocks
         labels = json.dumps({str(n): "text" for n in range(1, len(find_blocks(ARTICLE)) + 1)})
         fake = self._fake(region=labels)
-        doc = self._run(fake)
+        doc = self._run(fake, handling="append")
         self.assertEqual([m for m, _ in fake.calls], ["cls", "region", "ocr"])
         self.assertEqual(doc.children[0].children[0].src, ARTICLE)
 
     def test_failed_labelling_call_leaves_the_page_whole(self):
-        doc = self._run(self._fake(region=""))
+        doc = self._run(self._fake(region=""), handling="append")
         self.assertEqual(doc.children[0].children[0].category, "document_scan")
 
     def test_each_copy_of_a_file_gets_the_regions(self):
@@ -395,18 +395,34 @@ class TestRegions(BaseConverterTest):
     def test_latex_auto_keeps_figures_as_plain_images(self):
         from textconverter.ast import Image
         fake = self._fake()
-        doc = self._run(fake, latex_auto=True)
+        doc = self._run(fake, handling="transcribe")
         self.assertNotIn("desc", [m for m, _ in fake.calls])
         self.assertEqual(len(self.saved), 2)
         photo = doc.children[1].children[0]
         self.assertIsInstance(photo, Image)
         self.assertIsNone(photo.description)
 
-    def test_render_metadata_reaches_the_regions(self):
-        from textconverter.ast import Document, Image, Paragraph
-        doc = Document(children=[Paragraph(children=[Image(src=ARTICLE, render_metadata=False)])])
-        self._run(self._fake(), doc=doc)
-        self.assertFalse(doc.children[1].children[0].render_metadata)
+    def test_split_keeps_every_region_as_an_image(self):
+        from textconverter.ast import Image, walk
+        fake = self._fake()
+        doc = self._run(fake, handling="split")
+        self.assertEqual({m for m, _ in fake.calls}, {"cls", "region"})
+        images = [n for n in walk(doc) if isinstance(n, Image)]
+        self.assertEqual(len(images), len(self.saved))
+        self.assertTrue(all(image.src.startswith("images/") and not image.description for image in images))
+
+    def test_append_keeps_every_crop_with_its_text(self):
+        from textconverter.ast import Image, walk
+        doc = self._run(self._fake(), handling="append")
+        images = [n for n in walk(doc) if isinstance(n, Image)]
+        self.assertEqual(len(images), len(self.saved))
+        self.assertEqual({image.description for image in images}, {"Some text.", "A photo."})
+
+    def test_replace_stores_no_crop(self):
+        from textconverter.ast import Image, walk
+        doc = self._run(self._fake(), handling="replace")
+        self.assertEqual(self.saved, [])
+        self.assertFalse(any(isinstance(n, Image) for n in walk(doc)))
 
     def test_in_a_table_cell_the_image_stays_and_regions_follow(self):
         from textconverter.ast import Document, Image, Table, TableCell, TableRow
@@ -477,7 +493,7 @@ class TestRegionsInOutput(BaseConverterTest):
 
     def test_latex_links_the_stored_figures(self):
         output, _ = self._save(name="out.tex")
-        self.assertIn(r"out\_images/image\_1.png", output.read_text(encoding="utf-8"))
+        self.assertIn(r"\includegraphics{out_images/image_1.png}", output.read_text(encoding="utf-8"))
         self.assertEqual(len(self._images()), 2)
 
     def test_json_holds_the_figures_with_relative_paths(self):
@@ -491,7 +507,6 @@ class TestRegionsInOutput(BaseConverterTest):
         output, _ = self._save(name="out.html")
         text = output.read_text(encoding="utf-8")
         self.assertIn('src="data:image/png;base64,', text)
-        self.assertNotIn("Image Reference: data:", text)
         self.assertIn("A photo.", text)
         self.assertEqual(self._images(), [])
 
@@ -579,7 +594,7 @@ class TestDocumentContext(BaseConverterTest):
         from textconverter.image_describer import process_images
         fake = FakeAi(list(categories), {"desc": "A description.", "ocr": "Some text."})
         with patch("unified_ai_client.call_ai", side_effect=fake), patch("unified_ai_client.preload_model"):
-            process_images(doc, "", config=config or _config())
+            process_images(doc, "", handling="describe", config=config or _config())
         self.models = [model for model, _ in fake.calls]
         return [prompt for model, prompt in fake.calls if model == "desc"]
 
@@ -662,7 +677,7 @@ class TestThinking(BaseConverterTest):
         fake = FakeAi(["diagram"], {"desc": "A diagram."})
         call = MagicMock(side_effect=fake)
         with patch("unified_ai_client.call_ai", call), patch("unified_ai_client.preload_model"):
-            process_images(_doc_with_images(1), "", config=config)
+            process_images(_doc_with_images(1), "", handling="describe", config=config)
         return {c.kwargs["model"]: c.kwargs["thinking"] for c in call.call_args_list}
 
     def test_off_by_default(self):
@@ -709,12 +724,12 @@ class TestDescribedImagesInOutput(BaseConverterTest):
              patch("unified_ai_client.preload_model"), \
              patch("textconverter.api.load_config", return_value=_config()):
             return textconverter.convert_text(f"Intro.\n\n![pic]({FOTO})\n", "markdown", to_format,
-                                              textconverter.ConvertOptions(image_handling="describe"))
+                                              textconverter.ConvertOptions(image_handling="append"))
 
-    def test_markdown_keeps_reference_markers_and_table(self):
+    def test_markdown_keeps_the_image_markers_and_table(self):
         md = self._convert("markdown")
-        self.assertIn("Image Reference:", md)
-        self.assertIn("----- Start of picture description -----", md)
+        self.assertIn("![pic](", md)
+        self.assertIn("----- Start of picture description (table) -----", md)
         self.assertIn("| a | b |", md)
         self.assertIn("----- End of picture description -----", md)
 
@@ -738,14 +753,13 @@ class TestDescribedImagesInOutput(BaseConverterTest):
 
     def test_described_image_in_a_link_keeps_its_place(self):
         """The whole description used to be crammed into the link text."""
-        from textconverter.ast import Link, Paragraph, Text
+        from textconverter.ast import Image, Link, Paragraph, Text
         link = Link(url="https://e.org", content=[self._described()])
         doc = self._lowered(Paragraph(children=[Text(content="See "), link, Text(content=" here.")]))
         first, header = doc.children[:2]
-        self.assertEqual(first.children[1].content,
-                         [Text(content="[Image Reference: pic.png - Class: photo_drawing_or_comic]", bold=True)])
+        self.assertEqual(first.children[1].content, [Image(src="pic.png", category="photo_drawing_or_comic")])
         self.assertEqual(first.children[2], Text(content=" here."))
-        self.assertIn("Start of picture description", header.children[-1].content)
+        self.assertIn("Start of picture description", header.children[0].content)
         self.assertEqual(doc.children[-1].children[:2], [Text(content="Figure: "), Text(content="The car")])
 
     def test_described_image_in_a_table_cell_follows_the_table(self):
@@ -753,7 +767,7 @@ class TestDescribedImagesInOutput(BaseConverterTest):
         cell = TableCell(children=[self._described()])
         doc = self._lowered(Table(rows=[TableRow(cells=[cell])]), Paragraph(children=[Text(content="After.")]))
         self.assertIsInstance(doc.children[0], Table)
-        self.assertEqual(cell.children[0].content[:16], "[Image Reference")
+        self.assertEqual(cell.children[0].src, "pic.png")
         self.assertEqual(doc.children[-1].children, [Text(content="After.")])
         self.assertIn("red", "".join(n.content for p in doc.children[1:-1] for n in getattr(p, "children", [])
                                      if isinstance(n, Text)))

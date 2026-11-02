@@ -15,8 +15,6 @@ from .regions import (
 )
 from .renderers._common import plain_text, summary_text
 
-# Categories that ``auto_latex`` transcribes; every other image keeps a plain reference.
-LATEX_AUTO_CATEGORIES = ("text", "table", "formula")
 # Categories of a whole page, which may hold more than text and so can split into regions.
 PAGE_CATEGORIES = ("text", "document_scan")
 # The labels the default ``region_prompt`` offers; a region's label is its category.
@@ -40,6 +38,31 @@ _MISSING_CLIENT = (
     "The 'unified_ai_client' package is required for AI-based image description. "
     "Please install it first (e.g. via requirements_prod.txt)."
 )
+
+
+@dataclass(frozen=True)
+class Treatment:
+    """What an ``image_handling`` value makes of an image once it has been analyzed.
+
+    Each attribute is ``"image"``, ``"text"`` or ``"both"``: what stays of the
+    image, its transcription or description, or both. A text image is one whose
+    category is in ``ai.ocr_prompts``; the others are figures.
+    """
+    text_image: str
+    figure: str
+
+    def of(self, category: str | None, config: AppConfig) -> str:
+        """What stays of an image of ``category``."""
+        return self.text_image if category in config.ai.ocr_prompts else self.figure
+
+
+TREATMENTS = {
+    "split": Treatment("image", "image"),
+    "transcribe": Treatment("text", "image"),
+    "describe": Treatment("text", "both"),
+    "replace": Treatment("text", "text"),
+    "append": Treatment("both", "both"),
+}
 
 
 def ai_client_available() -> bool:
@@ -238,7 +261,7 @@ def _plan_split(img: Image, img_path: str, blocks: list[Block], tmp_dir: str, co
             padding = _REGION_PADDING if crop.box.label in ai.ocr_prompts else 0
             with open(path, "wb") as f:
                 f.write(crop_image(img_path, crop, padding))
-            regions.append(Image(src=path, alt=img.alt, category=crop.box.label, render_metadata=img.render_metadata))
+            regions.append(Image(src=path, alt=img.alt, category=crop.box.label))
     except (OSError, ValueError) as exc:
         log_warning(f"Could not split {img_path} into regions, keeping the page whole: {exc}")
         return None
@@ -275,16 +298,17 @@ def _page_blocks(jobs: list[tuple[Image, str]], config: AppConfig) -> dict[int, 
     return blocks_by_image
 
 
-def _keep_crops(splits: dict[int, Split], config: AppConfig, save_crop: SaveCrop | None) -> None:
-    """Store the crops that are content: figures, and what could not be transcribed.
+def _keep_crops(splits: dict[int, Split], treatment: Treatment, config: AppConfig,
+                save_crop: SaveCrop | None) -> None:
+    """Store the crops the document keeps: the treatment's, and what could not be read.
 
     Called while the temporary folder exists; a crop that is not stored loses
     its ``src``, and with no ``save_crop`` none is.
     """
     for split in splits.values():
         for region in split.regions:
-            transcribed = region.category in config.ai.ocr_prompts and region.description
-            if save_crop is None or transcribed:
+            replaced = treatment.of(region.category, config) == "text" and region.description
+            if save_crop is None or replaced:
                 region.src = ""
                 continue
             with open(region.src, "rb") as f:
@@ -292,17 +316,11 @@ def _keep_crops(splits: dict[int, Split], config: AppConfig, save_crop: SaveCrop
 
 
 def _region_nodes(split: Split) -> list[Node]:
-    """The AST blocks of a split page, in reading order.
-
-    A stored crop is an Image node, carrying its description; without a file a
-    region is what it says. A region with neither is lost, and reported.
-    """
+    """The regions of a split page as Image nodes, in reading order; one with no content is reported."""
     nodes: list[Node] = []
     for region in split.regions:
-        if region.src:
+        if region.src or region.description:
             nodes.append(Paragraph(children=[replace(region)]))
-        elif region.description:
-            nodes.extend(transcription_nodes(region.description, region.category))
         else:
             log_warning(f"A region labelled {region.category} could not be processed and is missing.")
     return nodes
@@ -313,7 +331,7 @@ def describe_images(
     base_dir: str,
     *,
     config: AppConfig,
-    latex_auto: bool = False,
+    treatment: Treatment,
     save_crop: SaveCrop | None = None,
     contexts: dict[int, str] | None = None,
 ) -> dict[int, Split]:
@@ -322,7 +340,8 @@ def describe_images(
     Every image is classified first; then pages holding more than text are
     split into regions; then the description model describes the images
     outside ``ai.ocr_prompts``; finally the OCR model (or, without one, the
-    description model) transcribes the rest. With split pages and
+    description model) transcribes the rest. ``treatment`` leaves out the
+    phases whose result would not be used. With split pages and
     ``ai.description_context`` the last two phases swap, so that a figure's
     description can use the text around it. The calls are grouped by model, so
     models swap between phases and never image by image. Sets ``category`` and
@@ -336,7 +355,7 @@ def describe_images(
         images: Image nodes to process.
         base_dir: Directory that relative image paths resolve against.
         config: The application configuration.
-        latex_auto: Only transcribe ``LATEX_AUTO_CATEGORIES``; describe nothing.
+        treatment: What is kept of each image.
         save_crop: Stores the crops worth keeping; without it they are dropped.
         contexts: Text for the description of an image, by ``id`` of its node.
 
@@ -365,8 +384,8 @@ def describe_images(
     splits: dict[int, Split] = {}
     with tempfile.TemporaryDirectory(prefix="textconverter_regions_") as tmp_dir:
         try:
-            _run_phases(jobs, config, latex_auto, tmp_dir, splits, dict(contexts or {}))
-            _keep_crops(splits, config, save_crop)
+            _run_phases(jobs, config, treatment, tmp_dir, splits, dict(contexts or {}))
+            _keep_crops(splits, treatment, config, save_crop)
         finally:
             for img, img_path in jobs:
                 for copy in copies[os.path.normcase(os.path.abspath(img_path))]:
@@ -379,7 +398,7 @@ def describe_images(
 def _run_phases(
     jobs: list[tuple[Image, str]],
     config: AppConfig,
-    latex_auto: bool,
+    treatment: Treatment,
     tmp_dir: str,
     splits: dict[int, Split],
     contexts: dict[int, str],
@@ -391,7 +410,6 @@ def _run_phases(
     ai = config.ai
 
     init_ai(config)
-    total = len(jobs)
     current_model = ""
 
     def run_phase(verb: str, model: str, phase_jobs: list[tuple[Image, str]],
@@ -430,14 +448,8 @@ def _run_phases(
     active = [job for job in jobs if id(job[0]) not in splits]
     active.extend((region, region.src) for page in splits.values() for region in page.regions)
 
-    to_describe = [job for job in active if not latex_auto and job[0].category not in ai.ocr_prompts]
-    to_transcribe = [
-        job for job in active
-        if job[0].category in ai.ocr_prompts
-        and (not latex_auto or job[0].category in LATEX_AUTO_CATEGORIES)
-    ]
-    if latex_auto and total > len(to_transcribe):
-        log_action("(LaTeX Auto mode: skipping description for non-text/table/formula images)")
+    to_describe = [job for job in active if job[0].category not in ai.ocr_prompts and treatment.figure != "image"]
+    to_transcribe = [job for job in active if job[0].category in ai.ocr_prompts and treatment.text_image != "image"]
 
     def describe(img: Image, img_path: str) -> None:
         prompt = _description_prompt(img, config, contexts.get(id(img), ""))
@@ -463,17 +475,24 @@ def _run_phases(
         run_phase("Transcribing", ai.ocr_model or ai.description_model, to_transcribe, transcribe)
 
 
-def _apply_latex_auto(node: Node) -> None:
-    """Replace each transcribed image with its content as AST nodes.
+def apply_treatment(node: Node, treatment: Treatment, config: AppConfig) -> None:
+    """Make each analyzed image what ``treatment`` says, in place.
 
-    A formula becomes an Equation, a table a Table, and so on (see
-    ``transcription_nodes``); an image alone in its paragraph replaces the
-    whole paragraph. Images that were not transcribed stay as references.
+    What stays as text replaces the image as AST nodes: a formula becomes an
+    Equation, a table a Table, and so on (see ``transcription_nodes``), and an
+    image alone in its paragraph replaces the whole paragraph. An image that
+    keeps both stays with its ``description``, which becomes nodes just before
+    rendering. An image with no text stays as it is.
     """
     def blocks(img: Image) -> Expansion | None:
-        if img.category not in LATEX_AUTO_CATEGORIES or not img.description:
+        if not img.description:
             return None
-        return Expansion(transcription_nodes(img.description, img.category))
+        kept = treatment.of(img.category, config)
+        if kept == "image":
+            img.description = None
+        if kept == "text" or (kept == "both" and not img.src):
+            return Expansion(transcription_nodes(img.description, img.category))
+        return None
 
     expand_images(node, blocks)
 
@@ -483,43 +502,43 @@ def process_images(
     base_dir: str,
     *,
     config: AppConfig,
-    latex_auto: bool = False,
+    handling: str,
     required: bool = True,
     save_crop: SaveCrop | None = None,
 ) -> None:
-    """Classify and describe all Image nodes of a document AST in place.
+    """Analyze the Image nodes of a document AST and treat them as ``handling`` says, in place.
 
-    A page split into regions is replaced by them, in reading order; where
-    blocks cannot go (a link, a table cell, a heading) the image stays and they
-    follow.
+    An image that has a ``description`` already (a document written with one,
+    read back) is not analyzed again. A page split into regions is replaced by
+    them, in reading order; where blocks cannot go (a link, a table cell, a
+    heading) the image stays and they follow.
 
     Args:
         doc: Root AST document node.
         base_dir: Base directory for resolving relative image paths.
         config: Application configuration.
-        latex_auto: Transcribe only text/table/formula images and replace them
-            with their content (see ``_apply_latex_auto``).
+        handling: A key of ``TREATMENTS``.
         required: Without ``unified_ai_client``, raise ImportError; when False
             (nobody asked for the AI by name), keep the images with a warning.
         save_crop: Stores the crops worth keeping; without it they are dropped.
     """
-    images = [node for node in walk(doc) if isinstance(node, Image)]
-    if not images:
-        return
-    if not ai_client_available():
+    treatment = TREATMENTS[handling]
+    images = [node for node in walk(doc) if isinstance(node, Image) and not node.description]
+    splits: dict[int, Split] = {}
+    if images and not ai_client_available():
         if required:
             raise ImportError(_MISSING_CLIENT)
-        log_warning("unified_ai_client is not installed: images are kept as plain references.")
-        return
-
-    ai = config.ai
-    log_info(
-        f"Starting description of {len(images)} images via {ai.provider} "
-        f"(Class: {ai.classification_model}, Desc: {ai.description_model}, "
-        f"OCR: {ai.ocr_model or ai.description_model})..."
-    )
-    splits = describe_images(images, base_dir, config=config, latex_auto=latex_auto, save_crop=save_crop,
-                             contexts=_document_contexts(doc, ai.description_context))
+        log_warning("unified_ai_client is not installed: the images are not analyzed.")
+    elif images:
+        ai = config.ai
+        log_info(
+            f"Starting description of {len(images)} images via {ai.provider} "
+            f"(Class: {ai.classification_model}, Desc: {ai.description_model}, "
+            f"OCR: {ai.ocr_model or ai.description_model})..."
+        )
+        splits = describe_images(images, base_dir, config=config, treatment=treatment, save_crop=save_crop,
+                                 contexts=_document_contexts(doc, ai.description_context))
+        log_success("Image description completed.")
 
     def regions(img: Image) -> Expansion | None:
         if id(img) not in splits:
@@ -528,9 +547,7 @@ def process_images(
 
     if splits:
         expand_images(doc, regions)
-    if latex_auto:
-        _apply_latex_auto(doc)
-    log_success("Image description completed.")
+    apply_treatment(doc, treatment, config)
 
 
 def _write_overlay(img: Image, img_path: str, split: Split | None, overlay_path: str) -> None:
@@ -570,7 +587,8 @@ def transcribe_images(
     if not ai_client_available():
         raise ImportError(_MISSING_CLIENT)
     images = [Image(src=path, alt=os.path.basename(path)) for path in paths]
-    splits = describe_images(images, "", config=config, save_crop=save_crop)
+    treatment = TREATMENTS["describe"]
+    splits = describe_images(images, "", config=config, treatment=treatment, save_crop=save_crop)
     if overlay_path and images:
         _write_overlay(images[0], paths[0], splits.get(id(images[0])), overlay_path)
 
@@ -584,4 +602,5 @@ def transcribe_images(
             doc.children.append(Paragraph(children=[img]))
             continue
         doc.children.extend(transcription_nodes(img.description, img.category))
+    apply_treatment(doc, treatment, config)
     return doc

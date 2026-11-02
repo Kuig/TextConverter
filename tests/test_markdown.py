@@ -215,13 +215,14 @@ class TestMarkdownEscaping(BaseConverterTest):
         from textconverter.images import lower_image_descriptions
         from textconverter.parsers.markdown_parser import parse_markdown
         from textconverter.renderers.markdown_renderer import render_markdown
-        image = Image(src="imgs/my_pic.png", description="A *red* car.\n\n| a | b |\n|---|---|\n| 1 | 2 |",
-                      category="photo_drawing_or_comic")
+        image = Image(src="imgs/my_pic.png", alt="A [car]", title="Red",
+                      description="A *red* car.\n\n| a | b |\n|---|---|\n| 1 | 2 |", category="photo_drawing_or_comic")
         doc = Document(children=[Paragraph(children=[image])])
         lower_image_descriptions(doc)
         back = parse_markdown(render_markdown(doc))
         (img,) = back.children[0].children
-        self.assertEqual((img.src, img.category), ("imgs/my_pic.png", "photo_drawing_or_comic"))
+        self.assertEqual((img.src, img.alt, img.title, img.category),
+                         ("imgs/my_pic.png", "A [car]", "Red", "photo_drawing_or_comic"))
         self.assertIn("| 1 | 2 |", img.description)
 
 

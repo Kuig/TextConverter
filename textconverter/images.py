@@ -20,8 +20,8 @@ from dataclasses import dataclass, replace
 
 from . import _net
 from .ast import (
-    DESCRIPTION_END, DESCRIPTION_START, Abstract, BlockQuote, Document, Equation, Image,
-    LineBreak, Link, ListItem, Node, Paragraph, Text, child_lists, walk,
+    DESCRIPTION_END, Abstract, BlockQuote, Document, Equation, Image, LineBreak, Link, ListItem, Node,
+    Paragraph, Text, child_lists, description_start, walk,
 )
 from .logger import log_action, log_warning
 from .renderers._common import caption_paragraphs, safe_href
@@ -297,9 +297,12 @@ class Expansion:
     table cell or a heading, ``inline`` takes its place and ``blocks`` follow
     the paragraph, table or heading; with ``inline`` None, an inline form of
     the blocks takes its place instead (see ``_as_inline``) and nothing follows.
+    With ``opens`` set, ``inline`` is a paragraph ahead of the blocks in a
+    paragraph too: the image stays wherever it is.
     """
     blocks: list[Node]
     inline: list[Node] | None = None
+    opens: bool = False
 
 
 # Returns what replaces an image, or None to keep the image.
@@ -357,6 +360,8 @@ def _split_paragraph(par: Paragraph, expand: Expander) -> list[Node]:
             continue
         split = True
         flush()
+        if expansion.opens:
+            result.append(Paragraph(children=expansion.inline))
         result.extend(expansion.blocks)
     if not split:
         return [par, *deferred]
@@ -403,33 +408,25 @@ def _expand_within(node: Node, expand: Expander, pending: list[Node]) -> None:
 
 
 def _description_blocks(img: Image) -> Expansion | None:
-    """A described image as its reference line and description; in a link the reference stays there."""
+    """A described image stays where it is, followed by its description between marker lines."""
     from .parsers.transcription_parser import transcription_nodes
     if not img.description:
         return None
-    body = transcription_nodes(img.description, img.category)
-    if not img.render_metadata:
-        return Expansion(body, inline=[replace(img, description=None)])
-    category = f" - Class: {img.category}" if img.category else ""
-    # An embedded image is its own reference: its source is the whole file in base64.
-    reference: Node = (replace(img, description=None, caption=[], label=None) if img.src.startswith("data:")
-                       else Text(content=f"[Image Reference: {img.src}{category}]", bold=True))
-    header = Paragraph(children=[replace(reference), LineBreak(), Text(content=DESCRIPTION_START, bold=True)])
-    return Expansion([header, *body, Paragraph(children=[Text(content=DESCRIPTION_END, bold=True)])],
-                     inline=[reference])
+    return Expansion([Paragraph(children=[Text(content=description_start(img.category), bold=True)]),
+                      *transcription_nodes(img.description, img.category),
+                      Paragraph(children=[Text(content=DESCRIPTION_END, bold=True)])],
+                     inline=[replace(img, description=None, caption=[], label=None)], opens=True)
 
 
 def lower_image_descriptions(doc: Node) -> None:
     """Turn every described image into ordinary nodes, so renderers need no image metadata.
 
-    An image with a ``description`` becomes a reference line and the
-    description between ``DESCRIPTION_START`` / ``DESCRIPTION_END`` markers,
-    parsed like a transcription (tables, formulas and formatting become real
-    nodes); with ``render_metadata`` off, only the parsed description. In a
-    link, a table cell or a heading the reference line (or the image) stays in
-    place and the description follows the paragraph, table or heading. A
-    figure's caption follows the description. Run before rendering text
-    formats; the JSON output keeps the images as they are.
+    An image with a ``description`` is followed by it, between
+    ``description_start`` / ``DESCRIPTION_END`` lines, parsed like a
+    transcription (tables, formulas and formatting become real nodes). In a
+    link, a table cell or a heading the description follows the paragraph,
+    table or heading. A figure's caption follows the description. Run before
+    rendering; the JSON output keeps the images as they are.
     """
     expand_images(doc, _description_blocks)
 

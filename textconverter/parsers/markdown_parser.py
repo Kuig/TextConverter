@@ -43,8 +43,8 @@ _PICTURE_TEXT = re.compile(
 )
 # A described image as the renderers write it (see images.lower_image_descriptions).
 _DESCRIBED_IMAGE = re.compile(
-    r'^\*\*\\?\[Image Reference: (?P<src>.*?)(?: - Class: (?P<cat>[\w-]+))?\\?\]\*\*[ \t]*\n'
-    rf'\*\*\\?{re.escape(DESCRIPTION_START)}\*\*[ \t]*\n'
+    r'^(?P<image>!\[[^\n]*\]\([^\n]*\))[ \t]*\n\s*'
+    rf'\*\*\\?{re.escape(DESCRIPTION_START)}(?: \((?P<cat>[^)\n]+)\))? -----\*\*[ \t]*\n'
     rf'(?P<desc>.*?)\n[ \t]*\*\*\\?{re.escape(DESCRIPTION_END)}\*\*[ \t]*$',
     re.MULTILINE | re.DOTALL,
 )
@@ -87,8 +87,11 @@ def _placeholder_node(kind: str, payload: dict):
     if kind == 'MATHBLOCK':
         code, env = split_math_env(payload['code'])
         return Equation(code=code, inline=False, env=env)
-    image = Image(src=payload['src'], description=payload['desc'], category=payload['cat'])
-    return Paragraph(children=[image])
+    nodes = parse_inline(payload['image'])
+    for node in nodes:
+        if isinstance(node, Image):
+            node.description, node.category = payload['desc'], payload['cat']
+    return Paragraph(children=nodes)
 
 
 def smart_preprocess_markdown(text: str) -> str:
@@ -301,7 +304,7 @@ def parse_markdown(
     # Described images come first: their description may hold code or math blocks.
     def _encode_described(m: re.Match) -> str:
         return _encode_placeholder('DESCRIBED', {
-            'src': unescape(protect_escapes(m.group('src'))),
+            'image': m.group('image'),
             'cat': unescape(protect_escapes(m.group('cat'))) if m.group('cat') else None,
             'desc': m.group('desc').strip(),
         })

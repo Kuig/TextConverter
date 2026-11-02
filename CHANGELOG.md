@@ -13,12 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `discard`, `keep`, `split`, `transcribe`, `describe`, `replace` or `append`. The new `image_output` (`--image-output`) says how the
   ones left are written: `embed` or `link`. `embed`, `link` and `auto_latex` are no longer `image_handling` values. See the README's
   Image Handling.
+- An image that keeps its description is a real image, followed by the description between marker lines that now name its category:
+  the `[Image Reference: ...]` line is gone, and Markdown reads the new form back. A text image transcribed by `describe` is replaced by
+  its text, without markers. `Image.render_metadata` is gone.
+- An image that has a description already (a JSON or Markdown document read back) is not analyzed again.
 - `auto` no longer calls the AI for JSON output, which keeps the images, embedded. JSON is an ordinary source: `discard`, the image
   output and the analysis apply to it.
 
 ### Fixed
 
 - `auto` to CSV no longer leaves an image folder next to the output.
+- `transcribe` also reads a whole-page scan, which `auto` used to leave as an image unless it held a figure.
+- `describe` keeps the image in Word, PowerPoint, Excel and PDF, where it used to leave only a reference to a file.
 - An image in a `data:` URL reaches the AI models with any output, and `link` writes it to a file with any output, not only LaTeX.
 - A way of writing images that a format lacks gives the same warning everywhere, where Word, PowerPoint, Excel and PDF were silent.
 

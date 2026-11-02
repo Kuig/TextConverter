@@ -243,8 +243,7 @@ def _transform_and_render(
         transcribed = from_format == "image" or (from_format == "pdf" and options.pdf_mode == "raster")
         if plan.analyzes and not transcribed:
             from .image_describer import process_images
-            process_images(doc, doc_dir, config=config, latex_auto=plan.handling == "transcribe",
-                           required=not plan.implicit,
+            process_images(doc, doc_dir, config=config, handling=plan.handling, required=not plan.implicit,
                            save_crop=ImageStore(image_parent or out_dir, image_dir_name).save_png)
         if plan.output == "embed":
             embed_images(doc, image_parent or out_dir)

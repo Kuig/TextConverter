@@ -98,7 +98,7 @@ class TestLivePhases(LiveAiTest):
         images = [Image(src=p) for p in FIXTURES.values()]
         doc = Document(children=[Paragraph(children=[img]) for img in images])
         with patch("unified_ai_client.preload_model", wraps=preload_model) as spy:
-            process_images(doc, "", config=self.config)
+            process_images(doc, "", handling="describe", config=self.config)
         preloaded = [c.args[1] for c in spy.call_args_list]
         self.assertEqual(len(preloaded), len(set(preloaded)), preloaded)
         summary = {img.src: (img.category, img.description) for img in images}

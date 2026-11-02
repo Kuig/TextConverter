@@ -209,6 +209,116 @@ class TestClientMissing(BaseConverterTest):
         self.assertIn(r"\includegraphics{p.png}", self._convert("latex"))
 
 
+class TestTreatments(BaseConverterTest):
+    """What each handling leaves of a text image and of a figure, in Markdown and in the AST."""
+
+    PHOTO = "photo_drawing_or_comic"
+    ANSWERS = {"desc": "A logo.", "ocr": "Read text."}
+
+    def setUp(self):
+        super().setUp()
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.dir = Path(folder.name)
+        (self.dir / "p.png").write_bytes(PNG.read_bytes())
+        self.source = self.dir / "doc.md"
+        self.source.write_text("Before.\n\n![x](p.png)\n\nAfter.\n", encoding="utf-8")
+
+    def _convert(self, category, handling, to_format="markdown", source=None, **kwargs):
+        self.fake = FakeAi([category], self.ANSWERS)
+        with patch("unified_ai_client.call_ai", side_effect=self.fake), patch("unified_ai_client.preload_model"):
+            return textconverter.convert(str(source or self.source), to_format,
+                                         ConvertOptions(image_handling=handling, **kwargs), output_dir=str(self.dir),
+                                         config=_config())
+
+    def test_what_stays_of_each_kind_of_image(self):
+        expected = {  # handling: (figure: image, description; text image: image, text)
+            "split": (True, False, True, False),
+            "transcribe": (True, False, False, True),
+            "describe": (True, True, False, True),
+            "replace": (False, True, False, True),
+            "append": (True, True, True, True),
+        }
+        for handling, (figure_image, description, text_image, text) in expected.items():
+            with self.subTest(handling=handling):
+                figure = self._convert(self.PHOTO, handling)
+                self.assertEqual(("![x](p.png)" in figure, "A logo." in figure), (figure_image, description))
+                transcribed = self._convert("text", handling)
+                self.assertEqual(("![x](p.png)" in transcribed, "Read text." in transcribed), (text_image, text))
+
+    def test_a_handling_calls_only_the_models_it_needs(self):
+        needed = {"split": {"cls"}, "transcribe": {"cls", "ocr"}, "describe": {"cls", "ocr"}, "replace": {"cls", "ocr"},
+                  "append": {"cls", "ocr"}}
+        for handling, models in needed.items():
+            self._convert("text", handling)
+            self.assertEqual({model for model, _ in self.fake.calls}, models, handling)
+        self._convert(self.PHOTO, "transcribe")
+        self.assertEqual({model for model, _ in self.fake.calls}, {"cls"})
+        self._convert(self.PHOTO, "describe")
+        self.assertEqual({model for model, _ in self.fake.calls}, {"cls", "desc"})
+
+    def test_a_page_scan_is_a_text_image_whatever_the_handling(self):
+        self.assertIn("Read text.", self._convert("document_scan", "transcribe"))
+
+    def test_text_replaces_the_image_without_markers(self):
+        self.assertNotIn("picture description", self._convert("text", "describe"))
+
+    def test_a_kept_description_is_framed_with_its_category(self):
+        text = self._convert(self.PHOTO, "describe")
+        self.assertIn("![x](p.png)", text)
+        self.assertIn(f"----- Start of picture description ({self.PHOTO}) -----", text)
+        self.assertIn("----- End of picture description -----", text)
+
+    def test_no_reference_line_is_left(self):
+        for handling in ("describe", "append"):
+            self.assertNotIn("Image Reference", self._convert(self.PHOTO, handling))
+
+    def test_json_holds_what_the_handling_leaves(self):
+        kept = json.loads(self._convert(self.PHOTO, "describe", "json", image_output="link"))
+        image = kept["children"][1]["children"][0]
+        self.assertEqual((image["src"], image["description"], image["category"]), ("p.png", "A logo.", self.PHOTO))
+        replaced = self._convert(self.PHOTO, "replace", "json")
+        self.assertNotIn('"Image"', replaced)
+        self.assertIn("A logo.", replaced)
+
+    def test_a_failed_analysis_leaves_the_image(self):
+        with patch("unified_ai_client.call_ai", side_effect=ConnectionError("down")), \
+             patch("unified_ai_client.preload_model"):
+            text = textconverter.convert(str(self.source), "markdown", ConvertOptions(image_handling="replace"),
+                                         output_dir=str(self.dir), config=_config())
+        self.assertIn("![x](p.png)", text)
+
+    def test_a_described_document_is_not_analyzed_again(self):
+        again = self.dir / "again.md"
+        again.write_text(self._convert(self.PHOTO, "describe"), encoding="utf-8")
+        self.assertIn("A logo.", self._convert(self.PHOTO, "describe", source=again))
+        self.assertEqual(self.fake.calls, [])
+
+    def test_a_kept_description_follows_the_handling_asked(self):
+        again = self.dir / "again.md"
+        again.write_text(self._convert(self.PHOTO, "describe"), encoding="utf-8")
+        replaced = self._convert(self.PHOTO, "replace", source=again)
+        self.assertEqual(("![x](p.png)" in replaced, "A logo." in replaced), (False, True))
+        transcribed = self._convert(self.PHOTO, "transcribe", source=again)
+        self.assertEqual(("![x](p.png)" in transcribed, "A logo." in transcribed), (True, False))
+
+    def test_a_kept_image_reaches_word_and_the_pdf_with_its_description(self):
+        import docx
+        import pymupdf
+        fake = FakeAi([self.PHOTO, self.PHOTO], self.ANSWERS)
+        options = ConvertOptions(image_handling="describe")
+        word, pdf = self.dir / "out.docx", self.dir / "out.pdf"
+        with patch("unified_ai_client.call_ai", side_effect=fake), patch("unified_ai_client.preload_model"):
+            textconverter.save_to_file(str(self.source), str(word), options, config=_config())
+            textconverter.save_to_file(str(self.source), str(pdf), options, config=_config())
+        written = docx.Document(word)
+        self.assertEqual(len(written.inline_shapes), 1)
+        self.assertIn("A logo.", "\n".join(p.text for p in written.paragraphs))
+        with pymupdf.open(pdf) as printed:
+            self.assertEqual(sum(len(page.get_images()) for page in printed), 1)
+            self.assertIn("A logo.", printed[0].get_text())
+
+
 class TestJsonIsParsable(BaseConverterTest):
 
     def test_the_embedded_form_reads_back(self):
