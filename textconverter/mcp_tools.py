@@ -31,6 +31,7 @@ def register_tools(mcp: object) -> None:
         to_format: str,
         template: str = "plain",
         image_handling: str = "auto",
+        image_output: str = "auto",
         code_parsing: bool = False,
         extract_html: bool = False,
         discard_links: bool = False,
@@ -45,7 +46,9 @@ def register_tools(mcp: object) -> None:
             from_format: Source format: 'markdown', 'html', 'latex', 'json' or 'csv'.
             to_format: Target format: 'markdown', 'html', 'latex', 'json' or 'csv' (the first table).
             template: HTML template: 'plain', 'light' or 'dark'.
-            image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
+            image_handling: What happens to the images in the document: 'auto', 'discard', 'keep',
+                'split', 'transcribe', 'describe', 'replace' or 'append'.
+            image_output: How the images left in the document are written: 'auto', 'embed' or 'link'.
             code_parsing: Fence code blocks found by heuristic detection (Markdown sources).
             extract_html: Filter noise and keep the main content of HTML input.
             discard_links: Replace every hyperlink with its visible text.
@@ -60,6 +63,7 @@ def register_tools(mcp: object) -> None:
         """
         def call() -> str:
             options = ConvertOptions(template=template, image_handling=image_handling,
+                                     image_output=image_output,
                                      code_parsing=code_parsing, extract_html=extract_html,
                                      discard_links=discard_links, site_cleanup=site_cleanup)
             return convert_text(text, from_format, to_format, options,
@@ -73,6 +77,7 @@ def register_tools(mcp: object) -> None:
         from_format: str | None = None,
         template: str = "plain",
         image_handling: str = "auto",
+        image_output: str = "auto",
         code_parsing: bool = False,
         extract_html: bool = False,
         discard_links: bool = False,
@@ -89,7 +94,9 @@ def register_tools(mcp: object) -> None:
             from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'docx', 'pptx', 'csv', 'xlsx', 'image').
                 Inferred from the extension (for a URL, from its Content-Type) if None.
             template: HTML template: 'plain', 'light' or 'dark'.
-            image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
+            image_handling: What happens to the images in the document: 'auto', 'discard', 'keep',
+                'split', 'transcribe', 'describe', 'replace' or 'append'.
+            image_output: How the images left in the document are written: 'auto', 'embed' or 'link'.
             code_parsing: Fence code blocks found by heuristic detection (Markdown, Word
                 and PowerPoint sources, PDF sources in text mode).
             extract_html: Filter noise and keep the main content of HTML input.
@@ -107,6 +114,7 @@ def register_tools(mcp: object) -> None:
         """
         def call() -> str:
             options = ConvertOptions(template=template, image_handling=image_handling,
+                                     image_output=image_output,
                                      code_parsing=code_parsing, extract_html=extract_html,
                                      discard_links=discard_links, site_cleanup=site_cleanup,
                                      pdf_mode=pdf_mode)
@@ -121,6 +129,7 @@ def register_tools(mcp: object) -> None:
         from_format: str | None = None,
         template: str = "plain",
         image_handling: str = "auto",
+        image_output: str = "auto",
         code_parsing: bool = False,
         extract_html: bool = False,
         discard_links: bool = False,
@@ -138,7 +147,9 @@ def register_tools(mcp: object) -> None:
             from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'docx', 'pptx', 'csv', 'xlsx', 'image').
                 Inferred from the extension (for a URL, from its Content-Type) if None.
             template: HTML template: 'plain', 'light' or 'dark' (ignored for .pdf, .docx, .pptx and .xlsx).
-            image_handling: 'auto', 'describe', 'embed', 'link' or 'discard'.
+            image_handling: What happens to the images in the document: 'auto', 'discard', 'keep',
+                'split', 'transcribe', 'describe', 'replace' or 'append'.
+            image_output: How the images left in the document are written: 'auto', 'embed' or 'link'.
             code_parsing: Fence code blocks found by heuristic detection (Markdown, Word
                 and PowerPoint sources, PDF sources in text mode).
             extract_html: Filter noise and keep the main content of HTML input.
@@ -153,6 +164,7 @@ def register_tools(mcp: object) -> None:
         """
         def call() -> str:
             options = ConvertOptions(template=template, image_handling=image_handling,
+                                     image_output=image_output,
                                      code_parsing=code_parsing, extract_html=extract_html,
                                      discard_links=discard_links, site_cleanup=site_cleanup,
                                      pdf_mode=pdf_mode)

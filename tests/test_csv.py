@@ -76,7 +76,7 @@ class TestCsvPipeline(BaseConverterTest):
     def test_formats(self):
         self.assertEqual(infer_input_format("a.TSV"), "csv")
         self.assertEqual(infer_input_format_from_media_type("text/csv"), "csv")
-        self.assertEqual(OUTPUT_FORMATS["csv"].auto_images, "discard")
+        self.assertEqual(OUTPUT_FORMATS["csv"].image_outputs, ())
 
     def test_csv_to_markdown(self):
         md = convert(str(INPUT_DIR / "Test_data.csv"), "markdown")

@@ -484,6 +484,7 @@ def process_images(
     *,
     config: AppConfig,
     latex_auto: bool = False,
+    required: bool = True,
     save_crop: SaveCrop | None = None,
 ) -> None:
     """Classify and describe all Image nodes of a document AST in place.
@@ -492,23 +493,21 @@ def process_images(
     blocks cannot go (a link, a table cell, a heading) the image stays and they
     follow.
 
-    Without ``unified_ai_client``, ``latex_auto`` (an implicit mode chosen by
-    ``image_handling="auto"``) keeps the images as plain references with a
-    warning, while an explicit ``describe`` raises ImportError.
-
     Args:
         doc: Root AST document node.
         base_dir: Base directory for resolving relative image paths.
         config: Application configuration.
         latex_auto: Transcribe only text/table/formula images and replace them
             with their content (see ``_apply_latex_auto``).
+        required: Without ``unified_ai_client``, raise ImportError; when False
+            (nobody asked for the AI by name), keep the images with a warning.
         save_crop: Stores the crops worth keeping; without it they are dropped.
     """
     images = [node for node in walk(doc) if isinstance(node, Image)]
     if not images:
         return
     if not ai_client_available():
-        if not latex_auto:
+        if required:
             raise ImportError(_MISSING_CLIENT)
         log_warning("unified_ai_client is not installed: images are kept as plain references.")
         return

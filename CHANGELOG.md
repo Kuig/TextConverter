@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the image options are two. `image_handling` (`--image-handling`) says what happens to the images in the document:
+  `discard`, `keep`, `split`, `transcribe`, `describe`, `replace` or `append`. The new `image_output` (`--image-output`) says how the
+  ones left are written: `embed` or `link`. `embed`, `link` and `auto_latex` are no longer `image_handling` values. See the README's
+  Image Handling.
+- `auto` no longer calls the AI for JSON output, which keeps the images, embedded. JSON is an ordinary source: `discard`, the image
+  output and the analysis apply to it.
+
+### Fixed
+
+- `auto` to CSV no longer leaves an image folder next to the output.
+- An image in a `data:` URL reaches the AI models with any output, and `link` writes it to a file with any output, not only LaTeX.
+- A way of writing images that a format lacks gives the same warning everywhere, where Word, PowerPoint, Excel and PDF were silent.
+
 ### Added
 
 - Pages that mix text and figures are split into regions. A `text` or `document_scan` image holding more than text has its

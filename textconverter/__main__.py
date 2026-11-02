@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 from textconverter.api import save_to_file
-from textconverter.formats import IMAGE_HANDLING_CHOICES, INPUT_FORMATS, PDF_MODES, TEMPLATES
+from textconverter.formats import IMAGE_HANDLING_CHOICES, IMAGE_OUTPUT_CHOICES, INPUT_FORMATS, PDF_MODES, TEMPLATES
 from textconverter.options import ConvertOptions
 from textconverter import logger
 from textconverter.logger import log_success, log_error
@@ -24,6 +24,7 @@ def cmd_convert(args: argparse.Namespace) -> None:
             ConvertOptions(
                 template=args.template,
                 image_handling=args.image_handling,
+                image_output=args.image_output,
                 code_parsing=args.code_parsing,
                 extract_html=args.extract_html,
                 discard_links=args.discard_links,
@@ -94,7 +95,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--image-handling",
         default="auto",
         choices=IMAGE_HANDLING_CHOICES,
-        help="Image handling strategy.",
+        help="What happens to the images in the document.",
+    )
+    p_convert.add_argument(
+        "--image-output",
+        default="auto",
+        choices=IMAGE_OUTPUT_CHOICES,
+        help="How the images left in the document are written.",
     )
     p_convert.add_argument(
         "--pdf-mode",

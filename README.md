@@ -43,41 +43,43 @@ Every field is documented in **[docs/configuration.md](docs/configuration.md)**.
 
 ## Image Handling
 
-The `--image-handling` option (or the `image_handling` parameter in the API) determines how images in the source document are processed and rendered.
+Two independent options decide what happens to the images of a document: `--image-handling` (API: `image_handling`) says what becomes of them in the document, `--image-output` (API: `image_output`) how the ones left are written to the output.
 
-### Supported Strategies
+### What Happens to the Images
 
-* **`describe`**: AI-powered analysis and description. Classifies every image, splits pages that mix text and figures into regions, then describes photos, diagrams, charts and the like with the description model, and transcribes text, tables, formulas and page scans with the OCR model (GLM-OCR by default; without one, the description model transcribes them). The calls are grouped by model, so models swap between phases and never image by image, and an image file shown several times is processed once. In the output, each image becomes a reference line followed by its description between `----- Start/End of picture description -----` markers (an image inside a link, a table cell or a heading keeps the reference line there, and its description follows the paragraph, table or heading; a figure's caption follows the description); tables, formulas and formatting in the answer become real tables, equations and text in every format (JSON output keeps the image node with its `description` and `category`).
-* **`embed`**: Base64 inline embedding. Reads local or downloaded images from disk, guesses their MIME types, and encodes their binary data into inline Data URLs (`data:image/...;base64,...`). Perfect for creating self-contained documents (like HTML): downloaded and PDF-extracted images only pass through a temporary folder, so no image folder is left next to the output. LaTeX cannot hold an image in its text: there `embed` acts as `link`, with a warning.
-* **`link`**: File-based referencing. Preserves or downloads images, sanitizing their filenames, and references them using standard relative paths (`![alt](path)` in Markdown, `<img>` in HTML, `\includegraphics{...}` in LaTeX). No AI processing is executed.
-* **`discard`**: Total removal. Strips all `Image` nodes from the AST, with their captions and any link left empty, omitting them entirely from the final rendered output.
-* **`auto_latex`** (internal): Hybrid mode designed for LaTeX/JSON, used automatically by `auto` for those formats (see below). Traverses the document and uses the AI models to classify and transcribe only text/table/formula images, replacing each one with its content (paragraphs, a table, an equation); for drawings, photos, or diagrams, it skips the description to save resources and falls back to rendering standard graphics references. It is not an explicit `--image-handling` CLI choice, and its behavior may change, so avoid setting it directly through the API/MCP `image_handling` parameter.
+The AI models tell two kinds of image apart: *text images*, whose category is in `ai.ocr_prompts` (text, tables, formulas, page scans), which can be transcribed, and *figures*, all the others (photos, diagrams, charts, ...), which can only be described.
 
-### The `auto` Strategy (`image_handling="auto"`)
+| `image_handling` | AI | A text image becomes | A figure becomes |
+|---|---|---|---|
+| `discard` | no | removed | removed |
+| `keep` | no | the image | the image |
+| `split` | classification, regions | the image | the image |
+| `transcribe` | + OCR | its text | the image |
+| `describe` | + OCR, description | its text | the image and its description |
+| `replace` | + OCR, description | its text | its description |
+| `append` | + OCR, description | the image and its text | the image and its description |
 
-When set to `auto` (the default), the tool dynamically maps the strategy based on the target output format (`to_format`):
+From `split` on, a page holding more than text (a scan, a raster PDF page, an image file) is cut into regions when `ai.region_model` is set, in reading order, and each region is treated like an image. Tables, formulas and formatting in an answer become real tables, equations and text in every format. An image the AI could not process stays an image. With an image file as the source, `<output stem>_regions.png` next to the output shows what the AI found in it. To check an image classified badly inside a document, convert that image on its own.
 
-* **HTML output (`to_format="html"`)**: Resolves to **`embed`**.
-  - Local or downloaded images are read from disk, their MIME types are guessed (defaulting to `image/png`), and their binary content is base64-encoded.
-  - The image source path is rewritten to an inline Data URL (`data:image/...;base64,...`), embedding the image directly inside the self-contained HTML file.
+`auto`, the default, depends on the conversion:
 
-* **LaTeX output (`to_format="latex"`)**: Resolves to **`auto_latex`**.
-  - The system utilizes the vision AI model to classify the image.
-  - If the image is classified as `text`, `table` or `formula`, the AI transcribes it and the transcript replaces the image: a formula becomes an equation, a table a `tabular`, text paragraphs. An image alone in its paragraph replaces the paragraph; one amid text splits it around the content.
-  - If the image is classified as any other type (e.g., diagrams or photos), the AI description is skipped to conserve resources, and standard `\includegraphics{...}` markup is rendered.
+1. An image file or a raster PDF as the source, or LaTeX as the output: `transcribe`.
+2. CSV as the output: `discard`.
+3. Anything else: `keep`.
 
-* **Excel output (`.xlsx`)**: Resolves to **`embed`**; an image in a table cell is anchored to that cell.
+### How the Images Are Written
 
-Whatever the output, a page holding more than text (a scan, a raster PDF page, an image file) is split into regions when `ai.region_model` is set: its text is transcribed and its figures are described and kept in the image folder, in reading order. With an image file as the source, `<output stem>_regions.png` next to the output shows what the AI found in it. To check an image classified badly inside a document, convert that image on its own.
+`embed` puts an image inside the output as a Data URL or in the file, so no image folder is left next to it. `link` references a file with a relative path; downloaded and extracted images go to a `<output stem>_images` folder.
 
-* **CSV output**: Resolves to **`discard`**: CSV holds text only.
+| Output | `auto` | Available |
+|---|---|---|
+| HTML, JSON | `embed` | `embed`, `link` |
+| Markdown | `link` | `link`, `embed` |
+| LaTeX | `link` | `link` |
+| PDF, Word, PowerPoint, Excel | `embed` | `embed` |
+| CSV | none | none |
 
-* **Markdown output (`to_format="markdown"`)**: Resolves to **`link`**.
-  - Local or downloaded images are referenced via standard relative paths.
-  - The images are rendered as standard Markdown image syntax: `![alt_text](path/to/image "optional_title")`. No description generation is performed.
-
-* **JSON output (`to_format="json"`)**: Resolves to **`auto_latex`**.
-  - Like the LaTeX mode, it runs image classification and transcribes only text, tables, and formulas, populating the `description` and `category` fields in the resulting JSON AST structure.
+Asking for a way the format does not offer gives a warning, and its default.
 
 ---
 

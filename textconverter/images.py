@@ -251,16 +251,21 @@ class ImagePaths:
             node.src = original if same else rel
 
 
-def embed_images(doc: Node) -> None:
+def embed_images(doc: Node, base_dir: str) -> None:
     """Replace the src of every local image file with a base64 data URL.
 
-    Image paths must already be absolute (see ``ImagePaths.absolutize``).
+    Image paths must already be absolute (see ``ImagePaths.absolutize``), except
+    those written during the conversion, which are relative to the image folder's parent.
     Remote and ``data:`` sources are left alone; a missing file is reported.
+
+    Args:
+        doc: The document.
+        base_dir: Directory that relative paths resolve against.
     """
     for node in walk(doc):
         if not isinstance(node, Image):
             continue
-        path = resolve_local(node.src, os.getcwd())
+        path = resolve_local(node.src, base_dir)
         if path is None:
             continue
         if not os.path.exists(path):

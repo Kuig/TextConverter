@@ -86,7 +86,7 @@ class TestXlsxParser(BaseConverterTest):
         self.assertEqual(infer_input_format("a.XLSX"), "xlsx")
         media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         self.assertEqual(infer_input_format_from_media_type(media), "xlsx")
-        self.assertEqual(OUTPUT_FORMATS["xlsx"].auto_images, "embed")
+        self.assertEqual(OUTPUT_FORMATS["xlsx"].image_outputs, ("embed",))
 
     def test_visible_sheets_are_level_one_headings_with_their_table(self):
         headings = [plain_text(n.children) for n in self.doc.children if isinstance(n, Heading)]

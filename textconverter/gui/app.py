@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import textconverter.logger as logger
 from textconverter.api import save_to_file
 from textconverter.formats import (
-    IMAGE_HANDLING_CHOICES, INPUT_FORMATS, OUTPUT_FORMATS, PDF_MODES, TEMPLATE_CHOICES,
+    IMAGE_HANDLING_CHOICES, IMAGE_OUTPUT_CHOICES, INPUT_FORMATS, OUTPUT_FORMATS, PDF_MODES, TEMPLATE_CHOICES,
 )
 from textconverter.options import ConvertOptions
 from textconverter.config import DEFAULT_CONTEXT_SIZE, AppConfig, load_config
@@ -184,6 +184,7 @@ with st.sidebar:
     template = st.selectbox("Template", TEMPLATE_CHOICES,
                             help="HTML output only; PDF output always uses the light theme.")
     image_handling = st.selectbox("Image handling", IMAGE_HANDLING_CHOICES)
+    image_output = st.selectbox("Image output", IMAGE_OUTPUT_CHOICES)
     pdf_mode = st.selectbox(
         "PDF input", PDF_MODES,
         format_func={"text": "Text layer", "raster": "Raster pages + AI transcription"}.get,
@@ -200,7 +201,7 @@ with st.sidebar:
     if not AI_AVAILABLE:
         st.caption("AI features need the 'unified_ai_client' package (see requirements_prod.txt).")
     else:
-        st.caption("Used by 'describe', image inputs, raster PDF input, and LaTeX/JSON output.")
+        st.caption("Used by the image handling modes that analyze images, image inputs, raster PDF input, and LaTeX output.")
         provider = _provider_picker()
         _model_picker("Classification model", "classification_model", provider)
         _model_picker("Description model", "description_model", provider)
@@ -238,6 +239,7 @@ if st.button("Convert", type="primary", use_container_width=True):
                 options = ConvertOptions(
                     template=template,
                     image_handling=image_handling,
+                    image_output=image_output,
                     code_parsing=code_parsing,
                     extract_html=extract_html,
                     discard_links=discard_links,

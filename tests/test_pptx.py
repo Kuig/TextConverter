@@ -542,7 +542,7 @@ class TestPptxRenderer(PptxOutputTest):
 
     def test_a_bibliography_survives(self):
         path = self._save("## S\n\nText \\cite{a}.\n\n\\bibliography{refs}\n")
-        self.assertIn("\\bibliography{refs}", convert(path, "latex", textconverter.ConvertOptions(image_handling="link")))
+        self.assertIn("\\bibliography{refs}", convert(path, "latex", textconverter.ConvertOptions(image_handling="keep", image_output="link")))
 
 
 class TestTextBoxFont(PptxOutputTest):
@@ -627,7 +627,7 @@ class TestPptxOutputThroughTheApi(BaseConverterTest):
     def test_output_format_is_inferred(self):
         from textconverter.formats import OUTPUT_FORMATS, infer_output_format
         self.assertEqual(infer_output_format("a.pptx"), "pptx")
-        self.assertEqual(OUTPUT_FORMATS["pptx"].auto_images, "embed")
+        self.assertEqual(OUTPUT_FORMATS["pptx"].image_outputs, ("embed",))
 
     def test_a_failed_conversion_leaves_no_file(self):
         with tempfile.TemporaryDirectory() as tmp:

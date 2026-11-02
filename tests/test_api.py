@@ -40,7 +40,7 @@ class TestUnsafeLinks(BaseConverterTest):
         from unittest.mock import patch
         for to in ("markdown", "latex", "html"):
             with self.subTest(to=to), patch("textconverter.images.log_warning") as warn:
-                out = textconverter.convert_text(self.SOURCE, "markdown", to, ConvertOptions(image_handling="link"))
+                out = textconverter.convert_text(self.SOURCE, "markdown", to, ConvertOptions(image_handling="keep", image_output="link"))
                 self.assertNotIn("javascript", out)
                 self.assertIn("click", out)
                 self.assertIn("https://x.test", out)
@@ -48,7 +48,7 @@ class TestUnsafeLinks(BaseConverterTest):
 
     def test_the_ast_form_keeps_the_address(self):
         self.assertIn("javascript:alert(1)",
-                      textconverter.convert_text(self.SOURCE, "markdown", "json", ConvertOptions(image_handling="link")))
+                      textconverter.convert_text(self.SOURCE, "markdown", "json", ConvertOptions(image_handling="keep", image_output="link")))
 
 
 class TestDiscardedImages(BaseConverterTest):
@@ -81,8 +81,8 @@ class TestEmbedInLatex(BaseConverterTest):
             src.write_text("![x](p.png)\n", encoding="utf-8")
             out = Path(tmp) / "out" / "a.tex"
             out.parent.mkdir()
-            with patch("textconverter.api.log_warning") as warn:
-                textconverter.save_to_file(str(src), str(out), ConvertOptions(image_handling="embed"))
+            with patch("textconverter.options.log_warning") as warn:
+                textconverter.save_to_file(str(src), str(out), ConvertOptions(image_handling="keep", image_output="embed"))
             tex = out.read_text(encoding="utf-8")
         self.assertNotIn("data:", tex)
         self.assertIn("\\includegraphics{", tex)
@@ -95,7 +95,7 @@ class TestEmbedInLatex(BaseConverterTest):
             src = Path(tmp) / "a.md"
             src.write_text(f"![x](data:image/png;base64,{data})\n", encoding="utf-8")
             out = Path(tmp) / "a.tex"
-            textconverter.save_to_file(str(src), str(out), ConvertOptions(image_handling="link"))
+            textconverter.save_to_file(str(src), str(out), ConvertOptions(image_handling="keep", image_output="link"))
             tex = out.read_text(encoding="utf-8")
             self.assertNotIn("data:", tex)
             self.assertEqual(len(list((Path(tmp) / "a_images").iterdir())), 1)
@@ -106,7 +106,7 @@ class TestEmbedInLatex(BaseConverterTest):
             src = Path(tmp) / "a.md"
             (Path(tmp) / "p.png").write_bytes((INPUT_DIR / "googlelogo_color_272x92dp.png").read_bytes())
             src.write_text("![x](p.png)\n", encoding="utf-8")
-            self.assertIn("data:image/png", textconverter.convert(str(src), "markdown", ConvertOptions(image_handling="embed")))
+            self.assertIn("data:image/png", textconverter.convert(str(src), "markdown", ConvertOptions(image_handling="keep", image_output="embed")))
 
 
 class TestOutputFolder(BaseConverterTest):

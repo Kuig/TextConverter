@@ -60,8 +60,8 @@ def _blocked_ai_call(*args, **kwargs):
 class BaseConverterTest(unittest.TestCase):
     """Creates the output folder and blocks every live AI call.
 
-    Conversions to LaTeX or JSON resolve ``image_handling="auto"`` to an AI
-    mode, so without the block a test could load a model on a local server.
+    Conversions to LaTeX resolve ``image_handling="auto"`` to an AI mode, so
+    without the block a test could load a model on a local server.
     A test that needs AI responses patches the same entry points itself; its
     patch takes precedence over this one for the duration of the test.
     """

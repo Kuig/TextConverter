@@ -105,7 +105,7 @@ class TestImageDownload(_WebTest):
 
     def _page(self, body: str, routes: dict, **kwargs) -> str:
         web = self.serve({"https://x.test/a/page": (f"<html><body>{body}</body></html>".encode(), "text/html"), **routes})
-        md = textconverter.convert("https://x.test/a/page", "markdown", ConvertOptions(image_handling="link"),
+        md = textconverter.convert("https://x.test/a/page", "markdown", ConvertOptions(image_handling="keep", image_output="link"),
                                    output_dir=str(self.tmp), image_dir_name="imgs", **kwargs)
         self.requested = web.requested
         return md
@@ -178,7 +178,7 @@ class TestImagePaths(_WebTest):
     def test_relative_images_resolve_from_the_source_whatever_the_cwd(self):
         """convert() used to resolve them against the current directory."""
         src = self._source()
-        html = textconverter.convert(str(src), "html", ConvertOptions(image_handling="embed"),
+        html = textconverter.convert(str(src), "html", ConvertOptions(image_handling="keep", image_output="embed"),
                                      output_dir=str(src.parent))
         self.assertEqual(html.count('src="data:image/png;base64,'), 2)
         self.assertNotEqual(Path(os.getcwd()), src.parent)

@@ -133,7 +133,7 @@ class TestLatexParser(BaseConverterTest):
     def test_preamble_detects_image_inside_link(self):
         """An image reachable only through a link still loads graphicx."""
         md = "[![alt](pic.png)](http://x.test)"
-        tex = textconverter.convert_text(md, "markdown", "latex", textconverter.ConvertOptions(image_handling="link"))
+        tex = textconverter.convert_text(md, "markdown", "latex", textconverter.ConvertOptions(image_handling="keep", image_output="link"))
         self.assertIn("\\usepackage{graphicx}", tex)
         self.assertIn("\\usepackage{hyperref}", tex)
 
@@ -302,7 +302,7 @@ class TestLatexFixes(BaseConverterTest):
 
 
 def _convert(text: str, frm: str, to: str) -> str:
-    return textconverter.convert_text(text, frm, to, textconverter.ConvertOptions(image_handling="link"))
+    return textconverter.convert_text(text, frm, to, textconverter.ConvertOptions(image_handling="keep", image_output="link"))
 
 
 class TestLatexStructure(BaseConverterTest):
@@ -770,7 +770,7 @@ class TestLatexInput(BaseConverterTest):
         return str(Path(tmp) / "main.tex")
 
     def _convert(self, main: str) -> str:
-        return textconverter.convert(main, "markdown", textconverter.ConvertOptions(image_handling="link"))
+        return textconverter.convert(main, "markdown", textconverter.ConvertOptions(image_handling="keep", image_output="link"))
 
     def test_a_file_is_included(self):
         import tempfile

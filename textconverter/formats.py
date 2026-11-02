@@ -1,4 +1,4 @@
-"""Registry of the document formats, image handling modes, PDF modes and templates.
+"""Registry of the document formats, image handling and output modes, PDF modes and templates.
 
 The CLI, the MCP tools, the GUI and ``api.convert()`` all read their choices
 from here, so a format or option value is declared once.
@@ -18,15 +18,16 @@ class Format:
         extensions: File extensions, lowercase with the dot; the first is the
             preferred one.
         binary: Parsed from a file rather than from text (PDF, images).
-        auto_images: What ``image_handling="auto"`` resolves to when this is
-            the output format (None for input-only formats).
+        image_outputs: How the format can hold images, when it is the output
+            format: ``"embed"`` and ``"link"``, the default first; empty when
+            it holds none.
         media_types: ``Content-Type`` values that identify the format when
             downloaded; one ending in "/" matches the whole family.
     """
     name: str
     extensions: tuple[str, ...]
     binary: bool = False
-    auto_images: str | None = None
+    image_outputs: tuple[str, ...] = ()
     media_types: tuple[str, ...] = ()
 
 
@@ -48,31 +49,30 @@ INPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
 )}
 
 OUTPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
-    Format("markdown", (".md", ".markdown"), auto_images="link"),
-    Format("html", (".html", ".htm"), auto_images="embed"),
-    Format("latex", (".tex", ".latex"), auto_images="auto_latex"),
-    Format("json", (".json",), auto_images="auto_latex"),
+    Format("markdown", (".md", ".markdown"), image_outputs=("link", "embed")),
+    Format("html", (".html", ".htm"), image_outputs=("embed", "link")),
+    # LaTeX cannot hold an image in its text.
+    Format("latex", (".tex", ".latex"), image_outputs=("link",)),
+    Format("json", (".json",), image_outputs=("embed", "link")),
     # Written only by save_to_file(): the HTML rendering, printed.
-    Format("pdf", (".pdf",), binary=True, auto_images="embed"),
+    Format("pdf", (".pdf",), binary=True, image_outputs=("embed",)),
     # Written only by save_to_file(): the AST rendered straight to a Word file.
-    Format("docx", (".docx",), binary=True, auto_images="embed"),
+    Format("docx", (".docx",), binary=True, image_outputs=("embed",)),
     # Written only by save_to_file(): the AST rendered straight to a PowerPoint file.
-    Format("pptx", (".pptx",), binary=True, auto_images="embed"),
+    Format("pptx", (".pptx",), binary=True, image_outputs=("embed",)),
     # Tables only. The CSV text is the first table; save_to_file() writes one file per table.
-    Format("csv", (".csv",), auto_images="discard"),
+    Format("csv", (".csv",)),
     # Written only by save_to_file(): the AST's tables as sheets of an Excel file.
-    Format("xlsx", (".xlsx",), binary=True, auto_images="embed"),
+    Format("xlsx", (".xlsx",), binary=True, image_outputs=("embed",)),
 )}
 
 # Output formats convert() returns as a string (the binary ones go through save_to_file()).
 TEXT_OUTPUT_FORMATS = tuple(name for name, f in OUTPUT_FORMATS.items() if not f.binary)
 
-# The image handling modes offered by the CLI, the GUI and the MCP tools.
-IMAGE_HANDLING_CHOICES = ("auto", "describe", "embed", "link", "discard")
-# Every accepted mode. "auto_latex" is what "auto" resolves to for LaTeX and
-# JSON output (only text, table and formula images are transcribed, and
-# inlined); the API accepts it but the interfaces do not offer it.
-IMAGE_HANDLING_MODES = (*IMAGE_HANDLING_CHOICES, "auto_latex")
+# What happens to the images in the document (see the README's Image Handling).
+IMAGE_HANDLING_CHOICES = ("auto", "discard", "keep", "split", "transcribe", "describe", "replace", "append")
+# How the images left in the document are written to the output.
+IMAGE_OUTPUT_CHOICES = ("auto", "embed", "link")
 
 PDF_MODES = ("text", "raster")
 

@@ -30,7 +30,7 @@ class TestRemoteIntegration(BaseConverterTest):
             "https://daginoilbonaparte.it/blog-di-cucina/ricetta-pane-impasta/",
             str(out_path),
             textconverter.ConvertOptions(
-                image_handling="link",
+                image_handling="keep", image_output="link",
                 code_parsing=True,
                 extract_html=False,
             ),

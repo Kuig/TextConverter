@@ -155,11 +155,11 @@ class TestPhasedProcessing(BaseConverterTest):
         self.assertEqual({(n.category, n.description) for n in walk(doc) if isinstance(n, Image)},
                          {("photo_drawing_or_comic", "A description.")})
 
-    def test_latex_auto_without_client_keeps_images(self):
-        """Without unified_ai_client, auto_latex degrades to plain references; describe raises."""
+    def test_without_client_only_an_implicit_analysis_keeps_the_images(self):
+        """Without unified_ai_client an analysis nobody asked for leaves plain references."""
         from textconverter.image_describer import process_images
         with patch("textconverter.image_describer.ai_client_available", return_value=False):
-            process_images(_doc_with_images(1), "", latex_auto=True, config=_config())
+            process_images(_doc_with_images(1), "", latex_auto=True, required=False, config=_config())
             with self.assertRaises(ImportError):
                 process_images(_doc_with_images(1), "", config=_config())
 
@@ -481,7 +481,7 @@ class TestRegionsInOutput(BaseConverterTest):
         self.assertEqual(len(self._images()), 2)
 
     def test_json_holds_the_figures_with_relative_paths(self):
-        output, _ = self._save(name="out.json")
+        output, _ = self._save(name="out.json", image_output="link")
         text = output.read_text(encoding="utf-8")
         self.assertIn('"out_images/image_1.png"', text)
         self.assertIn('"photo_drawing_or_comic"', text)

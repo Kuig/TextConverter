@@ -508,9 +508,9 @@ class TestDocxRenderer(DocxOutputTest):
 
     def test_a_bibliography_survives(self):
         out = self._save("Text \\cite{a}.\n\n\\bibliographystyle{plain}\n\n\\bibliography{refs}\n\n\\bibitem{a} One.\n")
-        doc = textconverter.convert(out, "json", textconverter.ConvertOptions(image_handling="link"))
+        doc = textconverter.convert(out, "json", textconverter.ConvertOptions(image_handling="keep", image_output="link"))
         self.assertIn('"Bibliography"', doc)
-        self.assertIn("\\bibliography{refs}", textconverter.convert(out, "latex", textconverter.ConvertOptions(image_handling="link")))
+        self.assertIn("\\bibliography{refs}", textconverter.convert(out, "latex", textconverter.ConvertOptions(image_handling="keep", image_output="link")))
 
 
 class TestDocxTextBoxes(DocxOutputTest):
@@ -664,7 +664,7 @@ class TestDocxOutputThroughTheApi(BaseConverterTest):
     def test_output_format_is_inferred(self):
         from textconverter.formats import infer_output_format, OUTPUT_FORMATS
         self.assertEqual(infer_output_format("a.docx"), "docx")
-        self.assertEqual(OUTPUT_FORMATS["docx"].auto_images, "embed")
+        self.assertEqual(OUTPUT_FORMATS["docx"].image_outputs, ("embed",))
 
     def test_a_failed_conversion_leaves_no_file(self):
         with tempfile.TemporaryDirectory() as tmp:
