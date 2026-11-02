@@ -279,6 +279,61 @@ class TestWindowsIntegration(BaseConverterTest):
         self.assertIn(".csv --template plain --pdf-mode raster", register)
         self.assertIn(".xlsx --template plain --extract-html", register)
 
+    def _commands(self) -> dict[str, str]:
+        """The options of each entry, by its path under TextConverter, as ``<source>/<target>[/<choice>]``."""
+        with tempfile.TemporaryDirectory() as tmp:
+            register = self._register(tmp)
+        commands = {}
+        key = ""
+        for line in register.splitlines():
+            found = re.fullmatch(r"\[HKEY_CLASSES_ROOT.SystemFileAssociations.(\.\w+).shell.TextConverter((?:.+))?\]", line)
+            if found:
+                key = found.group(1) + (found.group(2) or "").replace("\\shell\\", "/")
+            elif line.startswith("@="):
+                commands[key.removesuffix("\\command")] = line.split("%1", 1)[1]
+        return commands
+
+    def test_a_target_opens_its_choices(self):
+        commands = self._commands()
+        self.assertEqual(sorted(path for path in commands if path.startswith(".md/02tex/")),
+                         [".md/02tex/01default", ".md/02tex/02discard", ".md/02tex/03transcribe",
+                          ".md/02tex/04describe", ".md/02tex/05replace", ".md/02tex/06append"])
+        self.assertNotIn("--image-handling", commands[".md/02tex/01default"])
+        self.assertIn("--image-handling replace", commands[".md/02tex/05replace"])
+
+    def test_a_target_without_choices_is_a_plain_entry(self):
+        commands = self._commands()
+        self.assertIn(".md/10csv", commands)
+        self.assertIn(".csv/01md", commands)
+        self.assertIn(".xlsx/01md", commands)
+        self.assertIn(".json/01md", commands)
+
+    def test_an_image_is_never_discarded_and_its_default_is_not_repeated(self):
+        commands = self._commands()
+        self.assertEqual(sorted(path for path in commands if path.startswith(".png/01md/")),
+                         [".png/01md/01default", ".png/01md/04describe", ".png/01md/05replace", ".png/01md/06append"])
+
+    def test_pdf_choices_keep_code_detection_and_raster_stands_alone(self):
+        commands = self._commands()
+        self.assertIn("--code-parsing", commands[".pdf/01md/05replace"])
+        self.assertIn("--pdf-mode raster", commands[".pdf/01md/07raster"])
+        self.assertNotIn("--code-parsing", commands[".pdf/01md/07raster"])
+        self.assertIn("--pdf-mode raster", commands[".pdf/10csv/07raster"])
+        self.assertNotIn(".pdf/10csv/05replace", commands)
+
+    def test_main_content_stands_alone(self):
+        commands = self._commands()
+        self.assertIn("--extract-html", commands[".html/01md/08main"])
+        self.assertNotIn("--image-handling", commands[".html/01md/08main"])
+
+    def test_every_key_has_a_label(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            register = self._register(tmp)
+        lines = register.splitlines()
+        for number, line in enumerate(lines):
+            if line.startswith("[HKEY") and not line.endswith("command]") and "\\shell\\TextConverter\\" in line:
+                self.assertTrue(lines[number + 1].startswith('"MUIVerb"'), line)
+
     def _run_entry(self, source: Path, target: str, *options: str) -> None:
         """Run convert.cmd the way Explorer does, with the file name quoted by the registry command."""
         command = f'cmd /c ""{self.FOLDER / "convert.cmd"}" "{source}" {target} {" ".join(options)}"'

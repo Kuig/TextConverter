@@ -10,8 +10,9 @@ import textconverter.logger as logger
 from textconverter.api import save_to_file
 from textconverter.formats import (
     IMAGE_HANDLING_CHOICES, IMAGE_OUTPUT_CHOICES, INPUT_FORMATS, OUTPUT_FORMATS, PDF_MODES, TEMPLATE_CHOICES,
+    infer_input_format, infer_output_format,
 )
-from textconverter.options import ConvertOptions
+from textconverter.options import ConvertOptions, resolve_images
 from textconverter.config import DEFAULT_CONTEXT_SIZE, AppConfig, load_config
 from textconverter.gui.file_dialog import ask_path
 
@@ -45,6 +46,19 @@ OUTPUT_FILETYPES = _filetypes(OUTPUT_FORMATS, None)
 # Session keys of the AI selection, each mirroring the AiConfig field of the same name.
 MODEL_KEYS = ("classification_model", "description_model", "ocr_model", "region_model")
 NO_OCR_LABEL = "(none: description model transcribes)"
+IMAGE_HANDLING_LABELS = {
+    "auto": "Automatic",
+    "discard": "Remove images",
+    "keep": "Keep images",
+    "split": "Keep images, split pages into regions",
+    "transcribe": "Transcribe text, keep figures",
+    "describe": "Transcribe text, keep figures with a description",
+    "replace": "Text only: transcriptions and descriptions",
+    "append": "Keep images, each with its text",
+}
+IMAGE_OUTPUT_LABELS = {"auto": "Automatic", "embed": "Embedded in the output", "link": "Linked files"}
+# The image handling choices that need no AI model.
+NO_AI_HANDLING = ("auto", "discard", "keep")
 CONTEXT_SIZES = (4096, 8192, 16384, 32768, 65536, 131072, 262144)
 
 
@@ -163,6 +177,26 @@ def _context_size_picker() -> None:
     )
 
 
+def _image_outputs() -> tuple[str, ...]:
+    """The ways of writing images the output path allows; all of them until it tells the format."""
+    to_format = infer_output_format(st.session_state.output)
+    return OUTPUT_FORMATS[to_format].image_outputs if to_format else IMAGE_OUTPUT_CHOICES[1:]
+
+
+def _images_note(options: ConvertOptions) -> str:
+    """What the image options come to for the paths typed; empty until they tell both formats."""
+    from_format = infer_input_format(st.session_state.source)
+    to_format = infer_output_format(st.session_state.output)
+    if from_format is None or to_format is None:
+        return ""
+    try:
+        plan = resolve_images(options, from_format, to_format)
+    except ValueError as exc:
+        return f"⚠️ {exc}"
+    written = IMAGE_OUTPUT_LABELS[plan.output].lower() if plan.output else "this format holds none"
+    return f"For these paths: {IMAGE_HANDLING_LABELS[plan.handling].lower()}; images: {written}."
+
+
 def _selected_config() -> AppConfig:
     """config.json with the provider, models and context size chosen in the sidebar."""
     config = load_config()
@@ -183,13 +217,26 @@ with st.sidebar:
     st.header("⚙️ Options")
     template = st.selectbox("Template", TEMPLATE_CHOICES,
                             help="HTML output only; PDF output always uses the light theme.")
-    image_handling = st.selectbox("Image handling", IMAGE_HANDLING_CHOICES)
-    image_output = st.selectbox("Image output", IMAGE_OUTPUT_CHOICES)
     pdf_mode = st.selectbox(
         "PDF input", PDF_MODES,
         format_func={"text": "Text layer", "raster": "Raster pages + AI transcription"}.get,
         help="Raster renders every page and transcribes it with the AI models below (for scans).",
     )
+    image_handling = st.selectbox(
+        "Image handling", IMAGE_HANDLING_CHOICES if AI_AVAILABLE else NO_AI_HANDLING,
+        format_func=IMAGE_HANDLING_LABELS.get,
+        help="What becomes of the images in the document. Automatic depends on the source and the output.",
+    )
+    image_outputs = _image_outputs()
+    image_output = st.selectbox(
+        "Image output", IMAGE_OUTPUT_CHOICES, format_func=IMAGE_OUTPUT_LABELS.get, disabled=len(image_outputs) < 2,
+        help="How the images left in the document are written. Some formats offer one way only.",
+    )
+    if len(image_outputs) < 2:
+        image_output = "auto"
+    images_note = _images_note(ConvertOptions(image_handling=image_handling, pdf_mode=pdf_mode))
+    if images_note:
+        st.caption(images_note)
     code_parsing = st.checkbox("Enable code detection", help="Markdown, Word and PowerPoint sources, and PDF sources in text mode.")
     extract_html = st.checkbox("Clean HTML & extract main content")
     site_cleanup = st.checkbox("Site-specific cleanup (e.g. Wikipedia)", value=load_config().html.site_cleanup,

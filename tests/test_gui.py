@@ -3,6 +3,7 @@
 Usage: python -m unittest discover -s tests -p "test_gui.py"
 """
 from __future__ import annotations
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -97,6 +98,98 @@ class TestGui(BaseConverterTest):
         self.assertFalse(app.exception, app.exception)
         self.assertEqual(save.call_args.kwargs["config"].providers["ollama"]["context_size"], 32768)
 
+
+    def _with_paths(self, source: str, output: str) -> AppTest:
+        """The app after typing the two paths."""
+        st.cache_data.clear()
+        with patch("unified_ai_client.list_providers", return_value=PROVIDERS), \
+             patch("unified_ai_client.list_models", return_value=MODELS):
+            app = AppTest.from_file(APP, default_timeout=30)
+            app.run()
+            app.text_input(key="source").input(source)
+            app.text_input(key="output").input(output)
+            app.run()
+        self.assertFalse(app.exception, app.exception)
+        return app
+
+    def _note(self, app: AppTest) -> str:
+        return next((c.value for c in app.sidebar.caption if "paths" in c.value or "discard" in c.value), "")
+
+    def test_image_menus_offer_every_value_with_a_label(self):
+        app = self._run()
+        self.assertIn("Text only: transcriptions and descriptions", self._selectbox(app, "Image handling").options)
+        self.assertEqual(self._selectbox(app, "Image output").options,
+                         ["Automatic", "Embedded in the output", "Linked files"])
+
+    def test_without_the_client_only_what_needs_no_model_is_offered(self):
+        with patch.dict(sys.modules, {"unified_ai_client": None}):
+            app = AppTest.from_file(APP, default_timeout=30)
+            app.run()
+        self.assertFalse(app.exception, app.exception)
+        self.assertEqual(self._selectbox(app, "Image handling").options, ["Automatic", "Remove images", "Keep images"])
+
+    def test_image_output_is_off_when_the_format_has_one_way(self):
+        for output, disabled in (("out.docx", True), ("out.tex", True), ("out.csv", True), ("out.html", False),
+                                 ("out.md", False), ("out", False)):
+            with self.subTest(output=output):
+                app = self._with_paths("in.md", output)
+                self.assertEqual(self._selectbox(app, "Image output").disabled, disabled)
+
+    def test_the_note_says_what_automatic_means_here(self):
+        self.assertIn("transcribe text, keep figures; images: linked files", self._note(self._with_paths("in.md", "o.tex")))
+        self.assertIn("keep images; images: embedded", self._note(self._with_paths("in.md", "o.json")))
+        self.assertIn("transcribe text", self._note(self._with_paths("in.png", "o.md")))
+        self.assertIn("this format holds none", self._note(self._with_paths("in.md", "o.csv")))
+
+    def test_no_note_until_the_paths_tell_the_formats(self):
+        self.assertEqual(self._note(self._run()), "")
+
+    def test_a_refused_choice_is_flagged_before_converting(self):
+        st.cache_data.clear()
+        with patch("unified_ai_client.list_providers", return_value=PROVIDERS), \
+             patch("unified_ai_client.list_models", return_value=MODELS):
+            app = AppTest.from_file(APP, default_timeout=30)
+            app.run()
+            app.text_input(key="source").input("in.png")
+            app.text_input(key="output").input("out.md")
+            self._selectbox(app, "Image handling").set_value("discard")
+            app.run()
+        self.assertIn("Cannot discard", self._note(app))
+
+    def test_the_chosen_image_options_reach_the_conversion(self):
+        st.cache_data.clear()
+        with patch("unified_ai_client.list_providers", return_value=PROVIDERS), \
+             patch("unified_ai_client.list_models", return_value=MODELS), \
+             patch("textconverter.api.save_to_file") as save:
+            app = AppTest.from_file(APP, default_timeout=30)
+            app.run()
+            app.text_input(key="source").input("in.md")
+            app.text_input(key="output").input("out.html")
+            app.run()
+            self._selectbox(app, "Image handling").set_value("append")
+            self._selectbox(app, "Image output").set_value("link")
+            next(b for b in app.button if b.label == "Convert").click()
+            app.run()
+        self.assertFalse(app.exception, app.exception)
+        options = save.call_args.args[2]
+        self.assertEqual((options.image_handling, options.image_output), ("append", "link"))
+
+    def test_a_format_with_one_way_gets_auto_whatever_the_menu_shows(self):
+        st.cache_data.clear()
+        with patch("unified_ai_client.list_providers", return_value=PROVIDERS), \
+             patch("unified_ai_client.list_models", return_value=MODELS), \
+             patch("textconverter.api.save_to_file") as save:
+            app = AppTest.from_file(APP, default_timeout=30)
+            app.run()
+            app.text_input(key="source").input("in.md")
+            app.text_input(key="output").input("out.html")
+            app.run()
+            self._selectbox(app, "Image output").set_value("link")
+            app.text_input(key="output").input("out.docx")
+            app.run()
+            next(b for b in app.button if b.label == "Convert").click()
+            app.run()
+        self.assertEqual(save.call_args.args[2].image_output, "auto")
 
     def test_site_cleanup_default_follows_config(self):
         """html.site_cleanup = false in config.json unticks the checkbox (it was always ticked)."""

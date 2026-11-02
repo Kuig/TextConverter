@@ -13,8 +13,9 @@ if (-not (Test-Path $ExePath)) {
     Write-Warning "$ExePath not found: create the .venv and install the project before using the menu."
 }
 
-# Every entry runs convert.cmd, which calls "textconverter convert" with the
-# CLI's own defaults and writes "<name>_converted<ext>" next to the source file.
+# Every entry runs convert.cmd, which calls "textconverter convert" and writes
+# "<name>_converted<ext>" next to the source file. A target with choices opens a
+# submenu whose "Default" is the CLI's own defaults.
 $EscapedCmdPath = $CmdPath.Replace("\", "\\")
 
 # Every target of the menu. JSON is left out on purpose: it is the AST, for
@@ -45,42 +46,71 @@ function Copy-Target($Target, [hashtable]$Changes) {
     $Copy
 }
 
-# PDF sources: text-layer conversions, then the same ones in raster mode (pages
-# rendered and transcribed by AI). Explorer sorts entries by key, so the "r"
-# prefix lists the raster ones last.
-$PdfTargets = Get-Targets ".pdf"
-$PdfRasterTargets = foreach ($Target in $PdfTargets) {
-    Copy-Target $Target @{ Key = "r" + $Target.Key; Verb = $Target.Verb + " (raster)"; PdfMode = "raster" }
+# The choices of a submenu. Explorer sorts entries by key.
+$DefaultChoice = @{ Key = "01default"; Verb = "Default" }
+$NoImages = @{ Key = "02discard"; Verb = "No images"; Handling = "discard" }
+$Transcribe = @{ Key = "03transcribe"; Verb = "Transcribe text"; Handling = "transcribe" }
+$Describe = @{ Key = "04describe"; Verb = "Transcribe and describe"; Handling = "describe" }
+$TextOnly = @{ Key = "05replace"; Verb = "Text only"; Handling = "replace" }
+$WithText = @{ Key = "06append"; Verb = "Images with their text"; Handling = "append" }
+$Raster = @{ Key = "07raster"; Verb = "Raster pages (AI)"; PdfMode = "raster" }
+$MainContent = @{ Key = "08main"; Verb = "Main content"; Extract = $true }
+
+$DocumentImages = @($NoImages, $Transcribe, $Describe, $TextOnly, $WithText)
+# An image is the document, so it cannot be discarded, and the default transcribes it.
+$ImageImages = @($Describe, $TextOnly, $WithText)
+# Excel and CSV keep the tables only: what becomes of the images makes little difference.
+$TableExtensions = @(".xlsx", ".csv")
+
+# Targets with their choices: those about images, except for tables, and the others.
+function Add-Choices($Targets, $Images, $Others = @()) {
+    foreach ($Target in $Targets) {
+        $Choices = @($Others)
+        if ($TableExtensions -notcontains $Target.Ext) { $Choices = @($Images) + $Choices }
+        Copy-Target $Target @{ Choices = $Choices }
+    }
 }
 
-# HTML sources: HTML is a target too (it cleans a page up), and each target
-# also comes on the main content alone.
-$HtmlTargets = foreach ($Target in Get-Targets) {
-    $Target
-    Copy-Target $Target @{ Key = $Target.Key + "_main"; Verb = $Target.Verb + " - main content"; Extract = $true }
-}
+# HTML sources: HTML is a target too (it cleans a page up).
+$HtmlTargets = Add-Choices (Get-Targets) $DocumentImages @($MainContent)
+$ImageTargets = Add-Choices (Get-Targets) $ImageImages
 
 # Define associations and subcommands
 $Associations = [ordered]@{
-    ".pdf" = @($PdfTargets) + @($PdfRasterTargets)
-    ".md" = Get-Targets ".md"
-    ".markdown" = Get-Targets ".md"
-    ".tex" = Get-Targets ".tex"
-    ".latex" = Get-Targets ".tex"
+    ".pdf" = Add-Choices (Get-Targets ".pdf") $DocumentImages @($Raster)
+    ".md" = Add-Choices (Get-Targets ".md") $DocumentImages
+    ".markdown" = Add-Choices (Get-Targets ".md") $DocumentImages
+    ".tex" = Add-Choices (Get-Targets ".tex") $DocumentImages
+    ".latex" = Add-Choices (Get-Targets ".tex") $DocumentImages
     ".html" = $HtmlTargets
     ".htm" = $HtmlTargets
-    ".docx" = Get-Targets ".docx"
-    ".pptx" = Get-Targets ".pptx"
+    ".docx" = Add-Choices (Get-Targets ".docx") $DocumentImages
+    ".pptx" = Add-Choices (Get-Targets ".pptx") $DocumentImages
     ".csv" = Get-Targets ".csv"
     ".tsv" = Get-Targets
     ".xlsx" = Get-Targets ".xlsx"
     ".json" = Get-Targets
-    ".png" = Get-Targets
-    ".jpg" = Get-Targets
-    ".jpeg" = Get-Targets
-    ".gif" = Get-Targets
-    ".bmp" = Get-Targets
-    ".webp" = Get-Targets
+    ".png" = $ImageTargets
+    ".jpg" = $ImageTargets
+    ".jpeg" = $ImageTargets
+    ".gif" = $ImageTargets
+    ".bmp" = $ImageTargets
+    ".webp" = $ImageTargets
+}
+
+# The registry lines of an entry that runs a conversion: a key, its label, its command.
+function Get-Entry([string]$Key, $Entry, [string]$Ext) {
+    # Code detection works on a PDF's text layer; Markdown and LaTeX are already structured.
+    $Options = @("--template", $Entry.Template)
+    if ($Entry.Extract) { $Options += "--extract-html" }
+    if ($Entry.Handling) { $Options += @("--image-handling", $Entry.Handling) }
+    if ($Entry.PdfMode) { $Options += @("--pdf-mode", $Entry.PdfMode) }
+    elseif ($Ext -eq ".pdf") { $Options += "--code-parsing" }
+    $OptionString = $Options -join " "
+
+    "`r`n[$Key]`r`n`"MUIVerb`"=`"$($Entry.Verb)`"`r`n" +
+    "`r`n[$Key\command]`r`n" +
+    '@="\"' + $EscapedCmdPath + '\" \"%1\" ' + $Entry.Ext + ' ' + $OptionString + '"' + "`r`n"
 }
 
 # Generate register.reg
@@ -101,22 +131,16 @@ foreach ($Ext in $Associations.Keys) {
     $UnregisterContent += "`r`n[-HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter]`r`n"
 
     foreach ($Sub in $Subcommands) {
-        $Key = $Sub.Key
-        $Verb = $Sub.Verb
-        $TargetExt = $Sub.Ext
-        # textconverter convert options for this entry. Code detection works
-        # on a PDF's text layer; Markdown and LaTeX are already structured.
-        $Options = @("--template", $Sub.Template)
-        if ($Sub.Extract) { $Options += "--extract-html" }
-        if ($Sub.PdfMode) { $Options += @("--pdf-mode", $Sub.PdfMode) }
-        elseif ($Ext -eq ".pdf") { $Options += "--code-parsing" }
-        $OptionString = $Options -join " "
-
-        $RegisterContent += "`r`n[HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter\shell\$Key]`r`n"
-        $RegisterContent += "`"MUIVerb`"=generic:`"$Verb`"`r`n".Replace("generic:", "")
-
-        $RegisterContent += "`r`n[HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter\shell\$Key\command]`r`n"
-        $RegisterContent += '@="\"' + $EscapedCmdPath + '\" \"%1\" ' + $TargetExt + ' ' + $OptionString + '"' + "`r`n"
+        $Key = "HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter\shell\$($Sub.Key)"
+        $Choices = @($Sub.Choices)
+        if ($Choices.Count -eq 0 -or $null -eq $Sub.Choices) {
+            $RegisterContent += Get-Entry $Key $Sub $Ext
+            continue
+        }
+        $RegisterContent += "`r`n[$Key]`r`n`"MUIVerb`"=`"$($Sub.Verb)`"`r`n`"SubCommands`"=`"`"`r`n"
+        foreach ($Choice in @($DefaultChoice) + $Choices) {
+            $RegisterContent += Get-Entry "$Key\shell\$($Choice.Key)" (Copy-Target $Sub $Choice) $Ext
+        }
     }
 }
 

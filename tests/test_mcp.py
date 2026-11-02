@@ -25,6 +25,17 @@ class TestMcpTools(BaseConverterTest):
         result = asyncio.run(self.server.call_tool(name, arguments))
         return result.content[0].text
 
+    def test_image_options_reach_the_conversion(self):
+        text = self._call("textconverter_convert_text", text="![x](data:image/png;base64,AAAA)\n",
+                          from_format="markdown", to_format="html", image_handling="keep", image_output="embed")
+        self.assertIn("data:image/png;base64,AAAA", text)
+
+    def test_a_bad_image_output_is_a_tool_error(self):
+        from mcp.server.mcpserver.exceptions import ToolError
+        with self.assertRaisesRegex(ToolError, "image_output"):
+            self._call("textconverter_convert_text", text="x", from_format="markdown", to_format="html",
+                       image_output="copy")
+
     def test_tool_names(self):
         tools = asyncio.run(self.server.list_tools())
         self.assertEqual({t.name for t in tools},

@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `discard`, `keep`, `split`, `transcribe`, `describe`, `replace` or `append`. The new `image_output` (`--image-output`) says how the
   ones left are written: `embed` or `link`. `embed`, `link` and `auto_latex` are no longer `image_handling` values. See the README's
   Image Handling.
+- The Windows context menu opens a submenu per target on sources with images: **Default** and the image choices, then **Raster pages**
+  for a PDF and **Main content** for HTML, which used to be flat entries. Run `generate_registry_files.ps1` and import `register.reg` again.
+- The GUI has two image menus, with labels saying what each choice does. **Image output** is off when the output has one way of holding
+  images, a line says what the options come to for the paths typed, and without the AI client only what needs no model is offered.
 - An image that keeps its description is a real image, followed by the description between marker lines that now name its category:
   the `[Image Reference: ...]` line is gone, and Markdown reads the new form back. A text image transcribed by `describe` is replaced by
   its text, without markers. `Image.render_metadata` is gone.
