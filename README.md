@@ -161,6 +161,7 @@ A failed conversion is returned as a tool error (`isError`) with its message.
 
 ```powershell
 textconverter gui
+textconverter gui DocsInput/document.pdf   # starts with the file as the source
 ```
 
 The sidebar holds the conversion options, with one line saying what the image options come to for the paths typed, and the AI selection: a provider menu (local servers that answer and cloud providers with a key) and menus for the classification, description and OCR models, listing the models that accept images, plus a context size slider (4k to 256k tokens). **Save as default** writes the selection to `config.json` in the working directory.
@@ -188,13 +189,10 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
 
 #### Features
 * **Cascading Menu**: Adds a grouped `"Convert with TextConverter..."` menu.
-* **Every conversion**: Each source offers Markdown, LaTeX, HTML (no theme, light, dark), PDF, Word, PowerPoint, Excel and CSV, except its own format. Excel and CSV keep the tables only, and fail on a document without tables. JSON (`.aston`) is reached through the CLI: it is the AST, for debugging or for reusing a parsed document.
-* **A submenu per target**: On a source that holds images, each target opens **Default** (the CLI's defaults) and the image choices: **No images** (`discard`), **Transcribe text** (`transcribe`), **Transcribe and describe** (`describe`), **Text only** (`replace`) and **Images with their text** (`append`). Excel and CSV as targets have no image choices. CSV, Excel and JSON (`.aston`) as sources have a plain entry per target.
-  * **PDFs**: Each target also offers **Raster pages (AI)**, which renders the pages and transcribes them (`--pdf-mode raster`), for scanned PDFs.
-  * **HTML / HTM**: HTML is a target too, to clean a page up, and each target also offers **Main content** (`--extract-html` to filter out boilerplate).
-  * **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`): **Default** transcribes the text in the image with the AI models of `config.json`, and the choices are those above, except **No images** and **Transcribe text**.
+* **Every conversion**: Each source offers Markdown, LaTeX, HTML (no theme, light, dark), PDF, Word, PowerPoint, Excel, CSV and AST (`.aston`, the parsed document, for debugging or for reusing it), except its own format; HTML is a target of HTML too, to clean a page up. Excel and CSV keep the tables only, and fail on a document without tables. Images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`) are transcribed with the AI models of `config.json`.
+* **Same behavior as the CLI**: Every conversion runs `Windows Integration/convert.cmd`, which calls `textconverter convert` with its default options (so `--image-handling auto`). PDF sources also get `--code-parsing`. If a conversion fails, the window stays open to show the error.
+* **Open with TextConverter**: Opens the GUI with the file as its source, for every other option: what happens to the images, raster PDF pages, the main content of an HTML page, and so on. Explorer shows at most 16 entries of a menu, submenus included, so the menu does not hold the options itself.
 * **Nothing is overwritten**: The result goes next to the source file as `<name>_converted<ext>`, then `<name>_converted2<ext>` and so on.
-* **Same behavior as the CLI**: Every entry runs `Windows Integration/convert.cmd`, which calls `textconverter convert`, with its default options under **Default** and on plain entries (so `--image-handling auto`). PDF sources in text mode also get `--code-parsing`. If a conversion fails, the window stays open to show the error.
 
 #### Setup
 1. Open a PowerShell terminal in the project root.
@@ -209,7 +207,7 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
 
 #### GUI Launcher
 
-A `launch_gui.bat` shortcut in the `Windows Integration/` folder activates the virtual environment and launches the Streamlit web interface with a double-click, without needing to open a terminal.
+A `launch_gui.bat` shortcut in the `Windows Integration/` folder activates the virtual environment and launches the Streamlit web interface with a double-click, without needing to open a terminal. Given a file (`launch_gui.bat <file>`, what **Open with TextConverter** runs), the GUI starts with it as the source.
 
 You can also:
 - Create a shortcut to `launch_gui.bat` on your Desktop or Start Menu for quick access.

@@ -273,9 +273,9 @@ class TestWindowsIntegration(BaseConverterTest):
         return menu
 
     def test_context_menu_goes_from_every_input_to_every_output(self):
-        """Except .txt as a source, the AST as a target, and a format to itself (HTML cleans a page up)."""
+        """Except .txt as a source and a format to itself (HTML cleans a page up)."""
         from textconverter.formats import INPUT_FORMATS, OUTPUT_FORMATS
-        targets = {f.extensions[0] for f in OUTPUT_FORMATS.values()} - {".aston"}
+        targets = {f.extensions[0] for f in OUTPUT_FORMATS.values()}
         with tempfile.TemporaryDirectory() as tmp:
             register = self._register(tmp)
         menu = self._menu(register)
@@ -286,62 +286,56 @@ class TestWindowsIntegration(BaseConverterTest):
                 expected[ext] = targets if name == "html" or ext == ".tsv" else targets - {own}
         del expected[".txt"]
         self.assertEqual(menu, expected)
-        self.assertIn(".csv --template plain --pdf-mode raster", register)
-        self.assertIn(".xlsx --template plain --extract-html", register)
 
     def _commands(self) -> dict[str, str]:
-        """The options of each entry, by its path under TextConverter, as ``<source>/<target>[/<choice>]``."""
+        """The command of each entry, by its path, as ``<source>/TextConverter/<target>`` or ``<source>/TextConverterGui``."""
         with tempfile.TemporaryDirectory() as tmp:
             register = self._register(tmp)
         commands = {}
         key = ""
         for line in register.splitlines():
-            found = re.fullmatch(r"\[HKEY_CLASSES_ROOT.SystemFileAssociations.(\.\w+).shell.TextConverter((?:.+))?\]", line)
+            found = re.fullmatch(r"\[HKEY_CLASSES_ROOT.SystemFileAssociations.(\.\w+).shell.(TextConverter\w*)(.*)\]", line)
             if found:
-                key = found.group(1) + (found.group(2) or "").replace("\\shell\\", "/")
+                key = found.group(1) + "/" + found.group(2) + found.group(3).replace("\\shell\\", "/")
             elif line.startswith("@="):
-                commands[key.removesuffix("\\command")] = line.split("%1", 1)[1]
+                commands[key.removesuffix("\\command")] = line
         return commands
 
-    def test_a_target_opens_its_choices(self):
+    def test_conversions_take_the_cli_defaults(self):
+        """The other options are in the GUI; a PDF's text layer also gets code detection."""
         commands = self._commands()
-        self.assertEqual(sorted(path for path in commands if path.startswith(".md/02tex/")),
-                         [".md/02tex/01default", ".md/02tex/02discard", ".md/02tex/03transcribe",
-                          ".md/02tex/04describe", ".md/02tex/05replace", ".md/02tex/06append"])
-        self.assertNotIn("--image-handling", commands[".md/02tex/01default"])
-        self.assertIn("--image-handling replace", commands[".md/02tex/05replace"])
+        conversions = {path: command for path, command in commands.items() if "/TextConverter/" in path}
+        self.assertIn(".md/TextConverter/02tex", conversions)
+        for path, command in conversions.items():
+            for option in ("--image-handling", "--image-output", "--pdf-mode", "--extract-html"):
+                self.assertNotIn(option, command, path)
+            self.assertEqual("--code-parsing" in command, path.startswith(".pdf/"), path)
 
-    def test_a_target_without_choices_is_a_plain_entry(self):
-        commands = self._commands()
-        self.assertIn(".md/10csv", commands)
-        self.assertIn(".csv/01md", commands)
-        self.assertIn(".xlsx/01md", commands)
-        self.assertIn(".aston/01md", commands)
+    def test_no_menu_goes_over_what_explorer_shows(self):
+        """Explorer shows at most 16 entries of a menu, submenus included, and drops the rest."""
+        counts: dict[str, int] = {}
+        for path in self._commands():
+            menu = path.rsplit("/", 1)[0]
+            counts[menu] = counts.get(menu, 0) + 1
+        self.assertTrue(counts)
+        for menu, count in counts.items():
+            self.assertLessEqual(count, 16, menu)
 
-    def test_an_image_is_never_discarded_and_its_default_is_not_repeated(self):
+    def test_every_source_opens_the_gui_on_its_file(self):
         commands = self._commands()
-        self.assertEqual(sorted(path for path in commands if path.startswith(".png/01md/")),
-                         [".png/01md/01default", ".png/01md/04describe", ".png/01md/05replace", ".png/01md/06append"])
-
-    def test_pdf_choices_keep_code_detection_and_raster_stands_alone(self):
-        commands = self._commands()
-        self.assertIn("--code-parsing", commands[".pdf/01md/05replace"])
-        self.assertIn("--pdf-mode raster", commands[".pdf/01md/07raster"])
-        self.assertNotIn("--code-parsing", commands[".pdf/01md/07raster"])
-        self.assertIn("--pdf-mode raster", commands[".pdf/10csv/07raster"])
-        self.assertNotIn(".pdf/10csv/05replace", commands)
-
-    def test_main_content_stands_alone(self):
-        commands = self._commands()
-        self.assertIn("--extract-html", commands[".html/01md/08main"])
-        self.assertNotIn("--image-handling", commands[".html/01md/08main"])
+        sources = {path.split("/", 1)[0] for path in commands}
+        for source in sources:
+            command = commands[f"{source}/TextConverterGui"]
+            self.assertIn("launch_gui.bat", command)
+            self.assertTrue(command.endswith('\\"%1\\""'), command)
 
     def test_every_key_has_a_label(self):
         with tempfile.TemporaryDirectory() as tmp:
             register = self._register(tmp)
         lines = register.splitlines()
         for number, line in enumerate(lines):
-            if line.startswith("[HKEY") and not line.endswith("command]") and "\\shell\\TextConverter\\" in line:
+            if (line.startswith("[HKEY") and not line.endswith("command]")
+                    and re.search(r"\\shell\\TextConverter(Gui\]|\\)", line)):
                 self.assertTrue(lines[number + 1].startswith('"MUIVerb"'), line)
 
     def _run_entry(self, source: Path, target: str, *options: str) -> None:
@@ -384,3 +378,14 @@ class TestCli(BaseConverterTest):
         self.assertEqual((args.from_format, args.template), ("html", "dark"))
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             build_parser().parse_args(["convert", "a.md", "b.html", "--template", "drak"])
+
+    def test_gui_starts_on_the_file_given(self):
+        from unittest.mock import patch
+        from textconverter.__main__ import build_parser
+        with patch("textconverter.__main__.subprocess.run") as run:
+            args = build_parser().parse_args(["gui", "doc.pdf"])
+            args.func(args)
+            self.assertEqual(run.call_args.args[0][-3:], ["--", "--source", str(Path("doc.pdf").resolve())])
+            args = build_parser().parse_args(["gui"])
+            args.func(args)
+            self.assertNotIn("--", run.call_args.args[0])

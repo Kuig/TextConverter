@@ -7,11 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `textconverter gui <file>` starts the GUI with the file as the source; `launch_gui.bat` takes a file too.
+- The Windows context menu has **Open with TextConverter**, which opens the GUI on the file, and **to AST (.aston)** among
+  the targets.
+
 ### Changed
+
+- The Windows context menu is one list of targets with the CLI's defaults: the submenus of 0.5.0 (image choices, raster
+  pages, main content) are gone, and those options are in the GUI, through **Open with TextConverter**. Run
+  `generate_registry_files.ps1` and import `register.reg` again.
 
 - **Breaking:** the AST (format `json`) is written and read as `.aston`, since a `.json` file is not necessarily an AST: a `.json`
   file is read as one only with `--from json` (`from_format="json"`). The format keeps its name, and a URL served as
   `application/json` is still read as AST. The Windows context menu covers `.aston` sources instead of `.json`.
+
+### Fixed
+
+- The Windows context menu showed only the first targets: Explorer shows at most 16 entries of a menu, submenus
+  included, and the 0.5.0 submenus took 7 each (a PDF offered only Markdown and LaTeX). Already in 0.4.1 the raster and
+  main content entries went past the limit.
 
 ## [0.5.0] - 2026-11-02
 

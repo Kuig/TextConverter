@@ -1,4 +1,5 @@
 from __future__ import annotations
+import argparse
 import dataclasses
 import streamlit as st
 import sys
@@ -90,10 +91,20 @@ def _configured_context_size(provider: str) -> int:
     return load_config().provider_settings(provider).get("context_size", DEFAULT_CONTEXT_SIZE)
 
 
+def _start_source() -> str:
+    """The source given by ``textconverter gui <file>`` (``--source`` after ``--``), or ''.
+
+    Other arguments, such as a test runner's, are ignored.
+    """
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--source", default="")
+    return parser.parse_known_args()[0].source
+
+
 def _init_state() -> None:
     """Fill the session state with the paths and the AI selection from config.json."""
     ai = load_config().ai
-    defaults = {"source": "", "output": "", "provider": ai.provider,
+    defaults = {"source": _start_source(), "output": "", "provider": ai.provider,
                 "context_size": _configured_context_size(ai.provider)}
     defaults.update({key: getattr(ai, key) for key in MODEL_KEYS})
     for key, value in defaults.items():

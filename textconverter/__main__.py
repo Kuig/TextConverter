@@ -64,9 +64,13 @@ def cmd_gui(args: argparse.Namespace) -> None:
     """Handle the gui subcommand: launch the Streamlit web interface.
 
     Args:
-        args: Parsed argument namespace (unused).
+        args: Parsed argument namespace; ``args.source``, when given, starts as the source path.
     """
-    subprocess.run([sys.executable, "-m", "streamlit", "run", str(Path(__file__).parent / "gui" / "app.py")])
+    command = [sys.executable, "-m", "streamlit", "run", str(Path(__file__).parent / "gui" / "app.py")]
+    if args.source:
+        # Streamlit hands what follows "--" to the script as its sys.argv.
+        command += ["--", "--source", str(Path(args.source).resolve())]
+    subprocess.run(command)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -123,6 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mcp.set_defaults(func=cmd_mcp)
 
     p_gui = subparsers.add_parser("gui", help="Launch Streamlit web interface.")
+    p_gui.add_argument("source", nargs="?", help="File to set as the source.")
     p_gui.set_defaults(func=cmd_gui)
 
     return parser

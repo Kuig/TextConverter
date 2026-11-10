@@ -1,6 +1,9 @@
 @echo off
 REM Launch TextConverter GUI via Streamlit.
-REM Activates the venv and opens the web interface.
+REM Activates the venv and opens the web interface:
+REM   launch_gui.bat [source file]
+REM With a file (the "Open with TextConverter" context menu entry), the GUI starts
+REM with it as the source.
 cd /d "%~dp0.."
 
 if not exist ".venv\Scripts\activate.bat" (
@@ -11,4 +14,8 @@ if not exist ".venv\Scripts\activate.bat" (
 )
 
 call .venv\Scripts\activate.bat
-textconverter gui
+if "%~1"=="" (
+    textconverter gui
+) else (
+    textconverter gui "%~1"
+)

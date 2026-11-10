@@ -8,29 +8,36 @@ $ScriptDir = $PSScriptRoot
 $ProjectDir = (Get-Item $ScriptDir).Parent.FullName
 $ExePath = Join-Path $ProjectDir ".venv\Scripts\textconverter.exe"
 $CmdPath = Join-Path $ScriptDir "convert.cmd"
+$GuiPath = Join-Path $ScriptDir "launch_gui.bat"
 
 if (-not (Test-Path $ExePath)) {
     Write-Warning "$ExePath not found: create the .venv and install the project before using the menu."
 }
 
-# Every entry runs convert.cmd, which calls "textconverter convert" and writes
-# "<name>_converted<ext>" next to the source file. A target with choices opens a
-# submenu whose "Default" is the CLI's own defaults.
+# Every conversion entry runs convert.cmd, which calls "textconverter convert" with
+# the CLI's own defaults and writes "<name>_converted<ext>" next to the source file.
+# "Open with TextConverter" runs launch_gui.bat, which opens the GUI with the file as
+# its source, for every other option.
 $EscapedCmdPath = $CmdPath.Replace("\", "\\")
+$EscapedGuiPath = $GuiPath.Replace("\", "\\")
 
-# Every target of the menu. The AST (.aston) is left out on purpose: it is for
-# debugging or for reusing a parsed document, and is reached through the CLI.
+# Explorer shows at most 16 entries of a menu, submenus included, and drops the rest
+# without a word: the conversions are one flat list, the options are in the GUI.
+$MaxEntries = 16
+
+# Every target of the menu.
 $Targets = @(
-    [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
-    [ordered]@{ Key="02tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain"; Extract=$false }
-    [ordered]@{ Key="03html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain"; Extract=$false }
-    [ordered]@{ Key="04html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme"; Extract=$false }
-    [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme"; Extract=$false }
-    [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain"; Extract=$false }
-    [ordered]@{ Key="07docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain"; Extract=$false }
-    [ordered]@{ Key="08pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain"; Extract=$false }
-    [ordered]@{ Key="09xlsx"; Verb="to Excel (.xlsx)"; Ext=".xlsx"; Template="plain"; Extract=$false }
-    [ordered]@{ Key="10csv"; Verb="to CSV (.csv)"; Ext=".csv"; Template="plain"; Extract=$false }
+    [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain" }
+    [ordered]@{ Key="02tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain" }
+    [ordered]@{ Key="03html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain" }
+    [ordered]@{ Key="04html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme" }
+    [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme" }
+    [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain" }
+    [ordered]@{ Key="07docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain" }
+    [ordered]@{ Key="08pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain" }
+    [ordered]@{ Key="09xlsx"; Verb="to Excel (.xlsx)"; Ext=".xlsx"; Template="plain" }
+    [ordered]@{ Key="10csv"; Verb="to CSV (.csv)"; Ext=".csv"; Template="plain" }
+    [ordered]@{ Key="11aston"; Verb="to AST (.aston)"; Ext=".aston"; Template="plain" }
 )
 
 # The targets of a source: all of them, except the source's own format.
@@ -38,74 +45,34 @@ function Get-Targets([string]$Without = "") {
     @($Targets | Where-Object { $_.Ext -ne $Without })
 }
 
-# A copy of a target with some of its fields changed.
-function Copy-Target($Target, [hashtable]$Changes) {
-    $Copy = [ordered]@{}
-    foreach ($Field in $Target.Keys) { $Copy[$Field] = $Target[$Field] }
-    foreach ($Field in $Changes.Keys) { $Copy[$Field] = $Changes[$Field] }
-    $Copy
-}
-
-# The choices of a submenu. Explorer sorts entries by key.
-$DefaultChoice = @{ Key = "01default"; Verb = "Default" }
-$NoImages = @{ Key = "02discard"; Verb = "No images"; Handling = "discard" }
-$Transcribe = @{ Key = "03transcribe"; Verb = "Transcribe text"; Handling = "transcribe" }
-$Describe = @{ Key = "04describe"; Verb = "Transcribe and describe"; Handling = "describe" }
-$TextOnly = @{ Key = "05replace"; Verb = "Text only"; Handling = "replace" }
-$WithText = @{ Key = "06append"; Verb = "Images with their text"; Handling = "append" }
-$Raster = @{ Key = "07raster"; Verb = "Raster pages (AI)"; PdfMode = "raster" }
-$MainContent = @{ Key = "08main"; Verb = "Main content"; Extract = $true }
-
-$DocumentImages = @($NoImages, $Transcribe, $Describe, $TextOnly, $WithText)
-# An image is the document, so it cannot be discarded, and the default transcribes it.
-$ImageImages = @($Describe, $TextOnly, $WithText)
-# Excel and CSV keep the tables only: what becomes of the images makes little difference.
-$TableExtensions = @(".xlsx", ".csv")
-
-# Targets with their choices: those about images, except for tables, and the others.
-function Add-Choices($Targets, $Images, $Others = @()) {
-    foreach ($Target in $Targets) {
-        $Choices = @($Others)
-        if ($TableExtensions -notcontains $Target.Ext) { $Choices = @($Images) + $Choices }
-        Copy-Target $Target @{ Choices = $Choices }
-    }
-}
-
-# HTML sources: HTML is a target too (it cleans a page up).
-$HtmlTargets = Add-Choices (Get-Targets) $DocumentImages @($MainContent)
-$ImageTargets = Add-Choices (Get-Targets) $ImageImages
-
-# Define associations and subcommands
+# Define associations and subcommands. HTML is a target of HTML too (it cleans a page up).
 $Associations = [ordered]@{
-    ".pdf" = Add-Choices (Get-Targets ".pdf") $DocumentImages @($Raster)
-    ".md" = Add-Choices (Get-Targets ".md") $DocumentImages
-    ".markdown" = Add-Choices (Get-Targets ".md") $DocumentImages
-    ".tex" = Add-Choices (Get-Targets ".tex") $DocumentImages
-    ".latex" = Add-Choices (Get-Targets ".tex") $DocumentImages
-    ".html" = $HtmlTargets
-    ".htm" = $HtmlTargets
-    ".docx" = Add-Choices (Get-Targets ".docx") $DocumentImages
-    ".pptx" = Add-Choices (Get-Targets ".pptx") $DocumentImages
+    ".pdf" = Get-Targets ".pdf"
+    ".md" = Get-Targets ".md"
+    ".markdown" = Get-Targets ".md"
+    ".tex" = Get-Targets ".tex"
+    ".latex" = Get-Targets ".tex"
+    ".html" = Get-Targets
+    ".htm" = Get-Targets
+    ".docx" = Get-Targets ".docx"
+    ".pptx" = Get-Targets ".pptx"
     ".csv" = Get-Targets ".csv"
     ".tsv" = Get-Targets
     ".xlsx" = Get-Targets ".xlsx"
-    ".aston" = Get-Targets
-    ".png" = $ImageTargets
-    ".jpg" = $ImageTargets
-    ".jpeg" = $ImageTargets
-    ".gif" = $ImageTargets
-    ".bmp" = $ImageTargets
-    ".webp" = $ImageTargets
+    ".aston" = Get-Targets ".aston"
+    ".png" = Get-Targets
+    ".jpg" = Get-Targets
+    ".jpeg" = Get-Targets
+    ".gif" = Get-Targets
+    ".bmp" = Get-Targets
+    ".webp" = Get-Targets
 }
 
 # The registry lines of an entry that runs a conversion: a key, its label, its command.
 function Get-Entry([string]$Key, $Entry, [string]$Ext) {
     # Code detection works on a PDF's text layer; Markdown and LaTeX are already structured.
     $Options = @("--template", $Entry.Template)
-    if ($Entry.Extract) { $Options += "--extract-html" }
-    if ($Entry.Handling) { $Options += @("--image-handling", $Entry.Handling) }
-    if ($Entry.PdfMode) { $Options += @("--pdf-mode", $Entry.PdfMode) }
-    elseif ($Ext -eq ".pdf") { $Options += "--code-parsing" }
+    if ($Ext -eq ".pdf") { $Options += "--code-parsing" }
     $OptionString = $Options -join " "
 
     "`r`n[$Key]`r`n`"MUIVerb`"=`"$($Entry.Verb)`"`r`n" +
@@ -126,28 +93,29 @@ foreach ($Ext in @(".json")) {
 
 foreach ($Ext in $Associations.Keys) {
     $Subcommands = $Associations[$Ext]
+    if ($Subcommands.Count -gt $MaxEntries) {
+        throw "$Ext has $($Subcommands.Count) targets: Explorer shows only the first $MaxEntries."
+    }
+    $Shell = "HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell"
 
     # Remove the entries of an earlier registration, then write the main entry for this extension
-    $RegisterContent += "`r`n[-HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter]`r`n"
-    $RegisterContent += "`r`n[HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter]`r`n"
-    $RegisterContent += "`"MUIVerb`"=generic:`"Convert with TextConverter...`"`r`n".Replace("generic:", "") # escape string value quotes cleanly
-    $RegisterContent += "`"SubCommands`"=generic:`"`"`r`n".Replace("generic:", "")
-
-    # Write the unregister clean key for this extension
-    $UnregisterContent += "`r`n[-HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter]`r`n"
-
+    $RegisterContent += "`r`n[-$Shell\TextConverter]`r`n"
+    $RegisterContent += "`r`n[$Shell\TextConverter]`r`n"
+    $RegisterContent += "`"MUIVerb`"=`"Convert with TextConverter...`"`r`n"
+    $RegisterContent += "`"SubCommands`"=`"`"`r`n"
     foreach ($Sub in $Subcommands) {
-        $Key = "HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter\shell\$($Sub.Key)"
-        $Choices = @($Sub.Choices)
-        if ($Choices.Count -eq 0 -or $null -eq $Sub.Choices) {
-            $RegisterContent += Get-Entry $Key $Sub $Ext
-            continue
-        }
-        $RegisterContent += "`r`n[$Key]`r`n`"MUIVerb`"=`"$($Sub.Verb)`"`r`n`"SubCommands`"=`"`"`r`n"
-        foreach ($Choice in @($DefaultChoice) + $Choices) {
-            $RegisterContent += Get-Entry "$Key\shell\$($Choice.Key)" (Copy-Target $Sub $Choice) $Ext
-        }
+        $RegisterContent += Get-Entry "$Shell\TextConverter\shell\$($Sub.Key)" $Sub $Ext
     }
+
+    # The entry that opens the GUI on the file
+    $RegisterContent += "`r`n[-$Shell\TextConverterGui]`r`n"
+    $RegisterContent += "`r`n[$Shell\TextConverterGui]`r`n`"MUIVerb`"=`"Open with TextConverter`"`r`n"
+    $RegisterContent += "`r`n[$Shell\TextConverterGui\command]`r`n"
+    $RegisterContent += '@="\"' + $EscapedGuiPath + '\" \"%1\""' + "`r`n"
+
+    # Write the unregister clean keys for this extension
+    $UnregisterContent += "`r`n[-$Shell\TextConverter]`r`n"
+    $UnregisterContent += "`r`n[-$Shell\TextConverterGui]`r`n"
 }
 
 # Output registry files as UTF-16 LE (Unicode) for native Windows compatibility

@@ -59,6 +59,13 @@ class TestGui(BaseConverterTest):
         self.assertEqual(self._selectbox(app, "OCR model").value, "glm-ocr:latest")
         self.assertFalse([c for c in app.sidebar.caption if "not offered" in c.value])
 
+    def test_source_starts_at_the_file_given(self):
+        """textconverter gui <file> passes it after "--" as --source; other arguments are ignored."""
+        with patch.object(sys, "argv", ["app.py", "-s", "tests", "--source", "in.pdf"]):
+            app = self._run()
+        self.assertEqual(app.text_input(key="source").value, "in.pdf")
+        self.assertEqual(app.text_input(key="output").value, "")
+
     def test_unavailable_provider_stays_selected_with_warning(self):
         """A configured provider that is not running stays selected, flagged in a caption."""
         app = self._run(providers=[])
