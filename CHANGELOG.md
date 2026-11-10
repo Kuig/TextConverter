@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-10
+
 ### Added
 
 - `textconverter gui <file>` starts the GUI with the file as the source; `launch_gui.bat` takes a file too.
@@ -18,8 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Windows context menu is one list of targets with the CLI's defaults: the submenus of 0.5.0 (image choices, raster
   pages, main content) are gone, and those options are in the GUI, through **Open with TextConverter**. Run
   `generate_registry_files.ps1` and import `register.reg` again.
-
-- **Breaking:** the AST (format `json`) is written and read as `.aston`, since a `.json` file is not necessarily an AST: a `.json`
+- The AST (format `json`) is written and read as `.aston`, since a `.json` file is not necessarily an AST: a `.json`
   file is read as one only with `--from json` (`from_format="json"`). The format keeps its name, and a URL served as
   `application/json` is still read as AST. The Windows context menu covers `.aston` sources instead of `.json`.
 
@@ -627,7 +628,8 @@ owcolor`, ...), and a row or cell no longer ends inside a group or a nested tabl
   classification and description, heuristic code detection, equations, and CLI, MCP, GUI and
   library interfaces.
 
-[Unreleased]: https://github.com/Kuig/TextConverter/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Kuig/TextConverter/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/Kuig/TextConverter/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Kuig/TextConverter/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Kuig/TextConverter/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Kuig/TextConverter/compare/v0.3.1...v0.4.0
