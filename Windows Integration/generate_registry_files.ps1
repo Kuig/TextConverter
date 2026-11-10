@@ -18,7 +18,7 @@ if (-not (Test-Path $ExePath)) {
 # submenu whose "Default" is the CLI's own defaults.
 $EscapedCmdPath = $CmdPath.Replace("\", "\\")
 
-# Every target of the menu. JSON is left out on purpose: it is the AST, for
+# Every target of the menu. The AST (.aston) is left out on purpose: it is for
 # debugging or for reusing a parsed document, and is reached through the CLI.
 $Targets = @(
     [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain"; Extract=$false }
@@ -89,7 +89,7 @@ $Associations = [ordered]@{
     ".csv" = Get-Targets ".csv"
     ".tsv" = Get-Targets
     ".xlsx" = Get-Targets ".xlsx"
-    ".json" = Get-Targets
+    ".aston" = Get-Targets
     ".png" = $ImageTargets
     ".jpg" = $ImageTargets
     ".jpeg" = $ImageTargets
@@ -117,6 +117,12 @@ function Get-Entry([string]$Key, $Entry, [string]$Ext) {
 $RegisterContent = "Windows Registry Editor Version 5.00`r`n"
 # Generate unregister.reg
 $UnregisterContent = "Windows Registry Editor Version 5.00`r`n"
+
+# The AST was read as .json up to 0.5.0.
+foreach ($Ext in @(".json")) {
+    $RegisterContent += "`r`n[-HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter]`r`n"
+    $UnregisterContent += "`r`n[-HKEY_CLASSES_ROOT\SystemFileAssociations\$Ext\shell\TextConverter]`r`n"
+}
 
 foreach ($Ext in $Associations.Keys) {
     $Subcommands = $Associations[$Ext]

@@ -35,7 +35,8 @@ INPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
     Format("markdown", (".md", ".markdown", ".txt"), media_types=("text/markdown", "text/x-markdown")),
     Format("html", (".html", ".htm"), media_types=("text/html", "application/xhtml+xml")),
     Format("latex", (".tex", ".latex"), media_types=("application/x-tex", "text/x-tex")),
-    Format("json", (".json",), media_types=("application/json",)),
+    # The AST as JSON. It has an extension of its own: a .json file is not necessarily an AST.
+    Format("json", (".aston",), media_types=("application/json",)),
     Format("pdf", (".pdf",), binary=True, media_types=("application/pdf",)),
     Format("docx", (".docx",), binary=True, media_types=(
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",)),
@@ -53,7 +54,7 @@ OUTPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
     Format("html", (".html", ".htm"), image_outputs=("embed", "link")),
     # LaTeX cannot hold an image in its text.
     Format("latex", (".tex", ".latex"), image_outputs=("link",)),
-    Format("json", (".json",), image_outputs=("embed", "link")),
+    Format("json", (".aston",), image_outputs=("embed", "link")),
     # Written only by save_to_file(): the HTML rendering, printed.
     Format("pdf", (".pdf",), binary=True, image_outputs=("embed",)),
     # Written only by save_to_file(): the AST rendered straight to a Word file.

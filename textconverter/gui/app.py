@@ -28,7 +28,7 @@ except ImportError:
     AI_AVAILABLE = False
 
 FORMAT_LABELS = {"markdown": "Markdown Files", "html": "HTML Files", "latex": "LaTeX Files",
-                 "json": "JSON Files", "pdf": "PDF Files", "docx": "Word Files", "pptx": "PowerPoint Files",
+                 "json": "AST Files", "pdf": "PDF Files", "docx": "Word Files", "pptx": "PowerPoint Files",
                  "csv": "CSV Files", "xlsx": "Excel Files", "image": "Images"}
 
 

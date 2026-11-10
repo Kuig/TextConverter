@@ -141,7 +141,7 @@ def register_tools(mcp: object) -> None:
         Args:
             source: File path, or remote URL (http:// or https://). Text is not
                 accepted: use textconverter_convert_text for it.
-            output_path: Output file path; its extension (.md, .html, .tex, .json,
+            output_path: Output file path; its extension (.md, .html, .tex, .aston (the AST as JSON),
                 .pdf, .docx, .pptx, .xlsx, .csv) sets the format. A .csv output holds the tables only,
                 one file per table when there are several. Images go to '<output name>_images' next to it.
             from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'docx', 'pptx', 'csv', 'xlsx', 'image').

@@ -498,7 +498,7 @@ class TestRegionsInOutput(BaseConverterTest):
         self.assertEqual(len(self._images()), 2)
 
     def test_json_holds_the_figures_with_relative_paths(self):
-        output, _ = self._save(name="out.json", image_output="link")
+        output, _ = self._save(name="out.aston", image_output="link")
         text = output.read_text(encoding="utf-8")
         self.assertIn('"out_images/image_1.png"', text)
         self.assertIn('"photo_drawing_or_comic"', text)

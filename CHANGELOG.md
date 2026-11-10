@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the AST (format `json`) is written and read as `.aston`, since a `.json` file is not necessarily an AST: a `.json`
+  file is read as one only with `--from json` (`from_format="json"`). The format keeps its name, and a URL served as
+  `application/json` is still read as AST. The Windows context menu covers `.aston` sources instead of `.json`.
+
 ## [0.5.0] - 2026-11-02
 
 ### Added

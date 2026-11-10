@@ -98,7 +98,7 @@ class TestOutputOfTheImages(BaseConverterTest):
         self.source.write_text("Before.\n\n![x](p.png)\n\nAfter.\n", encoding="utf-8")
 
     def _json_source(self) -> Path:
-        path = self.dir / "doc.json"
+        path = self.dir / "doc.aston"
         path.write_text(textconverter.convert(str(self.source), "json", ConvertOptions(image_output="link"),
                                               output_dir=str(self.dir)), encoding="utf-8")
         return path

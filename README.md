@@ -4,7 +4,7 @@ Multi-format document conversion tool with AI-powered image description and heur
 
 ## Overview
 
-TextConverter converts between PDF, Word (.docx), PowerPoint (.pptx), Excel (.xlsx), CSV, HTML, Markdown, LaTeX, and JSON formats (PDF output is printed from the light HTML theme; Word, PowerPoint and Excel output are written natively; CSV and Excel carry the tables only; in a PDF's text layer only tables drawn with ruled lines are found). It supports:
+TextConverter converts between PDF, Word (.docx), PowerPoint (.pptx), Excel (.xlsx), CSV, HTML, Markdown, LaTeX, and JSON formats (JSON is the parsed document, the AST, in `.aston` files; PDF output is printed from the light HTML theme; Word, PowerPoint and Excel output are written natively; CSV and Excel carry the tables only; in a PDF's text layer only tables drawn with ruled lines are found). It supports:
 - **URL Inputs**: Directly convert remote documents (both PDFs and HTML pages) from a remote URL.
 - **HTML Content Extraction**: A zero-dependency heuristic parser to clean up webpage boilerplates (like navigation headers, footers, script, and style elements) and isolate the primary content (`<main>`, `<article>`).
 - **Remote Image Downloading**: Automatically downloads and cleans remote images referenced in webpages, applying OS-safe filename sanitization and exact binary content-based deduplication to prevent duplicate copies on disk.
@@ -73,7 +73,7 @@ From `split` on, a page holding more than text (a scan, a raster PDF page, an im
 
 | Output | `auto` | Available |
 |---|---|---|
-| HTML, JSON | `embed` | `embed`, `link` |
+| HTML, JSON (`.aston`) | `embed` | `embed`, `link` |
 | Markdown | `link` | `link`, `embed` |
 | LaTeX | `link` | `link` |
 | PDF, Word, PowerPoint, Excel | `embed` | `embed` |
@@ -188,8 +188,8 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
 
 #### Features
 * **Cascading Menu**: Adds a grouped `"Convert with TextConverter..."` menu.
-* **Every conversion**: Each source offers Markdown, LaTeX, HTML (no theme, light, dark), PDF, Word, PowerPoint, Excel and CSV, except its own format. Excel and CSV keep the tables only, and fail on a document without tables. JSON is reached through the CLI: it is the AST, for debugging or for reusing a parsed document.
-* **A submenu per target**: On a source that holds images, each target opens **Default** (the CLI's defaults) and the image choices: **No images** (`discard`), **Transcribe text** (`transcribe`), **Transcribe and describe** (`describe`), **Text only** (`replace`) and **Images with their text** (`append`). Excel and CSV as targets have no image choices. CSV, Excel and JSON as sources have a plain entry per target.
+* **Every conversion**: Each source offers Markdown, LaTeX, HTML (no theme, light, dark), PDF, Word, PowerPoint, Excel and CSV, except its own format. Excel and CSV keep the tables only, and fail on a document without tables. JSON (`.aston`) is reached through the CLI: it is the AST, for debugging or for reusing a parsed document.
+* **A submenu per target**: On a source that holds images, each target opens **Default** (the CLI's defaults) and the image choices: **No images** (`discard`), **Transcribe text** (`transcribe`), **Transcribe and describe** (`describe`), **Text only** (`replace`) and **Images with their text** (`append`). Excel and CSV as targets have no image choices. CSV, Excel and JSON (`.aston`) as sources have a plain entry per target.
   * **PDFs**: Each target also offers **Raster pages (AI)**, which renders the pages and transcribes them (`--pdf-mode raster`), for scanned PDFs.
   * **HTML / HTM**: HTML is a target too, to clean a page up, and each target also offers **Main content** (`--extract-html` to filter out boilerplate).
   * **Images** (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`): **Default** transcribes the text in the image with the AI models of `config.json`, and the choices are those above, except **No images** and **Transcribe text**.

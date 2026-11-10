@@ -137,7 +137,7 @@ class TestGui(BaseConverterTest):
 
     def test_the_note_says_what_automatic_means_here(self):
         self.assertIn("transcribe text, keep figures; images: linked files", self._note(self._with_paths("in.md", "o.tex")))
-        self.assertIn("keep images; images: embedded", self._note(self._with_paths("in.md", "o.json")))
+        self.assertIn("keep images; images: embedded", self._note(self._with_paths("in.md", "o.aston")))
         self.assertIn("transcribe text", self._note(self._with_paths("in.png", "o.md")))
         self.assertIn("this format holds none", self._note(self._with_paths("in.md", "o.csv")))
 

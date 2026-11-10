@@ -211,6 +211,16 @@ class TestTextAndFiles(BaseConverterTest):
         self.assertEqual(infer_output_format("out.htm"), "html")
         self.assertIsNone(infer_output_format("out.txt"))
 
+    def test_the_ast_has_an_extension_of_its_own(self):
+        """A .json file is not necessarily an AST: it is read as one only when asked."""
+        self.assertEqual(infer_input_format("doc.ASTON"), "json")
+        self.assertEqual(infer_output_format("doc.aston"), "json")
+        self.assertIsNone(infer_input_format("doc.json"))
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "doc.json"
+            src.write_text(textconverter.convert_text("# Title", "markdown", "json"), encoding="utf-8")
+            self.assertEqual(textconverter.convert(str(src), "markdown", from_format="json").strip(), "# Title")
+
     def test_save_to_file_refuses_to_overwrite_the_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             src = os.path.join(tmp, "a.md")
@@ -263,9 +273,9 @@ class TestWindowsIntegration(BaseConverterTest):
         return menu
 
     def test_context_menu_goes_from_every_input_to_every_output(self):
-        """Except .txt as a source, JSON as a target, and a format to itself (HTML cleans a page up)."""
+        """Except .txt as a source, the AST as a target, and a format to itself (HTML cleans a page up)."""
         from textconverter.formats import INPUT_FORMATS, OUTPUT_FORMATS
-        targets = {f.extensions[0] for f in OUTPUT_FORMATS.values()} - {".json"}
+        targets = {f.extensions[0] for f in OUTPUT_FORMATS.values()} - {".aston"}
         with tempfile.TemporaryDirectory() as tmp:
             register = self._register(tmp)
         menu = self._menu(register)
@@ -306,7 +316,7 @@ class TestWindowsIntegration(BaseConverterTest):
         self.assertIn(".md/10csv", commands)
         self.assertIn(".csv/01md", commands)
         self.assertIn(".xlsx/01md", commands)
-        self.assertIn(".json/01md", commands)
+        self.assertIn(".aston/01md", commands)
 
     def test_an_image_is_never_discarded_and_its_default_is_not_repeated(self):
         commands = self._commands()
