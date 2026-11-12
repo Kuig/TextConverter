@@ -77,6 +77,34 @@ class TestPdfOutput(BaseConverterTest):
         html = textconverter.convert_text("See \\cite{a}.\n", "markdown", "html")
         self.assertIn('<span class="tc-ref">\\cite{a}</span>', html)
 
+    def test_pdf_html_is_the_print_theme(self):
+        """The printed page is the print theme whatever template is asked: smaller type, code wrapped."""
+        out = self._out("print_theme.pdf")
+        with patch("textconverter.renderers.pdf_renderer.render_pdf") as render:
+            textconverter.save_to_file(self._source(), str(out), textconverter.ConvertOptions(template="dark"))
+        html = render.call_args.args[0]
+        self.assertIn("font-size: 10.5pt", html)
+        self.assertIn("white-space: pre-wrap", html)
+        self.assertNotIn("#0d1117", html)
+
+    @unittest.skipUnless(find_browser(), "no Edge, Chrome or Chromium installed")
+    def test_long_code_line_wraps(self):
+        """A long code line is wrapped as text, not cut off in a scrolling box or printed as an image."""
+        line = "result = compute(" + ", ".join(f"argument_{i}" for i in range(30)) + ")  # TAIL_MARKER"
+        path = OUTPUT_DIR / "pdf_code.md"
+        path.write_text(f"# Code\n\nSome text.\n\n```python\n{line}\n```\n", encoding="utf-8")
+        out = self._out("pdf_code.pdf")
+        textconverter.save_to_file(str(path), str(out))
+        with pymupdf.open(out) as pdf:
+            text = "".join(page.get_text() for page in pdf)
+            images = sum(len(page.get_images()) for page in pdf)
+            sizes = [span["size"] for block in pdf[0].get_text("dict")["blocks"]
+                     for row in block.get("lines", ()) for span in row["spans"] if "Some text" in span["text"]]
+        self.assertEqual(images, 0)
+        self.assertIn("TAIL_MARKER", text)
+        self.assertIn("argument_29", text)
+        self.assertTrue(sizes and max(sizes) < 12, sizes)
+
     def test_unknown_engine_is_rejected(self):
         with self.assertRaises(ValueError):
             render_pdf("<p>x</p>", str(OUTPUT_DIR / "never.pdf"), engine="latex")

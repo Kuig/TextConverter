@@ -12,7 +12,7 @@ from ._common import (
     bibliography_paragraphs, figure_image, latex_reference_macro, reference_numbers, safe_href, summary_text,
     table_grid,
 )
-from .templates import get_template
+from .templates import PRINT_TEMPLATE, get_template
 
 
 @dataclass
@@ -31,7 +31,8 @@ def render_html(doc: Document, template_name: str = "plain", printed: bool = Fal
     Reference macros stay visible as LaTeX, in spans the HTML parser reads
     back. With ``printed`` the page is an end point that nothing reads back
     (PDF output): notes are numbered and listed at the end, a citation shows its
-    keys, a reference the number of its label when it can be told.
+    keys, a reference the number of its label when it can be told, and the page
+    is ``PRINT_TEMPLATE`` whatever ``template_name`` says.
     """
     token = _PRINTED.set(_Printed(reference_numbers(doc)) if printed else None)
     try:
@@ -39,7 +40,7 @@ def render_html(doc: Document, template_name: str = "plain", printed: bool = Fal
     finally:
         _PRINTED.reset(token)
     body_str = '\n'.join(filter(bool, parts))
-    return (get_template(template_name)
+    return ((PRINT_TEMPLATE if printed else get_template(template_name))
             .replace('{{title}}', html.escape(_page_title(doc)))
             .replace('{{content}}', body_str))
 

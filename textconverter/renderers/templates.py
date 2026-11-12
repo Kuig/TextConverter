@@ -138,6 +138,45 @@ PRETTY_DARK_TEMPLATE = PRETTY_LIGHT_TEMPLATE.replace(
     '<body>', '<body style="background-color: #0d1117;">'
 )
 
+# Rules for paper, appended to the light template so they win by cascade. A
+# scrolling box (`overflow: auto`) is cut off on paper, and Chromium sometimes
+# prints it as an image: code wraps and nothing scrolls.
+_PRINT_CSS = """@page { size: A4; margin: 18mm 16mm; }
+body {
+    font-size: 10.5pt;
+    line-height: 1.45;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+}
+h1, h2, h3, h4, h5, h6 { margin-top: 1.2em; margin-bottom: 0.4em; break-after: avoid; }
+h1 { font-size: 1.6em; }
+h2 { font-size: 1.35em; }
+h3 { font-size: 1.15em; }
+h4, h5, h6 { font-size: 1em; }
+pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow: visible;
+    padding: 8px 10px;
+    font-size: 9pt;
+}
+code { font-size: 9pt; }
+pre code { font-size: 100%; }
+table { font-size: 9.5pt; }
+th, td { padding: 3px 8px; }
+thead { display: table-header-group; }
+tr, img, figure { break-inside: avoid; }
+blockquote, blockquote.alert { margin: 0.8em 0; }
+hr { margin: 0.8em 0; }
+.math.block { overflow: visible; padding: 8px; margin: 0.8em 0; }
+"""
+
+# The page PDF output is printed from: the light template, compact, code wrapped.
+PRINT_TEMPLATE = PRETTY_LIGHT_TEMPLATE.replace("</style>", _PRINT_CSS + "</style>")
+
 _TEMPLATES = {"plain": PLAIN_TEMPLATE, "light": PRETTY_LIGHT_TEMPLATE, "dark": PRETTY_DARK_TEMPLATE}
 
 

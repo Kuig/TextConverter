@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- PDF output is printed from a print theme based on the light one: 10.5pt text, A4 margins, tighter spacing.
+
+### Fixed
+
+- A long code line in PDF output is wrapped instead of cut off in a scrolling box, which Edge sometimes printed as an
+  image.
+
 ## [0.5.1] - 2026-11-10
 
 ### Added

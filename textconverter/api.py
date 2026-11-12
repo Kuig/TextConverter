@@ -44,9 +44,6 @@ from .formats import (
 )
 from .options import ConvertOptions, ImagePlan, resolve_images
 
-# HTML template that PDF output is printed from.
-PDF_TEMPLATE = "light"
-
 # The formats that have no bibliography of their own: they show it as LaTeX macros.
 _MACRO_BIBLIOGRAPHY = ("markdown", "html", "docx", "pptx")
 # What a file of a binary format holds: the start of a PDF, the top folder of an Office package.
@@ -535,7 +532,7 @@ def _save_pdf(
     with tempfile.TemporaryDirectory(prefix="textconverter_pdf_") as tmp:
         html = _convert(source, "pdf", options, config or load_config(), from_format=from_format,
                         output_dir=tmp, image_dir_name="images", overlay_path=overlay_path,
-                        render=lambda doc: render_html(doc, template_name=PDF_TEMPLATE, printed=True))
+                        render=lambda doc: render_html(doc, printed=True))
         render_pdf(html, output_path, base_dir=tmp)
 
 
@@ -578,8 +575,9 @@ def save_to_file(
     The output format comes from the extension of ``output_path``; linked
     images are written to a ``<output stem>_images`` folder next to it, while
     embedded ones leave no folder. A folder of ``output_path`` that is missing
-    is created first. A ``.pdf`` output is the HTML rendering with the light
-    template, printed by ``renderers.pdf_renderer.render_pdf``:
+    is created first. A ``.pdf`` output is the HTML rendering with the print
+    theme (the light one, compact, code lines wrapped), printed by
+    ``renderers.pdf_renderer.render_pdf``:
     ``options.template`` is ignored, images are embedded, and notes, citations
     and cross-references show what they stand for. A ``.docx`` output is the
     document written by ``renderers.docx_renderer.render_docx``, with embedded
