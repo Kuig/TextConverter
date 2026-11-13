@@ -7,8 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-13
+
+### Added
+
+- Plain text (`.txt`, format `text`) as a source and as a target. Its structure is readable and reads back: a title
+  between two `=` rules with `Author:` and `Date:` lines, underlined headings, `-` and `1.` lists, `>` quotes, code
+  indented by four spaces, grid tables, `$$` formulas and footnotes as `[n]` with their text at the end. There is no
+  inline markup: a link is its text with the URL in parentheses, and images are left out (`replace` or `describe`
+  keeps their text). Reading joins the lines of a text wrapped at a fixed width (an e-mail, an RFC) and keeps the line
+  breaks of any other.
+- The Windows context menu offers **to plain text (.txt)** and covers `.txt` and `.text` sources. Run
+  `generate_registry_files.ps1` and import `register.reg` again.
+
 ### Changed
 
+- `.txt` files are read as plain text, no longer as Markdown: `*`, `_`, `#` and `\` stay as written, and a single line
+  break stays a line break. Read Markdown saved as `.txt` with `--from markdown` (`from_format="markdown"`).
+- A `.txt` or `.csv` source saved by Notepad as "Unicode" (UTF-16) is read; both also take UTF-8, with or without a
+  BOM, and Windows-1252.
 - PDF output is printed from a print theme based on the light one: 10.5pt text, A4 margins, tighter spacing.
 
 ### Fixed
@@ -637,7 +654,8 @@ owcolor`, ...), and a row or cell no longer ends inside a group or a nested tabl
   classification and description, heuristic code detection, equations, and CLI, MCP, GUI and
   library interfaces.
 
-[Unreleased]: https://github.com/Kuig/TextConverter/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/Kuig/TextConverter/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/Kuig/TextConverter/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Kuig/TextConverter/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Kuig/TextConverter/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Kuig/TextConverter/compare/v0.4.0...v0.4.1
