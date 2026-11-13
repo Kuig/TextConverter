@@ -32,7 +32,9 @@ class Format:
 
 
 INPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
-    Format("markdown", (".md", ".markdown", ".txt"), media_types=("text/markdown", "text/x-markdown")),
+    Format("markdown", (".md", ".markdown"), media_types=("text/markdown", "text/x-markdown")),
+    # No media type: text/plain is served for any text (a raw .md too), so the extension decides.
+    Format("text", (".txt", ".text")),
     Format("html", (".html", ".htm"), media_types=("text/html", "application/xhtml+xml")),
     Format("latex", (".tex", ".latex"), media_types=("application/x-tex", "text/x-tex")),
     # The AST as JSON. It has an extension of its own: a .json file is not necessarily an AST.
@@ -55,6 +57,8 @@ OUTPUT_FORMATS: dict[str, Format] = {f.name: f for f in (
     # LaTeX cannot hold an image in its text.
     Format("latex", (".tex", ".latex"), image_outputs=("link",)),
     Format("json", (".aston",), image_outputs=("embed", "link")),
+    # Plain text holds no images; their descriptions and transcriptions stay as text.
+    Format("text", (".txt",)),
     # Written only by save_to_file(): the HTML rendering, printed.
     Format("pdf", (".pdf",), binary=True, image_outputs=("embed",)),
     # Written only by save_to_file(): the AST rendered straight to a Word file.

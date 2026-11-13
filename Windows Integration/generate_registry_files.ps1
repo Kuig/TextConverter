@@ -28,16 +28,17 @@ $MaxEntries = 16
 # Every target of the menu.
 $Targets = @(
     [ordered]@{ Key="01md"; Verb="to Markdown (.md)"; Ext=".md"; Template="plain" }
-    [ordered]@{ Key="02tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain" }
-    [ordered]@{ Key="03html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain" }
-    [ordered]@{ Key="04html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme" }
-    [ordered]@{ Key="05html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme" }
-    [ordered]@{ Key="06pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain" }
-    [ordered]@{ Key="07docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain" }
-    [ordered]@{ Key="08pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain" }
-    [ordered]@{ Key="09xlsx"; Verb="to Excel (.xlsx)"; Ext=".xlsx"; Template="plain" }
-    [ordered]@{ Key="10csv"; Verb="to CSV (.csv)"; Ext=".csv"; Template="plain" }
-    [ordered]@{ Key="11aston"; Verb="to AST (.aston)"; Ext=".aston"; Template="plain" }
+    [ordered]@{ Key="02txt"; Verb="to plain text (.txt)"; Ext=".txt"; Template="plain" }
+    [ordered]@{ Key="03tex"; Verb="to LaTeX (.tex)"; Ext=".tex"; Template="plain" }
+    [ordered]@{ Key="04html_plain"; Verb="to HTML (no theme)"; Ext=".html"; Template="plain" }
+    [ordered]@{ Key="05html_light"; Verb="to HTML (light theme)"; Ext=".html"; Template="light-theme" }
+    [ordered]@{ Key="06html_dark"; Verb="to HTML (dark theme)"; Ext=".html"; Template="dark-theme" }
+    [ordered]@{ Key="07pdf"; Verb="to PDF (.pdf)"; Ext=".pdf"; Template="plain" }
+    [ordered]@{ Key="08docx"; Verb="to Word (.docx)"; Ext=".docx"; Template="plain" }
+    [ordered]@{ Key="09pptx"; Verb="to PowerPoint (.pptx)"; Ext=".pptx"; Template="plain" }
+    [ordered]@{ Key="10xlsx"; Verb="to Excel (.xlsx)"; Ext=".xlsx"; Template="plain" }
+    [ordered]@{ Key="11csv"; Verb="to CSV (.csv)"; Ext=".csv"; Template="plain" }
+    [ordered]@{ Key="12aston"; Verb="to AST (.aston)"; Ext=".aston"; Template="plain" }
 )
 
 # The targets of a source: all of them, except the source's own format.
@@ -50,6 +51,8 @@ $Associations = [ordered]@{
     ".pdf" = Get-Targets ".pdf"
     ".md" = Get-Targets ".md"
     ".markdown" = Get-Targets ".md"
+    ".txt" = Get-Targets ".txt"
+    ".text" = Get-Targets ".txt"
     ".tex" = Get-Targets ".tex"
     ".latex" = Get-Targets ".tex"
     ".html" = Get-Targets

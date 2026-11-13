@@ -429,7 +429,7 @@ def parse_markdown(
         # Fallback: Paragraph
         doc.children.append(Paragraph(children=parse_inline(block, ref_map=ref_map)))
 
-    _attach_captions(doc.children)
+    attach_captions(doc.children)
     return doc
 
 
@@ -508,11 +508,11 @@ def _front_matter(text: str) -> tuple[str, dict[str, list[InlineElement]]]:
         log_warning(f"Ignoring unknown front matter keys: {', '.join(unknown)}")
     metadata = {k: parse_inline(v) for k, v in fields.items() if k in METADATA_FIELDS and v}
     if 'author' in metadata:
-        metadata['author'] = _split_authors(metadata['author'])
+        metadata['author'] = split_authors(metadata['author'])
     return text[m.end():], metadata
 
 
-def _split_authors(nodes: list[InlineElement]) -> list[InlineElement]:
+def split_authors(nodes: list[InlineElement]) -> list[InlineElement]:
     """Turn the ``\\and`` the renderer writes between two authors into its line break."""
     out: list[InlineElement] = []
     for node in nodes:
@@ -551,7 +551,7 @@ def _set_caption(node: Table | Image, caption: list[InlineElement]) -> None:
         node.label = labels[-1].name
 
 
-def _attach_captions(blocks: list[Node]) -> None:
+def attach_captions(blocks: list[Node]) -> None:
     """Read ``Table: ...`` before a table and ``Figure: ...`` after an image's paragraph as captions."""
     out: list[Node] = []
     for block in blocks:

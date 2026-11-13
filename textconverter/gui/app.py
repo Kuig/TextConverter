@@ -28,7 +28,7 @@ try:
 except ImportError:
     AI_AVAILABLE = False
 
-FORMAT_LABELS = {"markdown": "Markdown Files", "html": "HTML Files", "latex": "LaTeX Files",
+FORMAT_LABELS = {"markdown": "Markdown Files", "text": "Text Files", "html": "HTML Files", "latex": "LaTeX Files",
                  "json": "AST Files", "pdf": "PDF Files", "docx": "Word Files", "pptx": "PowerPoint Files",
                  "csv": "CSV Files", "xlsx": "Excel Files", "image": "Images"}
 
@@ -248,7 +248,7 @@ with st.sidebar:
     images_note = _images_note(ConvertOptions(image_handling=image_handling, pdf_mode=pdf_mode))
     if images_note:
         st.caption(images_note)
-    code_parsing = st.checkbox("Enable code detection", help="Markdown, Word and PowerPoint sources, and PDF sources in text mode.")
+    code_parsing = st.checkbox("Enable code detection", help="Markdown, plain text, Word and PowerPoint sources, and PDF sources in text mode.")
     extract_html = st.checkbox("Clean HTML & extract main content")
     site_cleanup = st.checkbox("Site-specific cleanup (e.g. Wikipedia)", value=load_config().html.site_cleanup,
                                disabled=not extract_html)

@@ -38,9 +38,10 @@ class TestResolution(BaseConverterTest):
         for to_format in ("markdown", "html", "json", "pdf", "docx", "pptx", "xlsx"):
             self.assertEqual(self._handling("docx", to_format), "keep", to_format)
 
-    def test_auto_handling_transcribes_for_latex_and_discards_for_csv(self):
+    def test_auto_handling_transcribes_for_latex_and_discards_for_csv_and_text(self):
         self.assertEqual(self._handling("docx", "latex"), "transcribe")
         self.assertEqual(self._handling("docx", "csv"), "discard")
+        self.assertEqual(self._handling("docx", "text"), "discard")
 
     def test_auto_handling_transcribes_a_source_made_of_pages(self):
         for to_format in OUTPUT_FORMATS:
@@ -62,7 +63,7 @@ class TestResolution(BaseConverterTest):
 
     def test_auto_output_is_the_default_of_the_format(self):
         expected = {"html": "embed", "json": "embed", "markdown": "link", "latex": "link", "pdf": "embed",
-                    "docx": "embed", "pptx": "embed", "xlsx": "embed", "csv": None}
+                    "docx": "embed", "pptx": "embed", "xlsx": "embed", "csv": None, "text": None}
         self.assertEqual({name: resolve_images(ConvertOptions(), "html", name).output for name in OUTPUT_FORMATS},
                          expected)
 

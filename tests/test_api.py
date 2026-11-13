@@ -195,13 +195,16 @@ class TestTextAndFiles(BaseConverterTest):
         with self.assertRaises(FileNotFoundError):
             textconverter.convert("no/such/file.md", "html")
 
-    def test_txt_is_read_as_markdown(self):
+    def test_txt_is_read_as_plain_text_or_as_markdown_when_asked(self):
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "notes.txt"
             src.write_text("# Title\n\nSome *text*.", encoding="utf-8")
-            html = textconverter.convert(str(src), "html")
-        self.assertIn("<h1>Title</h1>", html)
-        self.assertIn("<i>text</i>", html)
+            plain = textconverter.convert(str(src), "html")
+            markdown = textconverter.convert(str(src), "html", from_format="markdown")
+        self.assertIn("<p># Title</p>", plain)
+        self.assertIn("Some *text*.", plain)
+        self.assertIn("<h1>Title</h1>", markdown)
+        self.assertIn("<i>text</i>", markdown)
 
     def test_format_inference(self):
         self.assertEqual(infer_input_format("a/B.TEX"), "latex")
@@ -209,7 +212,7 @@ class TestTextAndFiles(BaseConverterTest):
         self.assertEqual(infer_input_format("x.docx"), "docx")
         self.assertIsNone(infer_input_format("x.doc"))
         self.assertEqual(infer_output_format("out.htm"), "html")
-        self.assertIsNone(infer_output_format("out.txt"))
+        self.assertEqual(infer_output_format("out.txt"), "text")
 
     def test_the_ast_has_an_extension_of_its_own(self):
         """A .json file is not necessarily an AST: it is read as one only when asked."""
@@ -273,7 +276,7 @@ class TestWindowsIntegration(BaseConverterTest):
         return menu
 
     def test_context_menu_goes_from_every_input_to_every_output(self):
-        """Except .txt as a source and a format to itself (HTML cleans a page up)."""
+        """Except a format to itself (HTML cleans a page up)."""
         from textconverter.formats import INPUT_FORMATS, OUTPUT_FORMATS
         targets = {f.extensions[0] for f in OUTPUT_FORMATS.values()}
         with tempfile.TemporaryDirectory() as tmp:
@@ -284,7 +287,6 @@ class TestWindowsIntegration(BaseConverterTest):
             own = OUTPUT_FORMATS[name].extensions[0] if name in OUTPUT_FORMATS else None
             for ext in fmt.extensions:
                 expected[ext] = targets if name == "html" or ext == ".tsv" else targets - {own}
-        del expected[".txt"]
         self.assertEqual(menu, expected)
 
     def _commands(self) -> dict[str, str]:
@@ -305,7 +307,7 @@ class TestWindowsIntegration(BaseConverterTest):
         """The other options are in the GUI; a PDF's text layer also gets code detection."""
         commands = self._commands()
         conversions = {path: command for path, command in commands.items() if "/TextConverter/" in path}
-        self.assertIn(".md/TextConverter/02tex", conversions)
+        self.assertIn(".md/TextConverter/03tex", conversions)
         for path, command in conversions.items():
             for option in ("--image-handling", "--image-output", "--pdf-mode", "--extract-html"):
                 self.assertNotIn(option, command, path)

@@ -81,7 +81,7 @@ def _auto_handling(page_source: bool, to_format: str) -> str:
     """What ``image_handling="auto"`` means: a source made of pages is read, whatever the target."""
     if page_source or to_format == "latex":
         return "transcribe"
-    return "discard" if to_format == "csv" else "keep"
+    return "discard" if to_format in ("csv", "text") else "keep"
 
 
 def _image_output(options: ConvertOptions, to_format: str) -> str | None:

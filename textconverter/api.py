@@ -1,4 +1,5 @@
 from __future__ import annotations
+import codecs
 import contextlib
 import os
 import pathlib
@@ -26,6 +27,7 @@ from .parsers.pdf_parser import parse_pdf
 from .parsers.docx_parser import parse_docx
 from .parsers.pptx_parser import parse_pptx
 from .parsers.csv_parser import parse_csv
+from .parsers.text_parser import parse_text
 from .parsers.xlsx_parser import parse_xlsx
 from .parsers.image_parser import parse_image
 from .parsers.json_parser import parse_json
@@ -35,6 +37,7 @@ from .renderers.html_renderer import render_html
 from .renderers.latex_renderer import render_latex
 from .renderers.json_renderer import render_json
 from .renderers.csv_renderer import render_csv, render_csv_files
+from .renderers.text_renderer import render_text
 
 from .site_profiles import resolve_profiles
 from .config import AppConfig, load_config
@@ -45,7 +48,7 @@ from .formats import (
 from .options import ConvertOptions, ImagePlan, resolve_images
 
 # The formats that have no bibliography of their own: they show it as LaTeX macros.
-_MACRO_BIBLIOGRAPHY = ("markdown", "html", "docx", "pptx")
+_MACRO_BIBLIOGRAPHY = ("markdown", "html", "docx", "pptx", "text")
 # What a file of a binary format holds: the start of a PDF, the top folder of an Office package.
 _PDF_MAGIC = b"%PDF-"
 _PACKAGE_FOLDERS = {"docx": "word/", "pptx": "ppt/", "xlsx": "xl/"}
@@ -59,16 +62,22 @@ def _is_url(source: str) -> bool:
 
 
 def _read_text(path: str, from_format: str) -> str:
-    """The text of a source file: UTF-8, except CSV, which also reads a BOM and falls back to cp1252."""
-    if from_format == "csv":
+    """The text of a source file: UTF-8, except CSV and plain text (see ``_decode_any``)."""
+    if from_format in ("csv", "text"):
         with open(path, "rb") as f:
-            data = f.read()
-        try:
-            return data.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            return data.decode("cp1252", errors="replace")
+            return _decode_any(f.read())
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
+
+
+def _decode_any(data: bytes) -> str:
+    """Text saved by any Windows tool: a UTF-16 BOM (Notepad's "Unicode"), else UTF-8 with or without BOM, else cp1252."""
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return data.decode("utf-16")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
 
 
 def _check_file_format(path: str, from_format: str) -> None:
@@ -147,6 +156,11 @@ def _read_source(
         return parse_csv(text)
     if from_format == "markdown":
         return parse_markdown(text, code_parsing=options.code_parsing)
+    if from_format == "text":
+        doc = parse_text(text)
+        if options.code_parsing:
+            fence_code_paragraphs(doc)
+        return doc
     if from_format == "html":
         use_profiles = config.html.site_cleanup if options.site_cleanup is None else options.site_cleanup
         profiles = (
@@ -165,6 +179,7 @@ _RENDERERS = {
     "latex": lambda doc, options: render_latex(doc),
     "json": lambda doc, options: render_json(doc),
     "csv": lambda doc, options: render_csv(doc),
+    "text": lambda doc, options: render_text(doc),
 }
 
 

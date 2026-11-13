@@ -43,13 +43,14 @@ def register_tools(mcp: object) -> None:
 
         Args:
             text: The source document itself (never read as a file path).
-            from_format: Source format: 'markdown', 'html', 'latex', 'json' or 'csv'.
-            to_format: Target format: 'markdown', 'html', 'latex', 'json' or 'csv' (the first table).
+            from_format: Source format: 'markdown', 'text' (plain text), 'html', 'latex', 'json' or 'csv'.
+            to_format: Target format: 'markdown', 'text' (plain text), 'html', 'latex', 'json' or 'csv'
+                (the first table).
             template: HTML template: 'plain', 'light' or 'dark'.
             image_handling: What happens to the images in the document: 'auto', 'discard', 'keep',
                 'split', 'transcribe', 'describe', 'replace' or 'append'.
             image_output: How the images left in the document are written: 'auto', 'embed' or 'link'.
-            code_parsing: Fence code blocks found by heuristic detection (Markdown sources).
+            code_parsing: Fence code blocks found by heuristic detection (Markdown and plain text sources).
             extract_html: Filter noise and keep the main content of HTML input.
             discard_links: Replace every hyperlink with its visible text.
             site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during
@@ -90,15 +91,17 @@ def register_tools(mcp: object) -> None:
 
         Args:
             source: File path, or remote URL (http:// or https://).
-            to_format: Target format: 'markdown', 'html', 'latex', 'json' or 'csv' (the first table).
-            from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'docx', 'pptx', 'csv', 'xlsx', 'image').
+            to_format: Target format: 'markdown', 'text' (plain text), 'html', 'latex', 'json' or 'csv'
+                (the first table).
+            from_format: Source format ('markdown', 'text', 'html', 'latex', 'json', 'pdf', 'docx', 'pptx', 'csv',
+                'xlsx', 'image').
                 Inferred from the extension (for a URL, from its Content-Type) if None.
             template: HTML template: 'plain', 'light' or 'dark'.
             image_handling: What happens to the images in the document: 'auto', 'discard', 'keep',
                 'split', 'transcribe', 'describe', 'replace' or 'append'.
             image_output: How the images left in the document are written: 'auto', 'embed' or 'link'.
-            code_parsing: Fence code blocks found by heuristic detection (Markdown, Word
-                and PowerPoint sources, PDF sources in text mode).
+            code_parsing: Fence code blocks found by heuristic detection (Markdown, plain text,
+                Word and PowerPoint sources, PDF sources in text mode).
             extract_html: Filter noise and keep the main content of HTML input.
             discard_links: Replace every hyperlink with its visible text.
             site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during
@@ -141,17 +144,17 @@ def register_tools(mcp: object) -> None:
         Args:
             source: File path, or remote URL (http:// or https://). Text is not
                 accepted: use textconverter_convert_text for it.
-            output_path: Output file path; its extension (.md, .html, .tex, .aston (the AST as JSON),
+            output_path: Output file path; its extension (.md, .txt, .html, .tex, .aston (the AST as JSON),
                 .pdf, .docx, .pptx, .xlsx, .csv) sets the format. A .csv output holds the tables only,
                 one file per table when there are several. Images go to '<output name>_images' next to it.
-            from_format: Source format ('markdown', 'html', 'latex', 'json', 'pdf', 'docx', 'pptx', 'csv', 'xlsx', 'image').
-                Inferred from the extension (for a URL, from its Content-Type) if None.
+            from_format: Source format ('markdown', 'text', 'html', 'latex', 'json', 'pdf', 'docx', 'pptx', 'csv',
+                'xlsx', 'image'). Inferred from the extension (for a URL, from its Content-Type) if None.
             template: HTML template: 'plain', 'light' or 'dark' (ignored for .pdf, .docx, .pptx and .xlsx).
             image_handling: What happens to the images in the document: 'auto', 'discard', 'keep',
                 'split', 'transcribe', 'describe', 'replace' or 'append'.
             image_output: How the images left in the document are written: 'auto', 'embed' or 'link'.
-            code_parsing: Fence code blocks found by heuristic detection (Markdown, Word
-                and PowerPoint sources, PDF sources in text mode).
+            code_parsing: Fence code blocks found by heuristic detection (Markdown, plain text,
+                Word and PowerPoint sources, PDF sources in text mode).
             extract_html: Filter noise and keep the main content of HTML input.
             discard_links: Replace every hyperlink with its visible text.
             site_cleanup: Override for site-specific HTML cleanup (e.g. Wikipedia) during

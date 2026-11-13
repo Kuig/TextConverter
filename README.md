@@ -4,7 +4,7 @@ Multi-format document conversion tool with AI-powered image description and heur
 
 ## Overview
 
-TextConverter converts between PDF, Word (.docx), PowerPoint (.pptx), Excel (.xlsx), CSV, HTML, Markdown, LaTeX, and JSON formats (JSON is the parsed document, the AST, in `.aston` files; PDF output is printed from a print version of the light HTML theme; Word, PowerPoint and Excel output are written natively; CSV and Excel carry the tables only; in a PDF's text layer only tables drawn with ruled lines are found). It supports:
+TextConverter converts between PDF, Word (.docx), PowerPoint (.pptx), Excel (.xlsx), CSV, HTML, Markdown, plain text (.txt), LaTeX, and JSON formats (JSON is the parsed document, the AST, in `.aston` files; PDF output is printed from a print version of the light HTML theme; Word, PowerPoint and Excel output are written natively; CSV and Excel carry the tables only; plain text keeps the structure (underlined headings, lists, grid tables) but no formatting; in a PDF's text layer only tables drawn with ruled lines are found). It supports:
 - **URL Inputs**: Directly convert remote documents (both PDFs and HTML pages) from a remote URL.
 - **HTML Content Extraction**: A zero-dependency heuristic parser to clean up webpage boilerplates (like navigation headers, footers, script, and style elements) and isolate the primary content (`<main>`, `<article>`).
 - **Remote Image Downloading**: Automatically downloads and cleans remote images referenced in webpages, applying OS-safe filename sanitization and exact binary content-based deduplication to prevent duplicate copies on disk.
@@ -64,7 +64,7 @@ From `split` on, a page holding more than text (a scan, a raster PDF page, an im
 `auto`, the default, depends on the conversion:
 
 1. An image file or a raster PDF as the source, or LaTeX as the output: `transcribe`.
-2. CSV as the output: `discard`.
+2. CSV or plain text as the output: `discard`.
 3. Anything else: `keep`.
 
 ### How the Images Are Written
@@ -77,7 +77,7 @@ From `split` on, a page holding more than text (a scan, a raster PDF page, an im
 | Markdown | `link` | `link`, `embed` |
 | LaTeX | `link` | `link` |
 | PDF, Word, PowerPoint, Excel | `embed` | `embed` |
-| CSV | none | none |
+| CSV, plain text | none | none |
 
 Asking for a way the format does not offer gives a warning, and its default.
 
@@ -130,6 +130,13 @@ textconverter convert DocsInput/book.xlsx DocsOutput/book.md
 # The tables of any source to Excel (the heading above a table names its sheet) or to CSV (one file per table)
 textconverter convert DocsInput/document.md DocsOutput/tables.xlsx
 textconverter convert DocsInput/document.md DocsOutput/tables.csv
+
+# Any source to plain text (headings underlined, tables as grids, notes at the end), and back
+textconverter convert DocsInput/document.docx DocsOutput/document.txt
+textconverter convert DocsInput/notes.txt DocsOutput/notes.html
+
+# A .txt file written in Markdown
+textconverter convert DocsInput/notes.txt DocsOutput/notes.html --from markdown
 
 # Any source to PDF (printed with Edge/Chrome when installed, else a built-in renderer)
 textconverter convert DocsInput/document.md DocsOutput/document.pdf
@@ -189,7 +196,7 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
 
 #### Features
 * **Cascading Menu**: Adds a grouped `"Convert with TextConverter..."` menu.
-* **Every conversion**: Each source offers Markdown, LaTeX, HTML (no theme, light, dark), PDF, Word, PowerPoint, Excel, CSV and AST (`.aston`, the parsed document, for debugging or for reusing it), except its own format; HTML is a target of HTML too, to clean a page up. Excel and CSV keep the tables only, and fail on a document without tables. Images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`) are transcribed with the AI models of `config.json`.
+* **Every conversion**: Each source offers Markdown, plain text, LaTeX, HTML (no theme, light, dark), PDF, Word, PowerPoint, Excel, CSV and AST (`.aston`, the parsed document, for debugging or for reusing it), except its own format; HTML is a target of HTML too, to clean a page up. Excel and CSV keep the tables only, and fail on a document without tables. Images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`) are transcribed with the AI models of `config.json`.
 * **Same behavior as the CLI**: Every conversion runs `Windows Integration/convert.cmd`, which calls `textconverter convert` with its default options (so `--image-handling auto`). PDF sources also get `--code-parsing`. If a conversion fails, the window stays open to show the error.
 * **Open with TextConverter**: Opens the GUI with the file as its source, for every other option: what happens to the images, raster PDF pages, the main content of an HTML page, and so on. Explorer shows at most 16 entries of a menu, submenus included, so the menu does not hold the options itself.
 * **Nothing is overwritten**: The result goes next to the source file as `<name>_converted<ext>`, then `<name>_converted2<ext>` and so on.
