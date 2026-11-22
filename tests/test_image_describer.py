@@ -449,6 +449,25 @@ class TestRegions(BaseConverterTest):
         self.assertLess(markdown.index("Some text."), markdown.index("images/crop_1.png"))
         self.assertIn("A photo.", markdown)
 
+    def _figure_frames(self, doc):
+        from textconverter.ast import Image, walk
+        return [n.frame for n in walk(doc) if isinstance(n, Image) and n.category == "photo_drawing_or_comic"]
+
+    def test_the_regions_of_a_framed_page_lie_within_its_frame(self):
+        from textconverter.ast import BoxFrame
+        doc = self._doc()
+        page = BoxFrame(x=10, y=20, w=40, h=60)
+        doc.children[0].children[0].frame = page
+        frames = self._figure_frames(self._run(self._fake(), doc=doc))
+        self.assertEqual(len(frames), 2)
+        for frame in frames:
+            self.assertTrue(page.x <= frame.x and frame.x + frame.w <= page.x + page.w + 1)
+            self.assertTrue(page.y <= frame.y and frame.y + frame.h <= page.y + page.h + 1)
+
+    def test_the_regions_of_an_image_with_no_place_have_none(self):
+        frames = self._figure_frames(self._run(self._fake()))
+        self.assertEqual(frames, [None, None])
+
     def test_description_and_ocr_have_a_token_limit(self):
         from textconverter.config import AppConfig
         ai = AppConfig().ai
@@ -493,9 +512,23 @@ class TestRegionsInOutput(BaseConverterTest):
         self.assertIn("Some text.", text)
 
     def test_latex_links_the_stored_figures(self):
+        """The figures of an image source are parts of its page: LaTeX gives them their size on it."""
         output, _ = self._save(name="out.tex")
-        self.assertIn(r"\includegraphics{out_images/image_1.png}", output.read_text(encoding="utf-8"))
+        self.assertRegex(output.read_text(encoding="utf-8"),
+                         r"\\includegraphics\[width=0\.\d\d\\paperwidth,height=0\.\d\d\\paperheight,keepaspectratio\]"
+                         r"\{out_images/image_1\.png\}")
         self.assertEqual(len(self._images()), 2)
+
+    def test_the_figures_of_an_image_source_know_where_they_sit(self):
+        from textconverter.ast import BoxFrame, Image, walk
+        from textconverter.parsers.json_parser import parse_json
+        output, _ = self._save(name="out.aston", image_output="link")
+        frames = [n.frame for n in walk(parse_json(output.read_text(encoding="utf-8"))) if isinstance(n, Image)]
+        self.assertEqual(len(frames), 2)
+        for frame in frames:
+            self.assertIsInstance(frame, BoxFrame)
+            self.assertTrue(frame.placed)
+            self.assertTrue(0 <= frame.x and frame.x + frame.w <= 100 and 0 <= frame.y and frame.y + frame.h <= 100)
 
     def test_json_holds_the_figures_with_relative_paths(self):
         output, _ = self._save(name="out.aston", image_output="link")

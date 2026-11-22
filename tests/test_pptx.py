@@ -539,6 +539,8 @@ class TestPptxRenderer(PptxOutputTest):
             self.assertEqual(len(_of(before, cls)), len(_of(after, cls)), cls.__name__)
         self.assertEqual(sum(len(b.items) for b in _of(before, ListBlock)),
                          sum(len(b.items) for b in _of(after, ListBlock)))
+        # Cropped pictures are read cropped, so every picture goes back exactly to its frame
+        self.assertEqual([i.frame for i in _of(before, Image)], [i.frame for i in _of(after, Image)])
 
     def test_the_fixture_pictures_tell_their_place(self):
         from textconverter.ast import BoxFrame
@@ -570,6 +572,18 @@ class TestPptxRenderer(PptxOutputTest):
         from textconverter.ast import BoxFrame
         _, (image,) = self._framed(BoxFrame(x=10, y=20, w=60, h=40))
         self.assertEqual(image.frame, BoxFrame(x=25, y=20, w=30, h=40))
+
+    def test_a_picture_covering_a_placed_one_goes_to_the_column(self):
+        """Figures of several pages on one slide would land on each other."""
+        from textconverter.ast import BoxFrame
+        first = BoxFrame(x=10, y=20, w=30, h=40)
+        apart = BoxFrame(x=60, y=20, w=15, h=20)
+        _, images = self._framed(first, BoxFrame(x=12, y=22, w=30, h=40), apart, text="body text")
+        frames = [i.frame for i in images]
+        self.assertIn(first, frames)
+        self.assertIn(apart, frames)
+        (moved,) = [f for f in frames if f not in (first, apart)]
+        self.assertGreaterEqual(moved.x, 55, "the covering one is in the column on the right")
 
     def test_pictures_without_a_place_share_the_column(self):
         from textconverter.ast import BoxFrame
@@ -686,3 +700,29 @@ class TestPptxOutputThroughTheApi(BaseConverterTest):
     def test_the_source_is_never_overwritten(self):
         with self.assertRaisesRegex(ValueError, "source file itself"):
             textconverter.save_to_file(str(FIXTURE), str(FIXTURE))
+
+
+class TestPictureCrop(BaseConverterTest):
+    """A picture cropped in PowerPoint (``a:srcRect``) is extracted as it shows."""
+
+    def test_the_crop_is_applied_and_the_frame_has_its_proportions(self):
+        from PIL import Image as PilImage
+        from textconverter.renderers._office import framed_size
+        picture = PilImage.new("RGB", (40, 30), "red")
+        picture.paste("blue", (20, 0, 40, 30))
+        buffer = io.BytesIO()
+        picture.save(buffer, "PNG")
+        buffer.seek(0)
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        shape = slide.shapes.add_picture(buffer, Inches(1), Inches(1), Inches(1), Inches(1.5))
+        shape.crop_left = 0.5  # the blue half, 20x30
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "crop.pptx")
+            prs.save(path)
+            (image,) = _of(parse_pptx(path, output_dir=tmp, image_dir_name="img"), Image)
+            with PilImage.open(os.path.join(tmp, image.src)) as extracted:
+                size, color = extracted.size, extracted.convert("RGB").getpixel((5, 5))
+        self.assertEqual((size, color), ((20, 30), (0, 0, 255)))
+        w, h = framed_size(image.frame, prs.slide_width, prs.slide_height, size)
+        self.assertAlmostEqual(h / w, 1.5, delta=0.05)

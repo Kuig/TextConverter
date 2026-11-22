@@ -25,7 +25,7 @@ from ._docx_blocks import Field, Flow, Inline, ListRef, Numbering, tidy
 from ._docx_xml import NS, M, OFFICE, R, flag, local, val, w, xpath
 from ._latex_macros import lift_macros
 from ._math import split_math_env
-from ._office import MONOSPACE, BoxFrame, box_preamble, is_code
+from ._office import MONOSPACE, BoxFrame, box_preamble, is_code, src_rect, vml_crop
 from ._omml import omml_to_latex
 
 _CODE_STYLES = frozenset({"code", "source code", "preformatted text", "html preformatted", "macro text"})
@@ -557,7 +557,7 @@ class _Reader:
             self.part = main_part
         return Footnote(content=content)
 
-    def _image(self, rel_id: str | None, alt: str) -> Image | None:
+    def _image(self, rel_id: str | None, alt: str, crop: tuple[float, float, float, float] | None) -> Image | None:
         if not self.write_images:
             return None
         try:
@@ -565,7 +565,7 @@ class _Reader:
         except KeyError:
             self.dropped["linked or missing image"] += 1
             return None
-        return Image(src=self._store.save(part.blob, part.partname.ext), alt=alt)
+        return Image(src=self._store.save(part.blob, part.partname.ext, crop=crop), alt=alt)
 
     def _drawing(self, drawing: etree._Element, ctx: Inline) -> None:
         outer = "not(ancestor::w:txbxContent)"
@@ -576,7 +576,7 @@ class _Reader:
         # The drawing's frame is the picture's only when the drawing holds nothing else
         frame = self._frame(drawing) if len(blips) == 1 and not boxes else BoxFrame()
         for blip in blips:
-            image = self._image(blip.get(f"{{{R}}}embed"), alt)
+            image = self._image(blip.get(f"{{{R}}}embed"), alt, src_rect(blip.getparent()))
             if image is not None:
                 image.frame = frame if frame != BoxFrame() else None
                 ctx.emit(image)
@@ -589,7 +589,7 @@ class _Reader:
         boxes = xpath(pict, ".//w:txbxContent[not(ancestor::w:txbxContent)]")
         for data in images:
             alt = data.getparent().get("alt") or data.get(f"{{{OFFICE}}}title") or ""
-            image = self._image(data.get(f"{{{R}}}id"), alt)
+            image = self._image(data.get(f"{{{R}}}id"), alt, vml_crop(data))
             if image is not None:
                 image.frame = self._vml_frame(data.getparent())
                 ctx.emit(image)

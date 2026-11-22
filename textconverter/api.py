@@ -259,7 +259,7 @@ def _transform_and_render(
         if plan.analyzes:
             from .image_describer import process_images
             process_images(doc, doc_dir, config=config, handling=plan.handling, required=plan.ai_required,
-                           save_crop=store.save_png, screen=not plan.page_source,
+                           save_crop=store.save_png, page_source=plan.page_source,
                            overlay_path=overlay_path if from_format == "image" else None)
         if scratch:
             keep_scratch_images(doc, scratch, store)

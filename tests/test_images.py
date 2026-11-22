@@ -221,3 +221,61 @@ class TestImagePaths(_WebTest):
         md = out.read_text(encoding="utf-8")
         self.assertIn((src.parent / "img" / "local.png").as_posix(), md)
         self.assertNotIn("\\", md.split("](")[1].split(")")[0])
+
+
+def _quadrants(fmt: str = "PNG") -> bytes:
+    """A 40x30 picture: red, green, blue and white quarters, left to right and top to bottom."""
+    from PIL import Image as PilImage
+    picture = PilImage.new("RGB", (40, 30), "white")
+    for (x, y), color in zip(((0, 0), (20, 0), (0, 15)), ("red", "lime", "blue")):
+        picture.paste(color, (x, y, x + 20, y + 15))
+    out = io.BytesIO()
+    picture.save(out, fmt)
+    return out.getvalue()
+
+
+class TestCropBlob(BaseConverterTest):
+    """A picture's crop, as Word and PowerPoint keep it, applied with Pillow."""
+
+    def _open(self, blob: bytes):
+        from PIL import Image as PilImage
+        return PilImage.open(io.BytesIO(blob))
+
+    def test_the_kept_part_is_cut_out(self):
+        from textconverter.images import crop_blob
+        blob, ext = crop_blob(_quadrants(), "png", (0.5, 0.0, 0.0, 0.5))
+        picture = self._open(blob)
+        self.assertEqual((ext, picture.size), ("png", (20, 15)))
+        self.assertEqual(picture.convert("RGB").getpixel((10, 7)), (0, 255, 0))
+
+    def test_a_jpeg_stays_a_jpeg(self):
+        from textconverter.images import crop_blob
+        blob, ext = crop_blob(_quadrants("JPEG"), "jpeg", (0.25, 0.0, 0.25, 0.0))
+        self.assertEqual((ext, self._open(blob).format, self._open(blob).size), ("jpeg", "JPEG", (20, 30)))
+
+    def test_a_format_pillow_does_not_write_becomes_png(self):
+        from textconverter.images import crop_blob
+        blob, ext = crop_blob(_quadrants("WEBP"), "webp", (0.5, 0.0, 0.0, 0.0))
+        self.assertEqual((ext, self._open(blob).format), ("png", "PNG"))
+
+    def test_nothing_to_cut_leaves_the_blob(self):
+        from textconverter.images import crop_blob
+        original = _quadrants()
+        for crop in ((0.0, 0.0, 0.0, 0.0), (-0.1, -0.2, 0.0, 0.0), (0.6, 0.0, 0.5, 0.0)):
+            with self.subTest(crop=crop):
+                self.assertEqual(crop_blob(original, "png", crop), (original, "png"))
+
+    def test_what_pillow_cannot_read_is_kept_with_a_warning(self):
+        from textconverter.images import crop_blob
+        with patch("textconverter.images.log_warning") as warn:
+            self.assertEqual(crop_blob(b"not an image", "emf", (0.1, 0.1, 0.1, 0.1)), (b"not an image", "emf"))
+        warn.assert_called_once()
+
+    def test_the_store_crops_before_it_counts_contents(self):
+        from textconverter.images import ImageStore
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ImageStore(tmp, "img")
+            whole, left = store.save(_quadrants(), "png"), store.save(_quadrants(), "png", crop=(0.0, 0.0, 0.5, 0.0))
+            self.assertNotEqual(whole, left)
+            self.assertEqual(store.save(_quadrants(), "png", crop=(0.0, 0.0, 0.5, 0.0)), left)
+            self.assertEqual(self._open(Path(tmp, left).read_bytes()).size, (20, 30))

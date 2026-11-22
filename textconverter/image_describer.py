@@ -5,9 +5,9 @@ import os
 import tempfile
 from textconverter.logger import log_action, log_info, log_success, log_warning
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from PIL import Image as PilImage
-from .ast import Document, Heading, Image, Node, Paragraph, Text, walk
+from .ast import BoxFrame, Document, Heading, Image, Node, Paragraph, Text, inner_frame, walk
 from .config import AppConfig
 from .images import Expansion, expand_images, resolve_local
 from .parsers.transcription_parser import normalize_transcription, transcription_nodes
@@ -24,6 +24,8 @@ REGION_LABELS = ("text", "table", "formula", "photo_drawing_or_comic", "diagram"
 # Margin around a transcribed crop, of the image's side: blocks are cut tight to the ink, and
 # what lies next to them is blanked. A figure gets none: the model reads a neighbour into it.
 _REGION_PADDING = 0.01
+# Where a page of a source made of pages lies: all of the page.
+_WHOLE_PAGE = BoxFrame(x=0, y=0, w=100, h=100)
 # The first line of a page's text, cut to this length, stands for its title.
 _PAGE_TITLE_LENGTH = 120
 # Vector formats: Pillow reads their header, but no model reads the file.
@@ -123,9 +125,11 @@ class Split:
         regions: One Image per crop, in reading order; each has its category,
             and its result once the description and OCR phases have run.
         blocks: The labelled blocks the regions were planned from.
+        boxes: Where each region lies in the page, in the order of ``regions``.
     """
     regions: list[Image]
     blocks: list[Block]
+    boxes: list[Block] = field(default_factory=list)
 
 
 def _ask(
@@ -276,17 +280,18 @@ def _plan_split(img: Image, img_path: str, blocks: list[Block], tmp_dir: str, co
             log_warning(f"Unusable region labels for {img_path}, keeping the page whole.")
             return None
         planned = plan_regions(blocks, labels)
-        regions = []
+        regions, boxes = [], []
         for number, crop in enumerate(plan_crops(planned, ai.ocr_prompts)):
             path = os.path.join(tmp_dir, f"region_{id(img)}_{number}.png")
             padding = _REGION_PADDING if crop.box.label in ai.ocr_prompts else 0
             with open(path, "wb") as f:
                 f.write(crop_image(img_path, crop, padding))
             regions.append(Image(src=path, alt=img.alt, category=crop.box.label))
+            boxes.append(crop.box)
     except (OSError, ValueError) as exc:
         log_warning(f"Could not split {img_path} into regions, keeping the page whole: {exc}")
         return None
-    return Split(regions, planned) if regions else None
+    return Split(regions, planned, boxes) if regions else None
 
 
 def _region_contexts(split: Split, chars: int) -> dict[int, str]:
@@ -348,9 +353,19 @@ def _keep_crops(splits: dict[int, Split], treatment: Treatment, config: AppConfi
                 region.src = save_crop(f.read())
 
 
-def _region_nodes(split: Split) -> list[Node]:
-    """The regions of a split page as Image nodes, in reading order."""
-    return [Paragraph(children=[replace(region)]) for region in split.regions]
+def _region_nodes(split: Split, page: BoxFrame | None) -> list[Node]:
+    """The regions of a split page as Image nodes, in reading order, framed within ``page`` when it is known."""
+    boxes = split.boxes if len(split.boxes) == len(split.regions) else [None] * len(split.regions)
+    return [Paragraph(children=[replace(region, frame=inner_frame(page, box.x0, box.y0, box.x1, box.y1)
+                                        if page is not None and box is not None else None)])
+            for region, box in zip(split.regions, boxes)]
+
+
+def _page_frame(img: Image, page_source: bool) -> BoxFrame | None:
+    """Where a split page lies: its own frame when that tells a size, all of the page when the source is pages."""
+    if img.frame is not None and img.frame.w and img.frame.h:
+        return img.frame
+    return _WHOLE_PAGE if page_source else None
 
 
 def describe_images(
@@ -564,7 +579,7 @@ def process_images(
     save_crop: SaveCrop,
     required: bool = True,
     overlay_path: str | None = None,
-    screen: bool = True,
+    page_source: bool = False,
 ) -> None:
     """Analyze the Image nodes of a document AST and treat them as ``handling`` says, in place.
 
@@ -582,8 +597,9 @@ def process_images(
         required: Without ``unified_ai_client``, raise ImportError; when False,
             keep the images with a warning.
         overlay_path: Where to save the first image with what was found in it.
-        screen: Leave out the images too small to matter or that no model
-            reads; off when the images are the source itself.
+        page_source: The images are the source itself (pages of a raster
+            PDF, an image file): none is left out as too small or unreadable,
+            and the regions of a split page are framed as parts of a page.
 
     Raises:
         ImportError: If ``required`` and ``unified_ai_client`` is not installed.
@@ -606,7 +622,7 @@ def process_images(
             f"OCR: {ai.ocr_model or ai.description_model})..."
         )
         splits = describe_images(images, base_dir, config=config, treatment=treatment, save_crop=save_crop,
-                                 contexts=_document_contexts(doc, ai.description_context), screen=screen)
+                                 contexts=_document_contexts(doc, ai.description_context), screen=not page_source)
         if overlay_path:
             _write_overlay(images[0], resolve_local(images[0].src, base_dir), splits.get(id(images[0])), overlay_path)
         log_success("Image description completed.")
@@ -614,7 +630,8 @@ def process_images(
     def regions(img: Image) -> Expansion | None:
         if id(img) not in splits:
             return None
-        return Expansion(_region_nodes(splits[id(img)]), inline=[replace(img, description=None)])
+        return Expansion(_region_nodes(splits[id(img)], _page_frame(img, page_source)),
+                         inline=[replace(img, description=None)])
 
     if splits:
         expand_images(doc, regions)

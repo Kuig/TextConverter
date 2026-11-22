@@ -78,6 +78,12 @@ class TestFrameFields(BaseConverterTest):
                       BoxFrame(x=1, w=2, h=3, font=10.5)):
             self.assertEqual(parse_frame_fields(frame_fields(frame)), frame)
 
+    def test_a_part_of_a_framed_picture(self):
+        from textconverter.ast import BoxFrame, inner_frame
+        page = BoxFrame(x=10, y=20, w=40, h=60)
+        self.assertEqual(inner_frame(page, 0.5, 0.5, 1.0, 1.0), BoxFrame(x=30, y=50, w=20, h=30))
+        self.assertEqual(inner_frame(BoxFrame(w=40, h=60), 0.0, 0.0, 0.5, 0.5), BoxFrame(w=20, h=30))
+
     def test_text_that_is_not_a_frame_gives_none(self):
         from textconverter.ast import parse_frame_fields
         self.assertIsNone(parse_frame_fields("x 10%, wide"))

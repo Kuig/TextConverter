@@ -92,7 +92,7 @@ A picture read from PowerPoint, Word or Excel remembers where it was: its place 
 | LaTeX | the size only: `\includegraphics[width=0.30\paperwidth,height=0.40\paperheight,keepaspectratio]` |
 | JSON (`.aston`) | the image's `frame` |
 
-A cropped picture is read uncropped, so its frame no longer has its proportions: it is written as large as fits in the frame.
+A picture cropped in Word or PowerPoint is extracted cropped, as it shows. The pieces cut from a composite image (see `split`) know where they sat when the image's own place is known: a picture with a frame, or a page of a scanned PDF or an image file. A PowerPoint slide puts a picture that would mostly cover one already placed in the column instead.
 
 ---
 

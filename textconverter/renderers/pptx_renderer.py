@@ -41,6 +41,8 @@ _COLUMN_GAP = 300000
 _PICTURE_SHARE = 0.4
 # A placed picture below this area, in square percent of the slide (2%), does not narrow the text.
 _SMALL_PICTURE = 200
+# A placed picture covering more than this share of one placed before it goes to the column instead.
+_OVERLAP = 0.5
 _TITLE_SIZE = 32.0
 _SECTIONS_URI = "{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"
 _LAYOUT_TITLE, _LAYOUT_CONTENT, _LAYOUT_TITLE_ONLY = 0, 1, 5
@@ -229,6 +231,7 @@ class _Deck:
     def _body(self, slide, plan: _Plan, lines: list[Line], pictures: list[_Picture]) -> None:
         body_width = SLIDE_WIDTH - 2 * _MARGIN
         has_left = bool(lines or plan.tables)
+        _keep_apart(pictures)
         column = [p for p in pictures if not p.placed]
         left_width = _text_width(pictures, body_width) if has_left else body_width
         placed, loose = [], []
@@ -372,6 +375,30 @@ class _Deck:
             slide_ids = etree.SubElement(section, f"{{{NS['p14']}}}sldIdLst")
             for slide_id in ids:
                 etree.SubElement(slide_ids, f"{{{NS['p14']}}}sldId", id=str(slide_id))
+
+
+def _keep_apart(pictures: list[_Picture]) -> None:
+    """Send to the column, by dropping its frame, a picture that would mostly cover one placed before it.
+
+    Pictures of one slide from several pages (the regions of a scanned document
+    without headings) would otherwise land on top of each other.
+    """
+    placed: list[BoxFrame] = []
+    for picture in pictures:
+        if not picture.placed:
+            continue
+        frame = picture.frame
+        if any(_covered(frame, other) > _OVERLAP for other in placed):
+            picture.frame = None
+        else:
+            placed.append(frame)
+
+
+def _covered(a: BoxFrame, b: BoxFrame) -> float:
+    """The share of the smaller of two placed frames that the other covers."""
+    width = min(a.x + a.w, b.x + b.w) - max(a.x, b.x)
+    height = min(a.y + a.h, b.y + b.h) - max(a.y, b.y)
+    return max(width, 0) * max(height, 0) / min(a.w * a.h, b.w * b.h)
 
 
 def _text_width(pictures: list[_Picture], body_width: float) -> float:

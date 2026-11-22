@@ -68,6 +68,22 @@ def frame_fields(frame: BoxFrame) -> str:
     return ", ".join(fields)
 
 
+def inner_frame(base: BoxFrame, left: float, top: float, right: float, bottom: float) -> BoxFrame:
+    """The frame of a part of a framed picture, the part given by its edges as fractions of the picture.
+
+    What ``base`` does not tell stays None: a picture with a size and no place
+    gives its parts a size and no place.
+    """
+    def along(start: int | None, size: int | None, low: float, high: float) -> tuple[int | None, int | None]:
+        if size is None:
+            return None, None
+        return (None if start is None else round(start + low * size)), round((high - low) * size)
+
+    x, w = along(base.x, base.w, left, right)
+    y, h = along(base.y, base.h, top, bottom)
+    return BoxFrame(x=x, y=y, w=w, h=h)
+
+
 def parse_frame_fields(text: str) -> BoxFrame | None:
     """The frame text written by ``frame_fields`` gives; None when any part of it is not a field."""
     values: dict[str, object] = {}

@@ -20,7 +20,7 @@ from ..ast import BlockQuote, Document, Footnote, Heading, Image, LineBreak, Nod
 from ..images import ImageStore
 from ..logger import log_warning
 from ._docx_blocks import Flow, tidy
-from ._office import box_preamble
+from ._office import box_preamble, src_rect
 from ._pptx_objects import read_chart, read_diagram, read_table, relationship_id
 from ._pptx_text import TextReader, dominant_font, plain_text, single_line
 from ._pptx_xml import DEFAULT_SECTION, R, Item, a, iter_items, p, slide_frame, xpath
@@ -280,7 +280,8 @@ class _Reader:
             return []
         alt = (props[0].get("descr") or props[0].get("title") or "") if props else ""
         frame = slide_frame(item.rect, self.width, self.height) if item.rect is not None else None
-        return [Paragraph(children=[Image(src=self._store.save(part.blob, part.partname.ext), alt=alt, frame=frame)])]
+        src = self._store.save(part.blob, part.partname.ext, crop=src_rect(blip[0].getparent()))
+        return [Paragraph(children=[Image(src=src, alt=alt, frame=frame)])]
 
     def _graphic(self, slide, reader: TextReader, item: Item) -> list[Node]:
         """A table, a chart (as its data), a diagram (as its text) or an embedded object (as its preview)."""

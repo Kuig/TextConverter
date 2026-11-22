@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`![Logo](logo.png)<!--Picture (x 10%, y 20%, w 30%, h 40%)-->`), in HTML as `data-frame`, in LaTeX as the size
   (`\includegraphics[width=0.30\paperwidth,height=0.40\paperheight,keepaspectratio]`, read back too), in JSON as the
   image's `frame`.
+- The pieces cut from a composite image keep where they sat, when the image's place is known (a picture with a frame,
+  a page of a scanned PDF, an image file): a scanned page converted to PowerPoint or Word gets its figures back in
+  place. A picture that would mostly cover one already placed on a slide goes to the column instead.
+
+### Changed
+
+- A picture cropped in Word or PowerPoint is extracted cropped, as the document shows it, in every output format.
 
 ## [0.5.2] - 2026-11-13
 

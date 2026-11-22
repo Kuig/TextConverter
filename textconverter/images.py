@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import mimetypes
 import os
 import re
@@ -97,6 +98,55 @@ def data_url_bytes(src: str) -> bytes:
     return base64.b64decode(data) if header.endswith(";base64") else urllib.parse.unquote_to_bytes(data)
 
 
+# What a cropped picture is written as, by its extension; any other extension becomes PNG.
+_CROP_FORMATS = {"png": "PNG", "jpg": "JPEG", "jpeg": "JPEG", "gif": "GIF", "bmp": "BMP", "tif": "TIFF", "tiff": "TIFF"}
+# The formats Pillow crops: raster ones it reads and writes.
+_CROPPABLE = frozenset({"PNG", "JPEG", "GIF", "BMP", "TIFF", "WEBP"})
+# What a cropped picture keeps of the original's settings, by format.
+_CROP_INFO = {"JPEG": ("dpi", "icc_profile"), "PNG": ("dpi", "icc_profile", "transparency"),
+              "GIF": ("transparency",), "BMP": ("dpi",), "TIFF": ("dpi", "icc_profile")}
+
+
+def crop_blob(blob: bytes, extension: str, crop: tuple[float, float, float, float]) -> tuple[bytes, str]:
+    """The picture with ``crop`` applied, and its extension.
+
+    ``crop`` is what to cut from each side, ``(left, top, right, bottom)``, as
+    fractions of the width and height, the way Word and PowerPoint keep it; a
+    negative side (room added around the picture) cuts nothing. The picture
+    keeps its format when Pillow writes it, else it becomes PNG. A picture that
+    cannot be cropped (a vector format, an animated GIF, unreadable data, a crop
+    that leaves nothing) is returned as it is.
+    """
+    left, top, right, bottom = (max(0.0, side) for side in crop)
+    if not any((left, top, right, bottom)) or left + right >= 1 or top + bottom >= 1:
+        return blob, extension
+    from PIL import Image as PilImage
+    try:
+        with PilImage.open(io.BytesIO(blob)) as picture:
+            if picture.format not in _CROPPABLE or getattr(picture, "n_frames", 1) > 1:
+                return blob, extension
+            width, height = picture.size
+            box = (round(left * width), round(top * height), width - round(right * width),
+                   height - round(bottom * height))
+            if box[2] <= box[0] or box[3] <= box[1]:
+                return blob, extension
+            ext = re.sub(r"[^a-z0-9]", "", extension.lower())
+            fmt = _CROP_FORMATS.get(ext) or "PNG"
+            ext = ext if ext in _CROP_FORMATS else "png"
+            cropped = picture.crop(box)
+            if fmt == "JPEG" and cropped.mode not in ("RGB", "L", "CMYK"):
+                cropped = cropped.convert("RGB")
+            settings = {key: picture.info[key] for key in _CROP_INFO[fmt] if key in picture.info}
+            if fmt == "JPEG":
+                settings["quality"] = 95
+            out = io.BytesIO()
+            cropped.save(out, fmt, **settings)
+            return out.getvalue(), ext
+    except (OSError, ValueError, PilImage.DecompressionBombError) as exc:
+        log_warning(f"A picture's crop could not be applied, it is kept whole: {exc}")
+        return blob, extension
+
+
 def store_image(data: bytes, target_dir: str, basename: str) -> str:
     """Write ``data`` to ``target_dir`` and return the path.
 
@@ -131,8 +181,14 @@ class ImageStore:
         self.target_dir = os.path.join(output_dir or os.getcwd(), image_dir_name or "")
         self._by_digest: dict[str, str] = {}
 
-    def save(self, blob: bytes, extension: str) -> str:
-        """Write ``blob`` as ``image_<n>.<extension>`` and return the ``src`` for the Image node."""
+    def save(self, blob: bytes, extension: str, crop: tuple[float, float, float, float] | None = None) -> str:
+        """Write ``blob`` as ``image_<n>.<extension>`` and return the ``src`` for the Image node.
+
+        ``crop`` (see ``crop_blob``) is applied first, so the same picture cropped
+        two ways is two files, and cropped the same way twice one.
+        """
+        if crop is not None:
+            blob, extension = crop_blob(blob, extension, crop)
         digest = hashlib.sha1(blob).hexdigest()
         if digest not in self._by_digest:
             ext = re.sub(r"[^a-z0-9]", "", extension.lower()) or "bin"

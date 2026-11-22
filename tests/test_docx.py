@@ -765,3 +765,34 @@ class TestLatexToOmml(BaseConverterTest):
         for formula in (r"\unknowncmd{x}", r"\frac{a}{", r"a}", r"\begin{tikzpicture}x\end{tikzpicture}"):
             with self.subTest(formula=formula), self.assertRaises(UnsupportedMath):
                 latex_to_omml(formula)
+
+
+class TestPictureCrop(BaseConverterTest):
+    """A picture cropped in Word (``a:srcRect``, or ``cropleft`` and the like in VML) is extracted as it shows."""
+
+    def test_the_crop_of_a_drawing_is_applied(self):
+        from PIL import Image as PilImage
+        picture = PilImage.new("RGB", (40, 30), "red")
+        picture.paste("blue", (0, 15, 40, 30))
+        buffer = io.BytesIO()
+        picture.save(buffer, "PNG")
+        buffer.seek(0)
+        document = docx.Document()
+        document.add_paragraph().add_run().add_picture(buffer)
+        blip_fill = next(document.element.body.iter("{http://schemas.openxmlformats.org/drawingml/2006/picture}blipFill"))
+        blip = blip_fill.find("{http://schemas.openxmlformats.org/drawingml/2006/main}blip")
+        blip.addnext(etree.fromstring('<a:srcRect xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" t="50000"/>'))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "crop.docx")
+            document.save(path)
+            (image,) = _of(parse_docx(path, output_dir=tmp, image_dir_name="img"), Image)
+            with PilImage.open(os.path.join(tmp, image.src)) as extracted:
+                self.assertEqual(extracted.size, (40, 15))
+                self.assertEqual(extracted.convert("RGB").getpixel((5, 5)), (0, 0, 255))
+
+    def test_vml_crop_values(self):
+        from textconverter.parsers._office import vml_crop
+        data = etree.fromstring('<imagedata cropleft="0.25" croptop="16384f"/>')
+        self.assertEqual(vml_crop(data), (0.25, 0.25, 0.0, 0.0))
+        self.assertIsNone(vml_crop(etree.fromstring('<imagedata/>')))
+        self.assertIsNone(vml_crop(etree.fromstring('<imagedata cropleft="wide"/>')))
