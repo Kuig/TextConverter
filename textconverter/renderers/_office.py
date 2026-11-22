@@ -1,10 +1,10 @@
-"""What the Office renderers share: reading an image's bytes and writing the file properties."""
+"""What the Office renderers share: reading an image's bytes, sizing a framed picture and writing the file properties."""
 from __future__ import annotations
 
 import datetime
 import os
 
-from ..ast import Document, Node
+from ..ast import BoxFrame, Document, Node
 from ..images import data_url_bytes, is_remote, resolve_local
 from ..logger import log_warning
 from ._common import plain_text, summary_text
@@ -29,6 +29,26 @@ def image_bytes(src: str, base_dir: str) -> bytes | None:
             with open(path, "rb") as f:
                 return f.read()
     return None
+
+
+def framed_size(frame: BoxFrame, width: float, height: float, pixels: tuple[int, int]) -> tuple[float, float] | None:
+    """The size of a picture whose frame is percentages of a ``width`` by ``height`` slide or page.
+
+    The frame's own size when it has the picture's proportions (to the
+    rounding of its percentages); else, as a frame read from a slide gives on
+    a page, the largest size with the picture's proportions that fits in it.
+    None when the frame tells no width.
+    """
+    if not frame.w or frame.w < 0 or not pixels[0] or not pixels[1]:
+        return None
+    ratio = pixels[1] / pixels[0]
+    w = frame.w / 100 * width
+    if not frame.h or frame.h < 0:
+        return w, w * ratio
+    h = frame.h / 100 * height
+    if abs(h - w * ratio) <= 0.006 * (height + width * ratio):
+        return w, h
+    return (w, w * ratio) if h / w > ratio else (h / ratio, h)
 
 
 def property_text(nodes: list[Node], name: str) -> str:

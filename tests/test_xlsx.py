@@ -139,6 +139,20 @@ class TestXlsxParser(BaseConverterTest):
         warn.assert_called_once()
         self.assertIn("merged cells", warn.call_args.args[0])
 
+    def test_an_image_anchored_to_one_cell_has_no_frame(self):
+        from openpyxl.drawing.image import Image as XlImage
+        from PIL import Image as PilImage
+        with tempfile.TemporaryDirectory() as tmp:
+            picture = os.path.join(tmp, "p.png")
+            PilImage.new("RGB", (4, 3), "red").save(picture)
+            wb = Workbook()
+            wb.active.append(["a", "b"])
+            wb.active.append(["1", "2"])
+            wb.active.add_image(XlImage(picture), "B2")
+            doc = _parse(wb)
+        (image,) = [n for n in walk(doc) if isinstance(n, Image)]
+        self.assertIsNone(image.frame)
+
     def test_images_are_ignored_without_write_images(self):
         doc = parse_xlsx(str(FIXTURE), write_images=False)
         self.assertFalse(any(isinstance(n, Image) for n in walk(doc)))
@@ -302,6 +316,17 @@ class TestXlsxRenderer(BaseConverterTest):
         save_to_file(str(FIXTURE), str(out))
         self.assertFalse(self._out("images_images").exists())
         self.assertEqual(len(load_workbook(out)["Dates"]._images), 1)
+
+    def test_an_image_keeps_the_range_it_covers(self):
+        """The fixture's picture spans C4:M13; written back, it fits that range and reads back the same."""
+        from textconverter.ast import BoxFrame
+        out = self._out("image_range.xlsx")
+        save_to_file(str(FIXTURE), str(out))
+        with tempfile.TemporaryDirectory() as tmp:
+            before = [n.frame for n in walk(parse_xlsx(str(FIXTURE), output_dir=tmp)) if isinstance(n, Image)]
+            after = [n.frame for n in walk(parse_xlsx(str(out), output_dir=tmp)) if isinstance(n, Image)]
+        self.assertEqual(before, [BoxFrame(cells="C4:M13")])
+        self.assertEqual(after, before)
 
     def test_markdown_image_reference_is_anchored_to_its_cell(self):
         src = INPUT_DIR / "tmp_img_table.md"

@@ -5,7 +5,9 @@ import unicodedata
 from collections.abc import Callable
 from contextvars import ContextVar
 
-from ..ast import CodeInline, Equation, Footnote, Image, InlineElement, Label, LineBreak, Link, Node, Table, Text
+from ..ast import (
+    BoxFrame, CodeInline, Equation, Footnote, Image, InlineElement, Label, LineBreak, Link, Node, Table, Text,
+)
 from ._latex_macros import (
     REFERENCE_MACROS, extract_macro_args, find_balanced_braces, parse_reference_macro, strip_macro,
 )
@@ -249,7 +251,9 @@ def parse_inline_latex(
             continue
         pos = end
         handler = _INLINE_COMMANDS.get(cmd_base)
-        if handler is not None:
+        if cmd_base == 'includegraphics':
+            elements.append(graphics_image(text[start:end], args[0]))
+        elif handler is not None:
             elements.extend(handler(args, inline, is_bold, is_italic, is_strike))
             # Keep \texttt{...} apart from a word glued to it
             if cmd_base == 'texttt' and end < len(text) and text[end].isalnum():
@@ -371,5 +375,25 @@ _INLINE_COMMANDS: dict[str, Callable[..., list[InlineElement]]] = {
     'thanks': lambda args, inline, *fmt: [Footnote(content=inline(args[0]))],
     'href': _link,
     'url': lambda args, inline, *fmt: _link(args[:1], inline, *fmt),
-    'includegraphics': lambda args, inline, *fmt: [Image(src=args[0], alt="image")],
 }
+
+# A size of an \includegraphics in fractions of the paper: width=0.30\paperwidth.
+_PAPER_SIZE = re.compile(r'\b(width|height)\s*=\s*(\d*\.?\d+)\s*\\paper\1(?![a-zA-Z])')
+_GRAPHICS_OPTIONS = re.compile(r'\\includegraphics\*?\s*\[([^\]]*)\]')
+
+
+def graphics_frame(macro: str) -> BoxFrame | None:
+    """The frame the options of an ``\\includegraphics`` give: ``width=0.30\\paperwidth`` is ``w 30%``.
+
+    Only sizes in ``\\paperwidth`` and ``\\paperheight`` tell one; any other
+    size (``\\textwidth``, ``5cm``) does not, and leaves the image without a frame.
+    """
+    options = _GRAPHICS_OPTIONS.match(macro)
+    sizes = {name: round(float(value) * 100) for name, value in _PAPER_SIZE.findall(options.group(1))} \
+        if options else {}
+    return BoxFrame(w=sizes.get('width'), h=sizes.get('height')) if sizes else None
+
+
+def graphics_image(macro: str, src: str) -> Image:
+    """The image an ``\\includegraphics`` macro shows, with the frame its options give."""
+    return Image(src=src.strip(), alt="image", frame=graphics_frame(macro))

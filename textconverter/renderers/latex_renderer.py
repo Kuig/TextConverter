@@ -368,6 +368,16 @@ def _bibliography(node: Bibliography) -> str:
     return '\n'.join(lines)
 
 
+def _image(node: Image) -> str:
+    """``\\includegraphics``, with the frame's size as fractions of the paper (proportions kept within both)."""
+    frame = node.frame
+    sizes = [f"{name}={value / 100:.2f}\\paper{name}" for name, value in
+             (("width", frame.w), ("height", frame.h)) if value and value > 0] if frame is not None else []
+    if len(sizes) == 2:
+        sizes.append("keepaspectratio")
+    return f"\\includegraphics[{','.join(sizes)}]{{{node.src}}}" if sizes else f"\\includegraphics{{{node.src}}}"
+
+
 def _footnote(node: Footnote) -> str:
     macro = latex_reference_macro(node, _inline)
     return macro.replace('\\footnote', '\\thanks', 1) if _IN_METADATA.get() else macro
@@ -382,7 +392,7 @@ _RENDERERS = {
     TableCell: _table_cell,
     Text: lambda node: _inline([node]),
     Link: _link,
-    Image: lambda node: f"\\includegraphics{{{node.src}}}",
+    Image: _image,
     CodeInline: lambda node: f"\\texttt{{{_escape_latex(node.code)}}}",
     LineBreak: lambda node: " \\and " if node.author_separator else "\\\\\n",
     BlockQuote: _block_quote,

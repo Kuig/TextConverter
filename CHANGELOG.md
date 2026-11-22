@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Pictures remember where they sit. A picture read from PowerPoint keeps its place and size on the slide, one from Word
+  its size on the page (and its place when it floats), one from Excel the range of cells it covers. PowerPoint output
+  puts a picture back at its place, with the text stopping before it, instead of stacking every picture in a column;
+  Word output gives it its size and floats it at its place; Excel output fits it to its range. A frame from a slide
+  keeps the picture's proportions on a page.
+- The frame travels through the other formats: in Markdown as a comment after the image, invisible when rendered
+  (`![Logo](logo.png)<!--Picture (x 10%, y 20%, w 30%, h 40%)-->`), in HTML as `data-frame`, in LaTeX as the size
+  (`\includegraphics[width=0.30\paperwidth,height=0.40\paperheight,keepaspectratio]`, read back too), in JSON as the
+  image's `frame`.
+
 ## [0.5.2] - 2026-11-13
 
 ### Added

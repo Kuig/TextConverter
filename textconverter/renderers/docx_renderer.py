@@ -22,7 +22,7 @@ from ..parsers._office import BoxFrame, parse_box_preamble
 from ..parsers._omml import M_NS
 from ..parsers.docx_parser import LANGUAGE_TAG
 from ._common import figure_image, latex_reference_macro, lower_bibliography, plain_text, safe_href, table_grid, text_runs
-from ._office import image_bytes, write_properties
+from ._office import framed_size, image_bytes, write_properties
 from ._omml import UnsupportedMath, latex_to_omml
 
 _CODE_FONT = "Consolas"
@@ -493,13 +493,52 @@ class _Writer:
 
     # ---- images ---------------------------------------------------------
 
-    def _picture_size(self, info) -> tuple[int, int]:
-        """The size of a picture on the page, its own unless wider than the text; a JPEG may tell 0 dpi."""
+    def _picture_size(self, info, frame: BoxFrame | None) -> tuple[int, int]:
+        """The size of a picture on the page: its frame's, else its own (a JPEG may tell 0 dpi); never wider than the text."""
         from docx.shared import Inches
-        width = Inches(info.px_width / (info.horz_dpi or _DEFAULT_DPI))
-        height = Inches(info.px_height / (info.vert_dpi or _DEFAULT_DPI))
+        section = self.document.sections[0]
+        size = framed_size(frame, section.page_width, section.page_height, (info.px_width, info.px_height)) \
+            if frame is not None else None
+        if size is not None:
+            width, height = size
+        else:
+            width = Inches(info.px_width / (info.horz_dpi or _DEFAULT_DPI))
+            height = Inches(info.px_height / (info.vert_dpi or _DEFAULT_DPI))
         scale = min(1.0, self._text_width / width) if width else 1.0
         return round(width * scale), round(height * scale)
+
+    def _can_float(self, paragraph) -> bool:
+        """Whether a picture of this paragraph may leave the line of text: not in a table cell or a footnote."""
+        return paragraph.part is self.document.part and next(paragraph._p.iterancestors(self._qn("w:tc")), None) is None
+
+    def _float(self, run, frame: BoxFrame) -> None:
+        """Turn a picture written in the line of text into one anchored at its frame on the page.
+
+        The frame's ``x`` is from the page's left edge, its ``y`` from the
+        page's top, or the paragraph's when it is not known.
+        """
+        inline = next(run._r.iter(self._qn("wp:inline")), None)
+        if inline is None:
+            return
+        section = self.document.sections[0]
+        x = round(frame.x / 100 * section.page_width)
+        from_y, y = ("page", round(frame.y / 100 * section.page_height)) if frame.y is not None else ("paragraph", 0)
+        props = inline.find(self._qn("wp:docPr"))
+        anchor = self._parse(
+            f'<wp:anchor {self._nsdecls("wp")} distT="0" distB="0" distL="114300" distR="114300" simplePos="0" '
+            f'relativeHeight="{251659264 + int(props.get("id", "0"))}" behindDoc="0" locked="0" layoutInCell="1" '
+            f'allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+            f'<wp:positionH relativeFrom="page"><wp:posOffset>{x}</wp:posOffset></wp:positionH>'
+            f'<wp:positionV relativeFrom="{from_y}"><wp:posOffset>{y}</wp:posOffset></wp:positionV></wp:anchor>')
+        extent = inline.find(self._qn("wp:extent"))
+        anchor.append(extent)
+        anchor.append(self._parse(f'<wp:effectExtent {self._nsdecls("wp")} l="0" t="0" r="0" b="0"/>'))
+        anchor.append(self._parse(f'<wp:wrapSquare {self._nsdecls("wp")} wrapText="bothSides"/>'))
+        for name in ("wp:docPr", "wp:cNvGraphicFramePr", "a:graphic"):
+            child = inline.find(self._qn(name))
+            if child is not None:
+                anchor.append(child)
+        inline.getparent().replace(inline, anchor)
 
     @staticmethod
     def _picture_info(blob: bytes):
@@ -521,8 +560,10 @@ class _Writer:
             try:
                 blob, info = self._picture_info(blob)
                 run = self._add_run(paragraph, "", container)
-                width, height = self._picture_size(info)
+                width, height = self._picture_size(info, node.frame)
                 run.add_picture(io.BytesIO(blob), width=width, height=height)
+                if node.frame is not None and node.frame.x is not None and self._can_float(paragraph):
+                    self._float(run, node.frame)
             except Exception as exc:
                 log_warning(f"Image not embedded in the Word file ({exc}): {node.src[:80]}")
                 if run is not None:

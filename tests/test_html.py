@@ -313,3 +313,22 @@ class TestHtmlBibliography(BaseConverterTest):
         html = textconverter.convert_text(tex, "latex", "html")
         self.assertIn('class="tc-bib"', html)
         self.assertIn('"type": "Bibliography"', textconverter.convert_text(html, "html", "json"))
+
+
+class TestHtmlImageFrame(BaseConverterTest):
+
+    def test_it_is_written_and_read_back(self):
+        from textconverter.ast import BoxFrame, Document, Image, Paragraph, walk
+        from textconverter.parsers.html_parser import parse_html
+        from textconverter.renderers.html_renderer import render_html
+        frame = BoxFrame(x=10, y=20, w=30, h=40)
+        html = render_html(Document(children=[Paragraph(children=[Image(src="a.png", frame=frame)])]))
+        self.assertIn('data-frame="x 10%, y 20%, w 30%, h 40%"', html)
+        (image,) = [n for n in walk(parse_html(html)) if isinstance(n, Image)]
+        self.assertEqual(image.frame, frame)
+
+    def test_a_data_frame_that_is_not_one_is_ignored(self):
+        from textconverter.ast import Image, walk
+        from textconverter.parsers.html_parser import parse_html
+        (image,) = [n for n in walk(parse_html('<p><img src="a.png" data-frame="left"></p>')) if isinstance(n, Image)]
+        self.assertIsNone(image.frame)

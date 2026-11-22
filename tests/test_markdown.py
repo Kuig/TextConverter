@@ -644,3 +644,45 @@ class TestCodeDetection(BaseConverterTest):
         md = textconverter.convert(str(INPUT_DIR / "CodeTest.md"), "markdown",
                                    textconverter.ConvertOptions(code_parsing=True))
         self.assertIn('```python\ndef fibonacci(n):\n    """Calcola', md.split("# Unfenced")[1])
+
+
+class TestImageFrame(BaseConverterTest):
+    """A picture's frame is an HTML comment right after the image: invisible, and read back."""
+
+    def _round_trip(self, *images):
+        from textconverter.ast import Document, Paragraph
+        from textconverter.parsers.markdown_parser import parse_markdown
+        from textconverter.renderers.markdown_renderer import render_markdown
+        md = render_markdown(Document(children=[Paragraph(children=list(images))]))
+        return md, parse_markdown(md)
+
+    def test_inline_and_linked_images_keep_it(self):
+        from textconverter.ast import BoxFrame, Image, Link, walk
+        placed, cells = BoxFrame(x=10, y=20, w=30, h=40), BoxFrame(cells="C4:M13")
+        md, doc = self._round_trip(Image(src="a.png", alt="a", frame=placed),
+                                   Link(url="https://x.test", content=[Image(src="b.png", frame=cells)]))
+        self.assertIn("![a](a.png)<!--Picture (x 10%, y 20%, w 30%, h 40%)-->", md)
+        self.assertEqual([n.frame for n in walk(doc) if isinstance(n, Image)], [placed, cells])
+
+    def test_an_image_without_one_is_unchanged(self):
+        from textconverter.ast import Image
+        md, _ = self._round_trip(Image(src="a.png", alt="a"))
+        self.assertEqual(md.strip(), "![a](a.png)")
+
+    def test_a_described_image_keeps_it(self):
+        from textconverter.ast import BoxFrame, Document, Image, Paragraph, walk
+        from textconverter.parsers.json_parser import parse_json
+        from textconverter.renderers.json_renderer import render_json
+        frame = BoxFrame(w=20, h=10)
+        doc = Document(children=[Paragraph(children=[
+            Image(src="d.png", alt="d", frame=frame, description="a cat", category="photo")])])
+        keep = textconverter.ConvertOptions(image_handling="keep")
+        md = textconverter.convert_text(render_json(doc), "json", "markdown", keep)
+        back = parse_json(textconverter.convert_text(md, "markdown", "json", keep))
+        (image,) = [n for n in walk(back) if isinstance(n, Image)]
+        self.assertEqual((image.frame, image.description, image.category), (frame, "a cat", "photo"))
+
+    def test_the_comment_elsewhere_is_dropped(self):
+        md = textconverter.convert_text("x <!--Picture (w 3%)--> y\n\n![a](b.png) <!--Picture (w 3%)-->\n",
+                                        "markdown", "markdown", textconverter.ConvertOptions(image_handling="keep"))
+        self.assertNotIn("Picture", md)

@@ -2,9 +2,9 @@ from __future__ import annotations
 import re
 from contextvars import ContextVar
 from ..ast import (
-    METADATA_FIELDS, Abstract, Bibliography, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote,
-    Heading, HorizontalRule, Image, Label, LineBreak, Link, ListBlock, Node, Paragraph, Reference, Table,
-    TableCell, Text,
+    METADATA_FIELDS, PICTURE_FRAME, Abstract, Bibliography, BlockQuote, Citation, CodeBlock, CodeInline, Document,
+    Equation, Footnote, Heading, HorizontalRule, Image, Label, LineBreak, Link, ListBlock, Node, Paragraph, Reference,
+    Table, TableCell, Text, frame_fields,
 )
 from ..parsers._latex_macros import REFERENCE_MACROS
 from ..parsers._markdown_inline import emphasis_flanking, trim_bare_url
@@ -334,7 +334,9 @@ def _link(node: Link, bare: bool = False) -> str:
 
 def _image(node: Image) -> str:
     alt = re.sub(r'([\\\[\]])', r'\\\1', node.alt)
-    return f'![{alt}]({_destination(node.src)}{_escape_title(node.title)})'
+    fields = frame_fields(node.frame) if node.frame is not None else ''
+    frame = f'<!--{PICTURE_FRAME} ({fields})-->' if fields else ''
+    return f'![{alt}]({_destination(node.src)}{_escape_title(node.title)}){frame}'
 
 
 def _code_inline(node: CodeInline) -> str:

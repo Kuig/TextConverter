@@ -469,6 +469,57 @@ class TestDocxRenderer(DocxOutputTest):
         self.assertEqual([i.alt for i in _of(doc, Image)], ["ok"])
         self.assertIn("[gone]", plain_text(doc.children))
 
+    def test_the_fixture_picture_tells_its_size(self):
+        """The fixture's picture is VML (``style="width:193.5pt;height:131.25pt"``): a size, no place."""
+        with tempfile.TemporaryDirectory() as tmp:
+            (image,) = _of(parse_docx(str(FIXTURE), output_dir=tmp, image_dir_name="img"), Image)
+        section = docx.Document(str(FIXTURE)).sections[0]
+        self.assertEqual((image.frame.x, image.frame.y), (None, None))
+        self.assertEqual(image.frame.w, round(100 * 193.5 * 12700 / section.page_width))
+        self.assertEqual(image.frame.h, round(100 * 131.25 * 12700 / section.page_height))
+
+    def _framed(self, frame) -> tuple[str, Image]:
+        """Write one 40x30 picture with ``frame``; return the document XML and the picture read back."""
+        from textconverter.ast import Document
+        from textconverter.renderers.docx_renderer import render_docx
+        from PIL import Image as PilImage
+        buffer = io.BytesIO()
+        PilImage.new("RGB", (40, 30), "red").save(buffer, "PNG")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        out = os.path.join(tmp.name, "framed.docx")
+        render_docx(Document(children=[Paragraph(children=[
+            Image(src=_data_url(buffer.getvalue()), alt="p", frame=frame)])]), out)
+        with zipfile.ZipFile(out) as z:
+            xml = z.read("word/document.xml").decode("utf-8")
+        (image,) = _of(parse_docx(out, output_dir=tmp.name, image_dir_name="img"), Image)
+        return xml, image
+
+    def test_a_framed_picture_keeps_its_size(self):
+        from textconverter.ast import BoxFrame
+        # 40% of 21 cm is 8.4 cm; with the picture's 3:4 proportions 6.3 cm, 21% of 29.7 cm
+        xml, image = self._framed(BoxFrame(w=40, h=21))
+        self.assertIn("<wp:inline", xml)
+        self.assertEqual(image.frame, BoxFrame(w=40, h=21))
+
+    def test_a_placed_picture_floats_at_its_place(self):
+        from textconverter.ast import BoxFrame
+        xml, image = self._framed(BoxFrame(x=10, y=50, w=40, h=21))
+        self.assertIn("<wp:anchor", xml)
+        self.assertNotIn("<wp:inline", xml)
+        self.assertEqual(image.frame, BoxFrame(x=10, y=50, w=40, h=21))
+
+    def test_a_frame_from_a_slide_keeps_the_proportions(self):
+        """40% by 60% of a wide slide is not the picture's shape on a page: the width holds, the height follows."""
+        from textconverter.ast import BoxFrame
+        _, image = self._framed(BoxFrame(w=40, h=60))
+        self.assertEqual((image.frame.w, image.frame.h), (40, 21))
+
+    def test_a_picture_is_never_wider_than_the_text(self):
+        from textconverter.ast import BoxFrame
+        _, image = self._framed(BoxFrame(w=95))
+        self.assertEqual(image.frame.w, 76)  # the text of an A4 page with 2.5 cm margins: 16 of 21 cm
+
     def test_webp_is_converted_to_png(self):
         from PIL import Image as PilImage
         buffer = io.BytesIO()

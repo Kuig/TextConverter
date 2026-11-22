@@ -58,6 +58,31 @@ class TestJsonForm(BaseConverterTest):
         doc = Document(children=[Equation(code="a &= b", env="align*")])
         self.assertEqual(parse_json(render_json(doc)), doc)
 
+    def test_image_frame_round_trips(self):
+        """An image's frame survives JSON output and input; JSON without one reads as None."""
+        from textconverter.ast import BoxFrame
+        from textconverter.parsers.json_parser import parse_json
+        from textconverter.renderers.json_renderer import render_json
+        doc = Document(children=[Paragraph(children=[
+            Image(src="a.png", frame=BoxFrame(x=10, y=20, w=30, h=40)), Image(src="b.png", frame=BoxFrame(cells="B2:D9"))])])
+        self.assertEqual(parse_json(render_json(doc)), doc)
+        old = '{"type": "Document", "children": [{"type": "Paragraph", "children": [{"type": "Image", "src": "c.png"}]}]}'
+        self.assertIsNone(parse_json(old).children[0].children[0].frame)
+
+
+class TestFrameFields(BaseConverterTest):
+
+    def test_fields_round_trip(self):
+        from textconverter.ast import BoxFrame, frame_fields, parse_frame_fields
+        for frame in (BoxFrame(x=10, y=-5, w=30, h=40), BoxFrame(w=50, h=20), BoxFrame(cells="C4:M13"),
+                      BoxFrame(x=1, w=2, h=3, font=10.5)):
+            self.assertEqual(parse_frame_fields(frame_fields(frame)), frame)
+
+    def test_text_that_is_not_a_frame_gives_none(self):
+        from textconverter.ast import parse_frame_fields
+        self.assertIsNone(parse_frame_fields("x 10%, wide"))
+        self.assertIsNone(parse_frame_fields("logo"))
+
     def test_new_fields_round_trip(self):
         """Captions, labels, metadata, citation options, scripts, list start and task items survive JSON."""
         from textconverter.ast import (

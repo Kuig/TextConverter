@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from ..ast import (
     Abstract, Bibliography, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote, Heading,
     HorizontalRule, Image, Label, LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Reference,
-    Table, TableCell, Text,
+    Table, TableCell, Text, frame_fields,
 )
 from ._common import (
     bibliography_paragraphs, figure_image, latex_reference_macro, reference_numbers, safe_href, summary_text,
@@ -216,7 +216,9 @@ def _link(node: Link) -> str:
 
 def _image(node: Image) -> str:
     title_str = f' title="{html.escape(node.title)}"' if node.title else ''
-    return f'<img src="{html.escape(node.src)}" alt="{html.escape(node.alt)}"{title_str} />'
+    fields = frame_fields(node.frame) if node.frame is not None else ''
+    frame_str = f' data-frame="{html.escape(fields)}"' if fields else ''
+    return f'<img src="{html.escape(node.src)}" alt="{html.escape(node.alt)}"{title_str}{frame_str} />'
 
 
 def _block_quote(node: BlockQuote) -> str:

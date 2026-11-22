@@ -7,7 +7,7 @@ from ..ast import (
     HorizontalRule, Image, InlineElement, Label, LineBreak, ListBlock, ListItem, Node, Paragraph, Table, Text,
 )
 from ..logger import log_warning
-from ._latex_inline import UNKNOWN_MACROS, clean_breaks, float_caption, parse_inline_latex
+from ._latex_inline import UNKNOWN_MACROS, clean_breaks, float_caption, graphics_image, parse_inline_latex
 from ._latex_macros import BIBLIOGRAPHY_COMMAND, ENV_BOUNDARY, extract_macro_args, find_balanced_braces, strip_macro
 from ._latex_source import HiddenCode, prepare_source
 from ._latex_tables import TABLE_ENVS, TABLE_FLOATS, TABLE_START, parse_latex_table
@@ -298,7 +298,7 @@ def _images(content: str) -> list[Image]:
         if start == -1:
             return images
         if args:
-            images.append(Image(src=args[0].strip(), alt="image"))
+            images.append(graphics_image(content[start:pos], args[0]))
 
 
 def _figure(content: str) -> list[Node]:

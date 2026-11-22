@@ -2,16 +2,17 @@ from __future__ import annotations
 import json
 from dataclasses import MISSING, fields
 
-from ..ast import NODE_TYPES, Document
+from ..ast import NODE_TYPES, VALUE_TYPES, Document
 from ..logger import log_warning
 
 
 def from_dict(d: object) -> object:
     """Rebuild an AST node from its JSON form (the inverse of ``render_json``).
 
-    A dict must carry a ``"type"`` key naming a node class in ``NODE_TYPES``;
-    lists are rebuilt item by item and scalars are returned unchanged. Keys the
-    node does not define are reported via ``log_warning`` and ignored.
+    A dict must carry a ``"type"`` key naming a node class in ``NODE_TYPES``
+    or a value class in ``VALUE_TYPES``; lists are rebuilt item by item and
+    scalars are returned unchanged. Keys the node does not define are reported
+    via ``log_warning`` and ignored.
 
     Args:
         d: A decoded JSON value.
@@ -29,7 +30,7 @@ def from_dict(d: object) -> object:
         return d
 
     node_type = d.get("type")
-    cls = NODE_TYPES.get(node_type) if isinstance(node_type, str) else None
+    cls = (NODE_TYPES.get(node_type) or VALUE_TYPES.get(node_type)) if isinstance(node_type, str) else None
     if cls is None:
         raise ValueError(f"Unknown or missing node type in JSON: {node_type!r}")
 

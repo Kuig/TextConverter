@@ -37,6 +37,9 @@ _HYPERLINK_INSTR = re.compile(r'HYPERLINK\s+(?:"([^"]*)")?(?:.*?\\l\s+"([^"]*)")
 _NOTE_LAYOUT = ("separator", "continuationSeparator", "continuationNotice")
 # The content control around a code block tells its language, which Word has nowhere else to keep.
 LANGUAGE_TAG = "language:"
+# A length in a VML style, and the EMU per unit.
+_VML_LENGTH = re.compile(r"^(\d+(?:\.\d+)?)(pt|in|cm|mm)$")
+_VML_UNITS = {"pt": 12700, "in": 914400, "cm": 360000, "mm": 36000}
 
 
 _ALIGNED = re.compile(r"^\\begin\{aligned\} (.*) \\end\{aligned\}$", re.DOTALL)
@@ -570,9 +573,12 @@ class _Reader:
         boxes = xpath(drawing, f".//w:txbxContent[{outer}]")
         props = drawing.find(".//wp:docPr", NS)
         alt = (props.get("descr") or props.get("title") or "") if props is not None else ""
+        # The drawing's frame is the picture's only when the drawing holds nothing else
+        frame = self._frame(drawing) if len(blips) == 1 and not boxes else BoxFrame()
         for blip in blips:
             image = self._image(blip.get(f"{{{R}}}embed"), alt)
             if image is not None:
+                image.frame = frame if frame != BoxFrame() else None
                 ctx.emit(image)
         self._text_boxes(boxes, ctx, drawing)
         if not blips and not boxes:
@@ -585,6 +591,7 @@ class _Reader:
             alt = data.getparent().get("alt") or data.get(f"{{{OFFICE}}}title") or ""
             image = self._image(data.get(f"{{{R}}}id"), alt)
             if image is not None:
+                image.frame = self._vml_frame(data.getparent())
                 ctx.emit(image)
         self._text_boxes(boxes, ctx, None)
         if not images and not boxes and any(isinstance(c.tag, str) and local(c) != "shapetype" for c in pict):
@@ -622,6 +629,16 @@ class _Reader:
         return BoxFrame(x=place("positionH", origins_x, width), y=place("positionV", origins_y, height),
                         w=round(100 * int(extent.get("cx", "0")) / width),
                         h=round(100 * int(extent.get("cy", "0")) / height))
+
+    def _vml_frame(self, shape: etree._Element) -> BoxFrame | None:
+        """The size of a VML picture (``style="width:193.5pt;height:131.25pt"``) as percentages of the page."""
+        style = dict(part.split(":", 1) for part in (shape.get("style") or "").replace(" ", "").split(";") if ":" in part)
+        sizes = [_VML_LENGTH.match(style.get(name, "")) for name in ("width", "height")]
+        if not all(sizes):
+            return None
+        section = self.document.sections[0]
+        cx, cy = (float(m.group(1)) * _VML_UNITS[m.group(2)] for m in sizes)
+        return BoxFrame(w=round(100 * cx / (section.page_width or 1)), h=round(100 * cy / (section.page_height or 1)))
 
     def _box_font(self, box: etree._Element) -> float | None:
         """The font size of most of a text box's characters, in points: from the run, its style, or the defaults."""

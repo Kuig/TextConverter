@@ -540,6 +540,51 @@ class TestPptxRenderer(PptxOutputTest):
         self.assertEqual(sum(len(b.items) for b in _of(before, ListBlock)),
                          sum(len(b.items) for b in _of(after, ListBlock)))
 
+    def test_the_fixture_pictures_tell_their_place(self):
+        from textconverter.ast import BoxFrame
+        with tempfile.TemporaryDirectory() as tmp:
+            images = _of(parse_pptx(str(FIXTURE), output_dir=tmp, image_dir_name="a"), Image)
+        self.assertEqual(images[0].frame, BoxFrame(x=73, y=72, w=10, h=18))
+        self.assertTrue(all(i.frame is not None and i.frame.placed for i in images))
+
+    def _framed(self, *frames, text: str = "") -> tuple[Presentation, list[Image]]:
+        """One slide with a 40x30 picture per frame (and ``text``); the deck written and its pictures read back."""
+        from PIL import Image as PilImage
+        buffer = io.BytesIO()
+        PilImage.new("RGB", (40, 30), "red").save(buffer, "PNG")
+        import base64
+        src = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode()
+        blocks = [Paragraph(children=[Text(content=text)])] if text else []
+        blocks += [Paragraph(children=[Image(src=src, frame=frame)]) for frame in frames]
+        path = self._render(Document(children=[Heading(level=2, children=[Text(content="S")]), *blocks]))
+        return Presentation(path), _of(self._read(path), Image)
+
+    def test_a_placed_picture_keeps_its_place(self):
+        from textconverter.ast import BoxFrame
+        # 30% of the 16:9 width with the picture's 3:4 proportions is 40% of the height
+        frame = BoxFrame(x=10, y=20, w=30, h=40)
+        _, (image,) = self._framed(frame)
+        self.assertEqual(image.frame, frame)
+
+    def test_a_frame_of_other_proportions_holds_the_picture_centered(self):
+        from textconverter.ast import BoxFrame
+        _, (image,) = self._framed(BoxFrame(x=10, y=20, w=60, h=40))
+        self.assertEqual(image.frame, BoxFrame(x=25, y=20, w=30, h=40))
+
+    def test_pictures_without_a_place_share_the_column(self):
+        from textconverter.ast import BoxFrame
+        _, images = self._framed(None, BoxFrame(w=30, h=40))
+        self.assertEqual(len({i.frame.x for i in images}), 1)
+
+    def test_text_stops_before_a_placed_picture_on_its_right(self):
+        from textconverter.ast import BoxFrame
+        prs, _ = self._framed(BoxFrame(x=75, y=20, w=20, h=27), text="body text")
+        body = next(s for s in prs.slides[0].placeholders if s.placeholder_format.idx == 1)
+        self.assertLessEqual(body.left + body.width, 0.75 * prs.slide_width)
+        prs, _ = self._framed(BoxFrame(x=90, y=90, w=4, h=5), text="body text")
+        body = next(s for s in prs.slides[0].placeholders if s.placeholder_format.idx == 1)
+        self.assertGreater(body.left + body.width, 0.9 * prs.slide_width, "a logo does not narrow the text")
+
     def test_a_bibliography_survives(self):
         path = self._save("## S\n\nText \\cite{a}.\n\n\\bibliography{refs}\n")
         self.assertIn("\\bibliography{refs}", convert(path, "latex", textconverter.ConvertOptions(image_handling="keep", image_output="link")))

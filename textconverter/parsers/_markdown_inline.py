@@ -7,7 +7,10 @@ import re
 import unicodedata
 from dataclasses import dataclass, field, replace
 
-from ..ast import CodeInline, Equation, Footnote, Image, InlineElement, LineBreak, Link, Text, walk
+from ..ast import (
+    PICTURE_FRAME, BoxFrame, CodeInline, Equation, Footnote, Image, InlineElement, LineBreak, Link, Text,
+    parse_frame_fields, walk,
+)
 from ._latex_macros import REFERENCE_MACROS, parse_reference_macro
 
 _ENTITY = re.compile(r'&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[a-zA-Z][a-zA-Z0-9]*);')
@@ -165,6 +168,15 @@ def _url_pattern(name: str) -> str:
     return rf'(?:<(?P<{name}_b>[^<>\n]*)>|(?P<{name}>(?:[^\s()]|\([^\s()]*\))*))'
 
 
+def _frame_pattern(name: str) -> str:
+    """The comment the Markdown renderer writes right after a framed image: ``<!--Picture (x 10%, w 30%)-->``."""
+    return rf'(?:<!--{PICTURE_FRAME} \((?P<{name}>[^()\n]*)\)-->)?'
+
+
+def _frame(fields: str | None) -> BoxFrame | None:
+    return parse_frame_fields(fields) if fields else None
+
+
 # Inline HTML read as formatting; any other tag is dropped and what it encloses stays.
 _HTML_STYLES = {'sup': ('script', 'sup'), 'sub': ('script', 'sub'), 'strong': ('bold', True), 'b': ('bold', True),
                 'em': ('italic', True), 'i': ('italic', True), 'del': ('strikethrough', True),
@@ -180,14 +192,15 @@ _INLINE = re.compile(
     # Reference-style link: [content][id]; content may include inline images
     # Uses .*? (non-greedy) so it stops at the first ][id] after the opening [
     r'(?P<reflink>(?<!!)(?<!\])\[(?P<rl_text>.*?)\]\[(?P<rl_id>[^\]]*)\])|'
-    # Inline image: ![alt](url "title") with optional OCR block
+    # Inline image: ![alt](url "title") with optional frame comment and OCR block
     rf'(?P<inlineimg>!\[(?P<img_alt>[^\]]*)\]\({_url_pattern("img_url")}(?:\s+"(?P<img_title>[^"]*)")?\)'
-    r'(?:<!--OCR:(?P<ocr_b64>[A-Za-z0-9+/=]+)-->)?)|'
+    rf'{_frame_pattern("img_frame")}(?:<!--OCR:(?P<ocr_b64>[A-Za-z0-9+/=]+)-->)?)|'
     # Linked image: [![alt](imgurl "imgtitle")](linkurl "linktitle"), an inline image
     # used as the entire content of an inline link. Must come before inlinelink, whose
     # link_text ([^\]]+) cannot span the nested image's own closing bracket/paren and
     # would otherwise misparse the image's URL as the link's URL.
-    rf'(?P<linkedimg>\[!\[(?P<li_alt>[^\]]*)\]\({_url_pattern("li_img_url")}(?:\s+"(?P<li_img_title>[^"]*)")?\)\]'
+    rf'(?P<linkedimg>\[!\[(?P<li_alt>[^\]]*)\]\({_url_pattern("li_img_url")}(?:\s+"(?P<li_img_title>[^"]*)")?\)'
+    rf'{_frame_pattern("li_frame")}\]'
     rf'\({_url_pattern("li_link_url")}(?:\s+"(?P<li_link_title>[^"]*)")?\))|'
     # Inline link: [text](url "title")
     rf'(?P<inlinelink>(?<!!)(?<!\])\[(?P<link_text>[^\]]+)\]\({_url_pattern("link_url")}(?:\s+"(?P<link_title>[^"]*)")?\))|'
@@ -288,9 +301,10 @@ def parse_inline(text: str, ref_map: dict | None = None, autolinks: bool = True)
         elif g['inlineimg'] is not None:
             ocr_text = base64.b64decode(g['ocr_b64']).decode('utf-8') if g['ocr_b64'] else None
             items.append(Image(src=_url(g, 'img_url'), alt=unescape(g['img_alt'] or ''),
-                               title=_title(g['img_title']), extracted_text=ocr_text))
+                               title=_title(g['img_title']), extracted_text=ocr_text, frame=_frame(g['img_frame'])))
         elif g['linkedimg'] is not None:
-            img = Image(src=_url(g, 'li_img_url'), alt=unescape(g['li_alt'] or ''), title=_title(g['li_img_title']))
+            img = Image(src=_url(g, 'li_img_url'), alt=unescape(g['li_alt'] or ''), title=_title(g['li_img_title']),
+                        frame=_frame(g['li_frame']))
             items.append(Link(url=_url(g, 'li_link_url'), title=_title(g['li_link_title']), content=[img]))
         elif g['inlinelink'] is not None:
             items.append(Link(url=_url(g, 'link_url'), title=_title(g['link_title']),

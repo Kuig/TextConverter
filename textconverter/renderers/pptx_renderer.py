@@ -2,7 +2,8 @@
 
 A level 1 heading is a section and any deeper heading a slide (a level below 2 gets a ``#`` per level in its
 title). The text of a slide goes in one content placeholder, shrunk until it fits; tables and pictures
-follow it, and a quote headed by ``Text box (x .., y .., w .., h ..)`` becomes a text box at that frame.
+follow it, and a quote headed by ``Text box (x .., y .., w .., h ..)`` becomes a text box at that frame,
+as a picture with a complete ``Image.frame`` goes to its own place (the others share a column on the right).
 Footnotes are the slide's speaker notes. The first slide uses the title layout when it looks like a title
 and subtitle; a deck of bare level 1 headings, which would have no slide, gets a title slide for each.
 """
@@ -23,7 +24,7 @@ from ..logger import log_warning
 from ..parsers._office import BoxFrame, parse_box_preamble
 from ..parsers._pptx_xml import DEFAULT_SECTION, NS, P, a
 from ._common import lower_bibliography, plain_text, table_grid
-from ._office import image_bytes, write_properties
+from ._office import framed_size, image_bytes, write_properties
 from ._pptx_writer import (
     EMU_PER_PT, TABLE_SIZE, Line, TextWriter, cell_height, fit, line_size, lines_height, lines_of,
 )
@@ -38,6 +39,8 @@ _BODY_BOTTOM = SLIDE_HEIGHT - 350000
 _GAP = 12 * EMU_PER_PT
 _COLUMN_GAP = 300000
 _PICTURE_SHARE = 0.4
+# A placed picture below this area, in square percent of the slide (2%), does not narrow the text.
+_SMALL_PICTURE = 200
 _TITLE_SIZE = 32.0
 _SECTIONS_URI = "{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"
 _LAYOUT_TITLE, _LAYOUT_CONTENT, _LAYOUT_TITLE_ONLY = 0, 1, 5
@@ -63,6 +66,12 @@ class _Picture:
     data: bytes
     alt: str
     size: tuple[int, int]
+    frame: BoxFrame | None = None
+
+    @property
+    def placed(self) -> bool:
+        """Whether the picture goes to its own place on the slide rather than to the picture column."""
+        return self.frame is not None and self.frame.placed and self.frame.w > 0 and self.frame.h > 0
 
 
 @dataclass
@@ -220,7 +229,8 @@ class _Deck:
     def _body(self, slide, plan: _Plan, lines: list[Line], pictures: list[_Picture]) -> None:
         body_width = SLIDE_WIDTH - 2 * _MARGIN
         has_left = bool(lines or plan.tables)
-        left_width = body_width * (1 - _PICTURE_SHARE) - _COLUMN_GAP if pictures and has_left else body_width
+        column = [p for p in pictures if not p.placed]
+        left_width = _text_width(pictures, body_width) if has_left else body_width
         placed, loose = [], []
         for quote in plan.quotes:
             frame = parse_box_preamble(plain_text(quote.children[0].children)) if _starts_with_paragraph(quote) else None
@@ -252,7 +262,10 @@ class _Deck:
             y += height + _GAP
         for quote, frame in placed:
             self._placed_quote(slide, quote, frame)
-        self._pictures(slide, pictures, body_width, left_width if has_left else 0)
+        for picture in pictures:
+            if picture.placed:
+                self._placed_picture(slide, picture)
+        self._pictures(slide, column, body_width, left_width if has_left else 0)
 
     def _text_box(self, slide, lines: list[Line], x: int, y: int, width: int, height: int, scale: float) -> None:
         box = slide.shapes.add_textbox(x, y, width, height)
@@ -307,12 +320,22 @@ class _Deck:
                         out = io.BytesIO()
                         picture.convert("RGBA" if picture.mode in ("RGBA", "LA", "P") else "RGB").save(out, "PNG")
                         blob = out.getvalue()
-                loaded.append(_Picture(data=blob, alt=image.alt or "", size=size))
+                loaded.append(_Picture(data=blob, alt=image.alt or "", size=size, frame=image.frame))
             except (ValueError, OSError) as exc:
                 log_warning(f"Image not embedded in the PowerPoint file ({exc}): {image.src[:80]}")
                 fallback = image.alt or ("image" if image.src.startswith("data:") else image.src)
                 plan.blocks.append(Paragraph(children=[Text(content=f"[{fallback}]")]))
         return loaded
+
+    @staticmethod
+    def _placed_picture(slide, picture: _Picture) -> None:
+        """A picture at its frame, its proportions kept and centered in it when the frame has others."""
+        frame = picture.frame
+        w, h = framed_size(frame, SLIDE_WIDTH, SLIDE_HEIGHT, picture.size)
+        x = frame.x / 100 * SLIDE_WIDTH + (frame.w / 100 * SLIDE_WIDTH - w) / 2
+        y = frame.y / 100 * SLIDE_HEIGHT + (frame.h / 100 * SLIDE_HEIGHT - h) / 2
+        shape = slide.shapes.add_picture(io.BytesIO(picture.data), round(x), round(y), round(w), round(h))
+        shape._element.nvPicPr.cNvPr.set("descr", picture.alt)
 
     @staticmethod
     def _pictures(slide, pictures: list[_Picture], body_width: float, left_width: float) -> None:
@@ -349,6 +372,20 @@ class _Deck:
             slide_ids = etree.SubElement(section, f"{{{NS['p14']}}}sldIdLst")
             for slide_id in ids:
                 etree.SubElement(slide_ids, f"{{{NS['p14']}}}sldId", id=str(slide_id))
+
+
+def _text_width(pictures: list[_Picture], body_width: float) -> float:
+    """The width of a slide's text: the left column beside the picture column, and no further than the
+    leftmost picture placed on its right; all the body without pictures.
+
+    A small placed picture (a logo, an icon) does not narrow it, and the text
+    never gets narrower than the left column.
+    """
+    column = body_width * (1 - _PICTURE_SHARE) - _COLUMN_GAP
+    width = column if any(not p.placed for p in pictures) else body_width
+    edges = [p.frame.x / 100 * SLIDE_WIDTH - _MARGIN - _COLUMN_GAP for p in pictures
+             if p.placed and p.frame.w * p.frame.h >= _SMALL_PICTURE]
+    return min(width, max(min(edges), column)) if edges else width
 
 
 def _reads_as_title(plan: _Plan, pictures: list[_Picture], first: bool) -> bool:

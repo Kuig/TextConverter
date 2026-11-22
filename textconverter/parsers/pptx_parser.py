@@ -226,9 +226,9 @@ class _Reader:
         if el.tag == p("pic"):
             if xpath(el, _MEDIA) or xpath(el, "p:nvPicPr/p:nvPr/p:extLst//p14:media"):
                 self.dropped["video or audio"] += 1
-            return self._picture(slide, el, xpath(el, "p:nvPicPr/p:cNvPr"))
+            return self._picture(slide, item, xpath(el, "p:nvPicPr/p:cNvPr"))
         if el.tag == p("graphicFrame"):
-            return self._graphic(slide, reader, el)
+            return self._graphic(slide, reader, item)
         self.dropped["shape"] += 1
         return []
 
@@ -264,9 +264,9 @@ class _Reader:
             styles.extend(xpath(layout.slide_master.element, "p:txStyles/p:bodyStyle"))
         return styles
 
-    def _picture(self, slide, shape: etree._Element, props: list[etree._Element]) -> list[Node]:
-        """The picture a shape holds as an image paragraph; nothing when it holds none or images are off."""
-        blip = xpath(shape, ".//a:blip")
+    def _picture(self, slide, item: Item, props: list[etree._Element]) -> list[Node]:
+        """The picture a shape holds as an image paragraph, framed where it sits; nothing when it holds none or images are off."""
+        blip = xpath(item.el, ".//a:blip")
         embed = blip[0].get(f"{{{R}}}embed") if blip else None
         if not blip or embed is None:
             self.dropped["linked or missing image"] += 1
@@ -279,10 +279,12 @@ class _Reader:
             self.dropped["linked or missing image"] += 1
             return []
         alt = (props[0].get("descr") or props[0].get("title") or "") if props else ""
-        return [Paragraph(children=[Image(src=self._store.save(part.blob, part.partname.ext), alt=alt)])]
+        frame = slide_frame(item.rect, self.width, self.height) if item.rect is not None else None
+        return [Paragraph(children=[Image(src=self._store.save(part.blob, part.partname.ext), alt=alt, frame=frame)])]
 
-    def _graphic(self, slide, reader: TextReader, frame: etree._Element) -> list[Node]:
+    def _graphic(self, slide, reader: TextReader, item: Item) -> list[Node]:
         """A table, a chart (as its data), a diagram (as its text) or an embedded object (as its preview)."""
+        frame = item.el
         uri = (xpath(frame, "a:graphic/a:graphicData/@uri") or [""])[0]
         if uri.endswith("/table"):
             return [read_table(reader, xpath(frame, ".//a:tbl")[0])]
@@ -297,7 +299,7 @@ class _Reader:
                 self.dropped["diagram"] += 1
             return [data] if data is not None else []
         if xpath(frame, ".//a:blip"):
-            return self._picture(slide, frame, xpath(frame, "p:nvGraphicFramePr/p:cNvPr"))
+            return self._picture(slide, item, xpath(frame, "p:nvGraphicFramePr/p:cNvPr"))
         self.dropped["embedded object"] += 1
         return []
 

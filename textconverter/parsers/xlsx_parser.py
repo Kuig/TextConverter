@@ -20,8 +20,11 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 
+from openpyxl.utils import get_column_letter
+
 from ..ast import (
-    BlockQuote, CodeBlock, Document, Footnote, Heading, Image, Link, Node, Table, TableCell, TableRow, Text,
+    BlockQuote, BoxFrame, CodeBlock, Document, Footnote, Heading, Image, Link, Node, Table, TableCell, TableRow,
+    Text,
 )
 from ..images import ImageStore
 from ..logger import log_warning
@@ -175,7 +178,21 @@ class _Reader:
             except Exception:
                 self.dropped["unreadable images"] += 1
                 continue
-            cells.setdefault((anchor.row + 1, anchor.col + 1), []).append(Image(src=src))
+            cells.setdefault((anchor.row + 1, anchor.col + 1), []).append(Image(src=src, frame=_image_range(image.anchor)))
+
+
+def _image_range(anchor) -> BoxFrame | None:
+    """The cells a picture anchored to two cells covers; one anchored to one cell has no range to tell."""
+    start, end = anchor._from, getattr(anchor, "to", None)
+    if end is None:
+        return None
+    # A picture that ends on a cell's edge does not cover that cell
+    col = end.col - 1 if not end.colOff and end.col > start.col else end.col
+    row = end.row - 1 if not end.rowOff and end.row > start.row else end.row
+    if (row, col) == (start.row, start.col):
+        return None
+    first = f"{get_column_letter(start.col + 1)}{start.row + 1}"
+    return BoxFrame(cells=f"{first}:{get_column_letter(col + 1)}{row + 1}")
 
 
 def _run(part: str | TextBlock, base: _Style) -> Text | None:

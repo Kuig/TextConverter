@@ -30,12 +30,67 @@ class Link(Node):
     # A link can contain text or even images
     content: list[Node] = field(default_factory=list)
 
+@dataclass(frozen=True)
+class BoxFrame:
+    """Where a text box or a picture sits in its source; what is not known stays None.
+
+    ``x``, ``y``, ``w`` and ``h`` are percentages of the slide or page, ``cells``
+    the range of a sheet it covers, ``font`` the size of most of a text box's
+    text in points.
+    """
+    x: int | None = None
+    y: int | None = None
+    w: int | None = None
+    h: int | None = None
+    cells: str | None = None
+    font: float | None = None
+
+    @property
+    def placed(self) -> bool:
+        """Whether the frame gives a complete place on a slide or page."""
+        return None not in (self.x, self.y, self.w, self.h)
+
+
+# The word that opens a picture's frame in Markdown, ``<!--Picture (x 10%, w 30%)-->`` after the image.
+PICTURE_FRAME = "Picture"
+
+_PERCENT = re.compile(r"^([xywh]) (-?\d+)%$")
+_FONT = re.compile(r"^font (\d+(?:\.\d+)?)pt$")
+_CELLS = re.compile(r"^[A-Z]+\d+(?::[A-Z]+\d+)?$")
+
+
+def frame_fields(frame: BoxFrame) -> str:
+    """The frame as text, ``B2:D9, x 10%, y 20%, w 30%, h 40%, font 11pt``; what is None is left out."""
+    fields = [frame.cells] if frame.cells else []
+    fields.extend(f"{name} {getattr(frame, name)}%" for name in "xywh" if getattr(frame, name) is not None)
+    if frame.font:
+        fields.append(f"font {frame.font:g}pt")
+    return ", ".join(fields)
+
+
+def parse_frame_fields(text: str) -> BoxFrame | None:
+    """The frame text written by ``frame_fields`` gives; None when any part of it is not a field."""
+    values: dict[str, object] = {}
+    for field_text in text.strip().split(", "):
+        percent, font = _PERCENT.match(field_text), _FONT.match(field_text)
+        if percent:
+            values[percent.group(1)] = int(percent.group(2))
+        elif font:
+            values["font"] = float(font.group(1))
+        elif _CELLS.match(field_text):
+            values["cells"] = field_text
+        else:
+            return None
+    return BoxFrame(**values)
+
+
 @dataclass
 class Image(Node):
     """An image node.
 
     ``caption`` and ``label`` make the image a figure (LaTeX ``figure``,
-    HTML ``<figure>``).
+    HTML ``<figure>``). ``frame`` is where the picture sits in a slide, page
+    or sheet, when the source tells it.
     """
     src: str
     alt: str = ""
@@ -45,6 +100,7 @@ class Image(Node):
     extracted_text: str | None = None
     caption: list['InlineElement'] = field(default_factory=list)
     label: str | None = None
+    frame: BoxFrame | None = None
 
 @dataclass
 class CodeInline(Node):
@@ -220,6 +276,9 @@ NODE_TYPES: dict[str, type[Node]] = {
         ListItem, ListBlock, TableCell, TableRow, Table, Equation, Document, BibEntry, Bibliography,
     )
 }
+
+# The values a node field can hold that are not nodes, by class name: also a "type" key in JSON.
+VALUE_TYPES: dict[str, type] = {BoxFrame.__name__: BoxFrame}
 
 # Lines that frame an image description when it is rendered as text, so the
 # Markdown parser can rebuild Image.description from a rendered document.

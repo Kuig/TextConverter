@@ -929,3 +929,28 @@ class TestLatexMinor(BaseConverterTest):
 
     def test_a_theorem_keeps_its_title(self):
         self.assertEqual(_md("\\begin{theorem}[Pythagoras]\nStatement.\n\\end{theorem}").strip(), "**Pythagoras** Statement.")
+
+
+class TestImageSize(BaseConverterTest):
+    """A picture's frame gives its size as fractions of the paper; its place has no counterpart."""
+
+    def test_the_size_is_written_and_read_back(self):
+        from textconverter.ast import BoxFrame, Document, Image, Paragraph, walk
+        from textconverter.parsers.latex_parser import parse_latex
+        from textconverter.renderers.latex_renderer import render_latex
+        doc = Document(children=[Paragraph(children=[
+            Image(src="a.png", frame=BoxFrame(x=10, y=20, w=30, h=40)), Image(src="b.png", frame=BoxFrame(w=50)),
+            Image(src="c.png", frame=BoxFrame(cells="A1:B2"))])])
+        tex = render_latex(doc)
+        self.assertIn("\includegraphics[width=0.30\paperwidth,height=0.40\paperheight,keepaspectratio]{a.png}", tex)
+        self.assertIn("\includegraphics{c.png}", tex)
+        frames = [n.frame for n in walk(parse_latex(tex)) if isinstance(n, Image)]
+        self.assertEqual(frames, [BoxFrame(w=30, h=40), BoxFrame(w=50), None])
+
+    def test_other_sizes_give_no_frame(self):
+        from textconverter.ast import BoxFrame, Image, walk
+        from textconverter.parsers.latex_parser import parse_latex
+        source = ("\includegraphics[width=0.5\textwidth]{q.png} \includegraphics[scale=2,height=.3\paperheight]{r.png}"
+                  "\n\n\begin{figure}\includegraphics[width=0.4\paperwidth]{s.png}\caption{S}\end{figure}")
+        frames = [n.frame for n in walk(parse_latex(source)) if isinstance(n, Image)]
+        self.assertEqual(frames, [None, BoxFrame(h=30), BoxFrame(w=40)])

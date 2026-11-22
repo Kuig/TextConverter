@@ -81,6 +81,19 @@ From `split` on, a page holding more than text (a scan, a raster PDF page, an im
 
 Asking for a way the format does not offer gives a warning, and its default.
 
+### Where the Images Sit
+
+A picture read from PowerPoint, Word or Excel remembers where it was: its place and size as percentages of the slide or page, or the range of cells it covered. Written to PowerPoint, a picture with a place goes back to it (the others share a column beside the text); to Word, it takes its size and, with a place, floats there; to Excel, it fills its range of cells. Its proportions are kept when the frame came from a container of another shape (a slide's frame on a page). The frame travels through every format that can hold it:
+
+| Output | How the frame is written |
+|---|---|
+| Markdown | a comment after the image, invisible when rendered: `![Logo](logo.png)<!--Picture (x 10%, y 20%, w 30%, h 40%)-->` |
+| HTML | `data-frame="x 10%, y 20%, w 30%, h 40%"` on the `<img>` |
+| LaTeX | the size only: `\includegraphics[width=0.30\paperwidth,height=0.40\paperheight,keepaspectratio]` |
+| JSON (`.aston`) | the image's `frame` |
+
+A cropped picture is read uncropped, so its frame no longer has its proportions: it is written as large as fits in the frame.
+
 ---
 
 ## HTML Extraction & Site Cleanup

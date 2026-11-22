@@ -5,7 +5,7 @@ import re
 from dataclasses import replace
 
 from ..ast import (
-    DESCRIPTION_END, DESCRIPTION_START, METADATA_FIELDS, BlockQuote, CodeBlock, Document, Equation, Heading,
+    DESCRIPTION_END, DESCRIPTION_START, METADATA_FIELDS, PICTURE_FRAME, BlockQuote, CodeBlock, Document, Equation, Heading,
     HorizontalRule, Image, InlineElement, Label, LineBreak, ListBlock, ListItem, Node, Paragraph, Table, TableCell,
     TableRow, Text, abstract_from, walk,
 )
@@ -43,16 +43,19 @@ _PICTURE_TEXT = re.compile(
 )
 # A described image as the renderers write it (see images.lower_image_descriptions).
 _DESCRIBED_IMAGE = re.compile(
-    r'^(?P<image>!\[[^\n]*\]\([^\n]*\))[ \t]*\n\s*'
+    rf'^(?P<image>!\[[^\n]*\]\([^\n]*\)(?:<!--{PICTURE_FRAME} \([^()\n]*\)-->)?)[ \t]*\n\s*'
     rf'\*\*\\?{re.escape(DESCRIPTION_START)}(?: \((?P<cat>[^)\n]+)\))? -----\*\*[ \t]*\n'
     rf'(?P<desc>.*?)\n[ \t]*\*\*\\?{re.escape(DESCRIPTION_END)}\*\*[ \t]*$',
     re.MULTILINE | re.DOTALL,
 )
 _PLACEHOLDER = re.compile(r'^<!--(CODEBLOCK|MATHBLOCK|DESCRIBED):([A-Za-z0-9+/=]+)-->$')
-# An HTML comment, unless it is one of the placeholders above; a code span is matched only to keep it.
+# An HTML comment, unless it is one of the placeholders above or the frame of the image it follows;
+# a code span is matched only to keep it.
 _HTML_COMMENT = re.compile(
     r'(?P<code>(?P<ticks>`+).+?(?P=ticks))'
-    r'|(?P<lead>[ \t]*)<!--(?!CODEBLOCK:|MATHBLOCK:|DESCRIBED:|OCR:).*?-->(?P<trail>[ \t]*)', re.DOTALL)
+    r'|(?P<lead>[ \t]*)<!--(?!CODEBLOCK:|MATHBLOCK:|DESCRIBED:|OCR:)'
+    rf'(?!(?<=\)<!--){PICTURE_FRAME} \()'
+    r'.*?-->(?P<trail>[ \t]*)', re.DOTALL)
 # A block of HTML, which the HTML parser reads.
 _HTML_BLOCK = re.compile(
     r'</?(?:address|article|aside|blockquote|body|center|details|dd|dialog|div|dl|dt|fieldset|figcaption|figure|'

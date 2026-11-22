@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Sequence
 from ..ast import (
     Abstract, BlockQuote, Citation, CodeBlock, CodeInline, Document, Equation, Footnote, Heading,
     HorizontalRule, Image, Label, LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Reference,
-    Table, TableCell, TableRow, Text, abstract_from, child_lists, walk,
+    Table, TableCell, TableRow, Text, abstract_from, child_lists, parse_frame_fields, walk,
 )
 from ._html_extract import extract_content
 from ._html_tags import INLINE_TAGS, PARAGRAPH_CLOSERS, VOID_TAGS
@@ -312,7 +312,8 @@ class ASTHTMLParser(HTMLParser):
             inline = 'mwe-math-fallback-image-inline' in classes
             self._append_to_parent(Equation(code=strip_displaystyle(attr_dict.get('alt') or ''), inline=inline))
             return
-        image = Image(src=_image_source(attr_dict), alt=attr_dict.get('alt') or '', title=attr_dict.get('title'))
+        image = Image(src=_image_source(attr_dict), alt=attr_dict.get('alt') or '', title=attr_dict.get('title'),
+                      frame=parse_frame_fields(attr_dict['data-frame']) if attr_dict.get('data-frame') else None)
         if self._figures:
             self._figures[-1]['target'] = image
         self._append_to_parent(image)

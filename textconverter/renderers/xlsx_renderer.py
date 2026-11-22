@@ -6,7 +6,8 @@ that hold formulas (see ``parsers._excel_formulas``), written with the cell's
 text as their stored result. A cell's text becomes a number, a boolean, a date
 or a time when that is exactly how the parser would write the value back, else
 it stays text. A footnote in a cell is its comment, a link its hyperlink, an
-image in it is anchored to it. A quote headed by ``Text box (C4:F8, font 12pt)``
+image in it is anchored to it (sized to fit the range of cells its frame
+gives, when it gives one). A quote headed by ``Text box (C4:F8, font 12pt)``
 after a table is a text box over those cells, of one style: XlsxWriter holds no
 more. Change it only together with ``xlsx_parser.py``.
 """
@@ -17,6 +18,7 @@ import io
 from dataclasses import dataclass, field
 
 import xlsxwriter
+from xlsxwriter.image import Image as XlsxImage
 from xlsxwriter.utility import xl_cell_to_rowcol
 
 from ..ast import BlockQuote, Footnote, Image, LineBreak, Link, Node, TableCell, Text
@@ -125,6 +127,7 @@ class _Writer:
         self.workbook = workbook
         self.base_dir = base_dir
         self._formats: dict[tuple, object] = {}
+        self._images: list[tuple[int, int, Image]] = []  # the sheet's, placed once the column widths are known
         self.unreadable = 0
 
     def format(self, style: tuple = _PLAIN, *, header: bool = False, number: str | None = None, wrap: bool = False):
@@ -157,17 +160,25 @@ class _Writer:
         for c, width in enumerate(widths):
             columns[c] = min(max(width + 2, _MIN_WIDTH), _MAX_WIDTH)
             ws.set_column(c, c, columns[c])
+        for row, col, image in self._images:
+            self.image(ws, row, col, image, columns)
+        self._images = []
         for frame, quote in sheet.boxes:
             self.box(ws, frame, quote, columns)
 
     @staticmethod
-    def box(ws, frame: BoxFrame, quote: BlockQuote, columns: dict[int, int]) -> None:
-        """A text box over the cells of its frame, ending one pixel inside the last of them."""
-        first, _, last = frame.cells.partition(":")
+    def _range_size(cells: str, columns: dict[int, int]) -> tuple[int, int, int, int]:
+        """``(row, col, width, height)`` of a range of cells: its first cell and its size in pixels."""
+        first, _, last = cells.partition(":")
         row, col = xl_cell_to_rowcol(first)
         end_row, end_col = xl_cell_to_rowcol(last or first)
         width = sum(int(columns[c] * 7 + 5.5) if c in columns else _DEFAULT_COLUMN for c in range(col, end_col + 1))
-        options = {"width": width - 1, "height": _DEFAULT_ROW * (end_row - row + 1) - 1}
+        return row, col, width, _DEFAULT_ROW * (end_row - row + 1)
+
+    def box(self, ws, frame: BoxFrame, quote: BlockQuote, columns: dict[int, int]) -> None:
+        """A text box over the cells of its frame, ending one pixel inside the last of them."""
+        row, col, width, height = self._range_size(frame.cells, columns)
+        options = {"width": width - 1, "height": height - 1}
         if frame.font:
             options["font"] = {"size": frame.font}
         ws.insert_textbox(row, col, "\n".join(plain_text([child]) for child in quote.children[1:]), options)
@@ -208,8 +219,7 @@ class _Writer:
             note = "\n".join(n for n in cell.notes if n)
             if note:
                 ws.write_comment(row, col, note, {"x_scale": 1.5, "y_scale": max(1.0, (note.count("\n") + 1) / 4)})
-        for image in cell.images:
-            self.image(ws, row, col, image)
+        self._images.extend((row, col, image) for image in cell.images)
         return max((len(line) for line in text.split("\n")), default=0)
 
     def rich(self, ws, row: int, col: int, cell: _Cell, wrap: bool) -> None:
@@ -227,14 +237,22 @@ class _Writer:
         url = f"internal:{cell.link[1:]}" if cell.link.startswith("#") else cell.link
         return len(url) <= _MAX_LINK and ws.write_url(row, col, url, fmt, cell.text) == 0
 
-    def image(self, ws, row: int, col: int, image: Image) -> None:
+    def image(self, ws, row: int, col: int, image: Image, columns: dict[int, int]) -> None:
+        """An image anchored to its cell, at its own size or, when its frame is a range of cells, as large as
+        fits in the range with its proportions."""
         data = image_bytes(image.src, self.base_dir)
         if data is None:
             self.unreadable += 1
             return
+        options = {"image_data": io.BytesIO(data), "object_position": 1}
         try:
-            ws.insert_image(row, col, image.src.rsplit("/", 1)[-1][:60] or "image",
-                            {"image_data": io.BytesIO(data), "object_position": 1})
+            if image.frame is not None and image.frame.cells and ":" in image.frame.cells:
+                _, _, width, height = self._range_size(image.frame.cells, columns)
+                picture = XlsxImage(io.BytesIO(data))
+                shown = (picture.width * 96 / picture.x_dpi, picture.height * 96 / picture.y_dpi)
+                if shown[0] and shown[1]:
+                    options["x_scale"] = options["y_scale"] = min((width - 1) / shown[0], (height - 1) / shown[1])
+            ws.insert_image(row, col, image.src.rsplit("/", 1)[-1][:60] or "image", options)
         except Exception:
             self.unreadable += 1
 
