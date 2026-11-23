@@ -8,6 +8,7 @@ from ..ast import (
     HorizontalRule, Image, Label, LineBreak, Link, ListBlock, ListItem, Node, Paragraph, Reference,
     Table, TableCell, TableRow, Text, abstract_from, child_lists, parse_frame_fields, walk,
 )
+from ..logger import log_warning
 from ._html_extract import extract_content
 from ._html_tags import INLINE_TAGS, PARAGRAPH_CLOSERS, VOID_TAGS
 from ._latex_macros import REFERENCE_MACRO, lift_macros, parse_reference_macro
@@ -66,11 +67,13 @@ class _MathCapture:
 
 
 def _language(classes: list[str]) -> str | None:
-    """The code language named by a ``language-x`` / ``lang-x`` class, if any."""
-    for c in classes:
+    """The code language named by a ``language-x`` / ``lang-x`` class, or SyntaxHighlighter's ``brush: x``."""
+    for k, c in enumerate(classes):
         for prefix in ('language-', 'lang-'):
             if c.startswith(prefix) and len(c) > len(prefix):
                 return c[len(prefix):]
+        if c == 'brush:' and k + 1 < len(classes):
+            return classes[k + 1].rstrip(';')
     return None
 
 
@@ -196,6 +199,9 @@ class ASTHTMLParser(HTMLParser):
             self._image(attr_dict, classes)
             return
         if tag == 'br':
+            if self.in_pre and isinstance(self.stack[-1], CodeBlock):
+                self.stack[-1].code += '\n'
+                return
             self._append_to_parent(LineBreak(author_separator='tc-and' in classes))
             return
         if tag == 'hr':
@@ -236,7 +242,13 @@ class ASTHTMLParser(HTMLParser):
             item.checked = 'checked' in attr_dict
 
     def _node_for(self, tag: str, attr_dict: dict[str, str | None], classes: list[str]) -> Node | None:
-        """The AST node a start tag opens, or None for tags that only set state or formatting."""
+        """The AST node a start tag opens, or None for tags that only set state or formatting.
+
+        Inside ``<pre>`` only ``<code>`` is read (for its language): the text of
+        any other element (a link, a highlighted span) is part of the code.
+        """
+        if self.in_pre and tag != 'code':
+            return None
         node = self._block_node_for(tag, attr_dict, classes)
         meta = next((_META_CLASSES[c] for c in classes if c in _META_CLASSES), None)
         if meta and isinstance(node, (Heading, Paragraph)):
@@ -375,8 +387,6 @@ class ASTHTMLParser(HTMLParser):
             return
         if tag == 'pre':
             self.in_pre = False
-        if tag == 'code' and self.in_pre:
-            return
         if tag == 'span':
             opened = self._open_spans.pop() if self._open_spans else None
             if opened is not None and any(n is opened for n in self.stack):
@@ -391,6 +401,8 @@ class ASTHTMLParser(HTMLParser):
                     figure['target'].label = figure['label']
             return
 
+        if self.in_pre and tag != 'pre':
+            return
         types = _NODE_TAGS.get(tag)
         if types is None:
             return
@@ -742,6 +754,7 @@ def parse_html(
         profiles: Active site profiles; used with ``extract_html``, then
             their ``clean_ast`` hooks edit the tree.
     """
+    source = text
     if extract_html:
         text = extract_content(text, profiles)
     parser = ASTHTMLParser()
@@ -749,4 +762,12 @@ def parse_html(
     parser.close()
     for profile in profiles:
         profile.clean_ast(parser.doc)
+    if extract_html and '<script' in source.lower() and not _has_text(parser.doc):
+        log_warning("The page has no text without JavaScript (a single-page app?): the result is empty.")
     return parser.doc
+
+
+def _has_text(doc: Document) -> bool:
+    """Whether the document holds any visible text or code."""
+    return any((isinstance(n, Text) and n.content.strip()) or (isinstance(n, CodeBlock) and n.code.strip())
+               for n in walk(doc))

@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 _NOISE = frozenset(['script', 'style', 'nav', 'footer', 'header',
                     'aside', 'noscript', 'iframe', 'form', 'head'])
+_HEADINGS = frozenset(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
 _SAFE_ATTRS = frozenset([
     'href', 'src', 'alt', 'title', 'class', 'id', 'role', 'encoding', 'display', 'colspan', 'rowspan',
     'data-src', 'data-lazy-src', 'srcset', 'data-srcset', 'data-label', 'start', 'type', 'checked',
@@ -34,9 +35,14 @@ class _ContentExtractor(HTMLParser):
     """Pre-pass stdlib-only: removes noise, isolates the main content block.
 
     Strategy:
-      1. Skip noise tags (and all their children)
+      1. Skip noise tags and ``hidden`` elements (and all their children); a
+         <header> inside the main block is the article's own (title, byline)
+         and stays
       2. If <main>, <article>, or role=main is found -> return only that block
       3. Otherwise return the entire cleaned HTML
+
+    A link to a fragment inside a heading is the heading's permalink: only its
+    text is kept.
 
     Elements are tracked on a stack of open tags, so an omitted end tag
     (``</li>``, ``</p>``, ``</td>``, valid HTML5) or a stray one cannot shift
@@ -55,9 +61,13 @@ class _ContentExtractor(HTMLParser):
         self._buf: list[str] = []       # Complete cleaned HTML buffer
         self._main_buf: list[str] = []  # Main content block buffer
         self._main_at: int | None = None
+        # Stack indexes of open elements whose tags are not written (permalinks).
+        self._unwrapped: set[int] = set()
 
     def _is_dropped(self, tag: str, ad: dict[str, str | None]) -> bool:
-        if tag in _NOISE:
+        if tag in _NOISE and not (tag == 'header' and self._main_at is not None):
+            return True
+        if 'hidden' in ad:  # Not rendered by browsers
             return True
         return any(profile.skip_subtree(tag, ad) for profile in self._profiles)
 
@@ -74,6 +84,9 @@ class _ContentExtractor(HTMLParser):
             if self._skip_at is not None:
                 if at == self._skip_at:
                     self._skip_at = None  # Closed the root of the skipped subtree
+                continue
+            if at in self._unwrapped:
+                self._unwrapped.discard(at)
                 continue
             self._emit(f'</{tag}>')
             if at == self._main_at:
@@ -117,6 +130,9 @@ class _ContentExtractor(HTMLParser):
             self._open.append(tag)
             if self._main_at is None and (tag in ('main', 'article') or ad.get('role') == 'main'):
                 self._main_at = len(self._open) - 1
+            if tag == 'a' and (ad.get('href') or '').startswith('#') and _HEADINGS.intersection(self._open):
+                self._unwrapped.add(len(self._open) - 1)
+                return
         attr_str = ''.join(
             f' {k}="{html.escape(v, quote=True)}"' for k, v in attrs
             if k in _SAFE_ATTRS and v

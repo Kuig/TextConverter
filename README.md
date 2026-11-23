@@ -98,9 +98,19 @@ A picture cropped in Word or PowerPoint is extracted cropped, as it shows. The p
 
 ## HTML Extraction & Site Cleanup
 
-`--extract-html` (API: `extract_html=True`) runs a generic pre-pass that drops noise tags (`script`, `nav`, `footer`, …), whitelists attributes, and isolates the `<main>` / `<article>` block.
+`--extract-html` (API: `extract_html=True`) runs a generic pre-pass that drops noise tags (`script`, `nav`, `footer`, …) and `hidden` elements, whitelists attributes, and isolates the `<main>` / `<article>` block (a `<header>` inside it, the article's title and byline, stays). A link inside a heading to the page itself (a permalink) keeps only its text. A page whose text only JavaScript fills in (a single-page app) converts to nothing, with a warning.
 
-On top of that, **site-specific cleanup profiles** activate automatically for pages they recognize. The only profile today is **Wikipedia** (any language edition), matched by a `*.wikipedia.org` URL or a MediaWiki fingerprint in the HTML. It removes `[edit]` links, navboxes, maintenance banners, hatnotes, the table of contents, category footers and inline `[n]` citation markers, and prunes a configurable set of end-matter sections (`See also`, `External links`, `Further reading` by default, including their known translations). The infobox, the reference list, and all images are kept: image handling stays governed by `--image-handling`.
+On top of that, **site-specific cleanup profiles** activate automatically for pages they recognize; several can apply to one page. All of them leave images to `--image-handling`, and those for a known site make the page's relative links absolute, so they can be followed from the result.
+
+| Profile | Pages | Removes | Keeps |
+|---|---|---|---|
+| Wikipedia | any MediaWiki page (a `*.wikipedia.org` URL or the MediaWiki fingerprint in the HTML) | `[edit]` links, navboxes, maintenance banners, hatnotes, the table of contents, the language menu, category footers, inline `[n]` citation markers, a configurable set of end-matter sections (`See also`, `External links`, `Further reading` by default, with their known translations) | the infobox and the reference list |
+| arXiv | `arxiv.org/abs/<id>` | breadcrumb, browsing context, citation tools, bookmarks, arXivLabs panels | title, authors, dates, abstract, comments/subjects/DOI, submission history, links to the PDF, HTML and TeX source |
+| GitHub | `github.com/<owner>/<repo>` | site navigation, buttons, tooltips, the duplicate sidebar, sections filled in by JavaScript | name, description, website, topics, license, counts (commits, stars, watchers, forks), the file tree as a list of links, the README |
+| MDN | `developer.mozilla.org` | browser-support banner, code language labels (the code keeps its language), feedback and edit links, the empty browser compatibility section | the reference |
+| RFC Editor | `rfc-editor.org/rfc/<rfc>` | buttons, subscription counts, `¶` and "Skip to TOC" links; for a plain-text RFC the page headers and footers, its pages joined into one block | title, topics, date, authors, status, the RFCs that update or obsolete it, the document |
+| Wiktionary | `*.wiktionary.org`, with Wikipedia | etymology tree widget, "word of the day" banner | the entry |
+| Wikidata | `wikidata.org`, with Wikipedia | each statement's references, the links to the item's pages on other wikis | labels, descriptions, statements, identifiers |
 
 - Turn site profiles off for one run with `--no-site-cleanup` (API: `site_cleanup=False`); the run then behaves like plain `--extract-html`.
 - Change the default, or tune the Wikipedia profile, in the `"html"` section of `config.json` (see [docs/configuration.md](docs/configuration.md#html)). Non-English wikis can add their own section titles to `drop_sections`.

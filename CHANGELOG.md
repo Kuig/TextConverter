@@ -21,10 +21,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The pieces cut from a composite image keep where they sat, when the image's place is known (a picture with a frame,
   a page of a scanned PDF, an image file): a scanned page converted to PowerPoint or Word gets its figures back in
   place. A picture that would mostly cover one already placed on a slide goes to the column instead.
+- Site cleanup profiles for arXiv abstract pages, GitHub repository pages, MDN Web Docs, RFC Editor pages, Wiktionary
+  and Wikidata, next to Wikipedia's. They keep what a reader (or a model) needs from the page, such as the links to an
+  arXiv paper's PDF and a repository's file tree, and make the page's links absolute.
+- `--extract-html` warns when a page has no text without JavaScript (a single-page app), instead of returning an empty
+  document silently.
 
 ### Changed
 
 - A picture cropped in Word or PowerPoint is extracted cropped, as the document shows it, in every output format.
+- `--extract-html` keeps a `<header>` inside the main block (an article's title and byline) and drops `hidden`
+  elements; a heading's permalink keeps only its text. A Wikipedia page keeps its title again (the current skin puts it
+  in such a header) and its links become absolute.
+- `SiteProfile.from_config` takes the page's URL as a second argument.
+
+### Fixed
+
+- The text of a link or of any other element inside `<pre>` was lost (an RFC's references, highlighted code).
+- A code block marked `class="brush: js"` (SyntaxHighlighter, MDN) keeps its language.
 
 ## [0.5.2] - 2026-11-13
 

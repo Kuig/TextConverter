@@ -98,6 +98,50 @@ class TestHtmlRobustness(BaseConverterTest):
         self.assertIn("two", md)
         self.assertNotIn("out", md)
 
+    def test_a_header_inside_the_main_block_is_the_articles_own(self):
+        """The site's <header> goes, the article's (title, byline) stays."""
+        md = _md("<body><header><p>Site menu</p></header><main><header><h1>Title</h1><p>By A. Writer</p>"
+                 "</header><p>Body.</p></main></body>", extract_html=True)
+        self.assertNotIn("Site menu", md)
+        self.assertIn("# Title", md)
+        self.assertIn("By A. Writer", md)
+
+    def test_hidden_elements_are_dropped(self):
+        md = _md("<body><main><div hidden>Screen reader label</div><p>Shown.</p></main></body>", extract_html=True)
+        self.assertNotIn("Screen reader label", md)
+        self.assertIn("Shown.", md)
+
+    def test_heading_permalinks_keep_only_their_text(self):
+        """An in-page link inside a heading is a permalink; other links in headings stay."""
+        md = _md('<body><main><h2 id="syntax"><a class="heading-anchor" href="#syntax">Syntax</a></h2>'
+                 '<h2><a href="https://example.org/">Elsewhere</a></h2></main></body>', extract_html=True)
+        self.assertIn("## Syntax\n", md)
+        self.assertIn("## [Elsewhere](https://example.org/)", md)
+        self.assertIn("[Syntax](#syntax)", _md('<h2 id="syntax"><a href="#syntax">Syntax</a></h2>'))
+
+    def test_page_without_text_warns(self):
+        """A page that only JavaScript fills in converts to nothing, with a warning."""
+        from unittest.mock import patch
+        page = '<html><body><app-root></app-root><script src="main.js"></script></body></html>'
+        with patch("textconverter.parsers.html_parser.log_warning") as warn:
+            self.assertEqual(_md(page, extract_html=True).strip(), "")
+        warn.assert_called_once()
+        self.assertIn("JavaScript", warn.call_args.args[0])
+        with patch("textconverter.parsers.html_parser.log_warning") as warn:
+            _md("<html><body><main><p>Text.</p></main><script></script></body></html>", extract_html=True)
+        warn.assert_not_called()
+
+    def test_links_inside_pre_keep_their_text(self):
+        """A link or a highlighted span in <pre> is part of the code (it used to vanish)."""
+        md = _md('<pre>described in <a href="/rfc/rfc5849">RFC 5849</a>.\n<span class="k">def</span> f()'
+                 '<br>next</pre><p>after</p>')
+        self.assertIn("described in RFC 5849.\ndef f()\nnext", md)
+        self.assertIn("after", md)
+
+    def test_syntaxhighlighter_brush_names_the_language(self):
+        md = _md('<pre class="brush: js notranslate"><code>let a = 1;</code></pre>')
+        self.assertIn("```js", md)
+
     def test_void_tags_do_not_leak_formatting(self):
         """<br> inside <b> used to make the text after </b> bold."""
         self.assertEqual(_md("<p><b>bold<br>still</b> after</p>").strip(), "**bold**  \n**still** after")

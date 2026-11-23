@@ -1,9 +1,8 @@
 from __future__ import annotations
-from urllib.parse import urlparse
 
-from ..ast import Document, Heading, Node, Text, walk
+from ..ast import Document, Heading, Node
 from ..config import HtmlConfig, WikipediaCleanupConfig
-from .base import SiteProfile
+from .base import SelectorProfile, node_text
 
 # MediaWiki generates these class/id hooks from software, not from article text,
 # so they are identical across every language edition.
@@ -13,10 +12,12 @@ _STRIP_CLASSES = frozenset({
     "hatnote", "dablink", "rellink", "noprint", "printfooter", "catlinks",
     "mw-jump-link", "toc", "toccolours", "shortdescription", "mw-empty-elt",
     "sistersitebox", "side-box", "navigation-not-searchable", "portal",
+    # Vector 2022 title bar: the table of contents and language dropdowns
+    "vector-page-titlebar-toc", "mw-portlet-lang",
 })
 _STRIP_IDS = frozenset({
     "toc", "catlinks", "mw-navigation", "mw-panel", "siteSub", "contentSub",
-    "jump-to-nav", "p-lang",
+    "jump-to-nav", "p-lang", "p-lang-btn",
 })
 # Full citation apparatus (kept unless keep_reference_list is turned off).
 _REFERENCE_LIST_CLASSES = frozenset({
@@ -55,45 +56,43 @@ def _normalize(text: str) -> str:
     return " ".join(text.split()).strip().lower()
 
 
-def _node_text(nodes: list[Node]) -> str:
-    """The text of a list of nodes, descendants included."""
-    return "".join(n.content for node in nodes for n in walk(node) if isinstance(n, Text))
-
-
-class WikipediaProfile(SiteProfile):
+class WikipediaProfile(SelectorProfile):
     """Cleanup for Wikipedia / MediaWiki article pages, in any language.
 
     Settings: :class:`textconverter.config.WikipediaCleanupConfig` (``html.wikipedia``).
     Removes edit links, navboxes, maintenance banners, the table of contents,
     category footers and (optionally) inline ``[n]`` citation markers, and
     prunes a configurable set of end-matter sections. Images are left untouched
-    so the caller's image handling stays in control.
+    so the caller's image handling stays in control. Any MediaWiki page
+    (Wiktionary, Wikidata, ...) is recognized by its fingerprint.
     """
 
     name = "wikipedia"
+    hosts = ("wikipedia.org",)
+    strip_classes = _STRIP_CLASSES
+    strip_ids = _STRIP_IDS
 
-    def __init__(self, cfg: WikipediaCleanupConfig | None = None):
+    def __init__(self, cfg: WikipediaCleanupConfig | None = None, url: str | None = None):
+        super().__init__(url)
         self.cfg = cfg or WikipediaCleanupConfig()
 
     @classmethod
-    def from_config(cls, config: HtmlConfig) -> WikipediaProfile:
-        return cls(config.wikipedia)
+    def from_config(cls, config: HtmlConfig, url: str | None = None) -> WikipediaProfile:
+        return cls(config.wikipedia, url)
 
     @classmethod
     def matches(cls, url: str | None, html: str) -> bool:
-        if url:
-            host = (urlparse(url).hostname or "").lower()
-            if host == "wikipedia.org" or host.endswith(".wikipedia.org"):
-                return True
+        if super().matches(url, html):
+            return True
         head = html[:50000]
         return 'class="mediawiki' in head or 'id="mw-content-text"' in head
 
     def skip_subtree(self, tag: str, attrs: dict[str, str | None]) -> bool:
         cfg = self.cfg
+        if super().skip_subtree(tag, attrs):
+            return True
         classes = frozenset((attrs.get("class") or "").split())
         node_id = attrs.get("id") or ""
-        if classes & _STRIP_CLASSES or node_id in _STRIP_IDS:
-            return True
         for selector in cfg.extra_strip_selectors:
             if selector in classes or selector == node_id:
                 return True
@@ -107,6 +106,7 @@ class WikipediaProfile(SiteProfile):
         return False
 
     def clean_ast(self, doc: Document) -> None:
+        super().clean_ast(doc)
         drop_titles = self._resolve_drop_titles(self.cfg.drop_sections)
         if not drop_titles:
             return
@@ -116,7 +116,7 @@ class WikipediaProfile(SiteProfile):
             if isinstance(child, Heading):
                 if dropping_level is not None and child.level <= dropping_level:
                     dropping_level = None
-                if dropping_level is None and _normalize(_node_text(child.children)) in drop_titles:
+                if dropping_level is None and _normalize(node_text(child.children)) in drop_titles:
                     dropping_level = child.level
                     continue
             if dropping_level is not None:
