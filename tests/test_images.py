@@ -22,11 +22,14 @@ PNG_2 = b"\x89PNG\r\n\x1a\n" + b"\x01" * 16
 
 
 class _Response:
-    def __init__(self, data: bytes, content_type: str | None):
+    def __init__(self, data: bytes, content_type: str | None, status: int = 200, headers: dict | None = None):
         self.data = data
+        self.status = status
         self.headers = Message()
         if content_type:
             self.headers["Content-Type"] = content_type
+        for name, value in (headers or {}).items():
+            self.headers[name] = value
 
     def read(self) -> bytes:
         return self.data
@@ -98,6 +101,20 @@ class TestSourceDownload(_WebTest):
         self.addCleanup(forbidden.close)
         self.serve({"https://x.test/p": forbidden})
         with self.assertRaisesRegex(DownloadError, "403"):
+            textconverter.convert("https://x.test/p", "markdown")
+
+    def test_bot_challenge_raises_download_error(self):
+        """An AWS WAF or Cloudflare challenge is an error, not an empty document."""
+        challenges = {"https://x.test/aws": (b"", "text/html", 202, {"x-amzn-waf-action": "challenge"}),
+                      "https://x.test/cf": (b"<html>Just a moment</html>", "text/html", 200, {"cf-mitigated": "challenge"})}
+        self.serve(challenges)
+        for url in challenges:
+            with self.subTest(url=url), self.assertRaisesRegex(DownloadError, "bot challenge"):
+                textconverter.convert(url, "markdown")
+
+    def test_empty_non_200_response_raises_download_error(self):
+        self.serve({"https://x.test/p": (b"", "text/html", 204)})
+        with self.assertRaisesRegex(DownloadError, "HTTP 204 with an empty body"):
             textconverter.convert("https://x.test/p", "markdown")
 
 

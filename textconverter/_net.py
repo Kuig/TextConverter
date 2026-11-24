@@ -102,15 +102,49 @@ def fetch(url: str, *, timeout: float) -> Download:
         with open_url(req, timeout=timeout) as response:
             data = response.read()
             headers = response.headers
+            status = response.status
     except urllib.error.HTTPError as exc:
         if exc.code == 403:
-            raise DownloadError(
-                f"Failed to download {url}: HTTP Error 403 Forbidden/Blocked. "
-                "This server blocks automated scrapers. "
-                "Please download the file manually and convert the local file."
-            ) from exc
+            raise _blocked(url, "HTTP Error 403 Forbidden/Blocked") from exc
         raise DownloadError(f"Failed to download {url}: {exc}") from exc
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise DownloadError(f"Failed to download {url}: {exc}") from exc
+    if _is_challenge(headers):
+        raise _blocked(url, f"HTTP {status} with a bot challenge instead of the content")
+    if not data and status != 200:
+        raise DownloadError(f"Failed to download {url}: HTTP {status} with an empty body")
     content_type = headers.get_content_type() if headers.get("Content-Type") else ""
     return Download(data=data, content_type=content_type, charset=headers.get_content_charset())
+
+
+def _is_challenge(headers) -> bool:
+    """Tell whether a successful response is an anti-bot challenge page.
+
+    AWS WAF answers ``202`` with an empty body and ``x-amzn-waf-action``;
+    Cloudflare marks its challenge with ``cf-mitigated: challenge``. Both
+    need a browser that runs the challenge's JavaScript.
+
+    Args:
+        headers: The response headers.
+
+    Returns:
+        True when the body is a challenge, not the requested resource.
+    """
+    return bool(headers.get("x-amzn-waf-action")) or headers.get("cf-mitigated", "").lower() == "challenge"
+
+
+def _blocked(url: str, reason: str) -> DownloadError:
+    """Build the error for a server that refuses automated clients.
+
+    Args:
+        url: The requested URL.
+        reason: What the server answered.
+
+    Returns:
+        A ``DownloadError`` that suggests converting a local copy.
+    """
+    return DownloadError(
+        f"Failed to download {url}: {reason}. "
+        "This server blocks automated scrapers. "
+        "Please download the file manually and convert the local file."
+    )
