@@ -9,8 +9,8 @@ from ..ast import (
 from ..parsers._latex_macros import REFERENCE_MACROS
 from ..parsers._markdown_inline import emphasis_flanking, trim_bare_url
 from ._common import (
-    EMPHASIS_STYLES, bibliography_paragraphs, caption_paragraphs, latex_reference_macro, split_spaces, style_extent,
-    table_grid, text_runs, text_style,
+    EMPHASIS_STYLES, bibliography_paragraphs, caption_paragraphs, display_tex, is_display_equation,
+    latex_reference_macro, paragraph_parts, split_spaces, style_extent, table_grid, text_runs, text_style,
 )
 
 # The footnotes met while rendering one document, numbered in order.
@@ -153,6 +153,9 @@ def _inline(nodes: list[Node]) -> str:
                 bare = (isinstance(before, str) and before[-1] in ' \t\n('
                         and isinstance(after, Text) and after.content[:1].isspace())
                 pieces.append(_link(node, bare=bare))
+            elif is_display_equation(node):
+                # Where only inline content fits (a heading, a cell), the formula is written inline: $$ would end the block
+                pieces.append("$" + display_tex(node).replace('\n', ' ') + "$")
             else:
                 pieces.append(_render_node(node))
             continue
@@ -220,9 +223,16 @@ def _heading(node: Heading) -> str:
 
 
 def _paragraph(node: Paragraph) -> str:
-    # A line of the paragraph that starts like a block (heading, quote, item, rule) is escaped
-    content = _LINE_START.sub(_escape_line_start, _inline(node.children).strip())
-    blocks = [re.sub(r'[ \t]*\n', '  \n', content), *(_paragraph(p) for p in caption_paragraphs(node))]
+    """A paragraph; a display formula in it is a block of its own, since ``$$`` opens and closes a line."""
+    blocks: list[str] = []
+    for part in paragraph_parts(node.children, is_display_equation):
+        if not isinstance(part, list):
+            blocks.append(_equation(part))
+            continue
+        # A line of the paragraph that starts like a block (heading, quote, item, rule) is escaped
+        content = _LINE_START.sub(_escape_line_start, _inline(part).strip())
+        blocks.append(re.sub(r'[ \t]*\n', '  \n', content))
+    blocks.extend(_paragraph(p) for p in caption_paragraphs(node))
     return '\n\n'.join(filter(None, blocks))
 
 
@@ -247,7 +257,10 @@ def _list(node: ListBlock) -> str:
             if not rendered_child.strip():
                 continue
             if j == 0 and isinstance(child, Paragraph):
-                # The first paragraph goes on the bullet/number line
+                # The first paragraph goes on the bullet/number line; the blocks it splits into stay in the item
+                if '\n\n' in rendered_child:
+                    first, *rest = rendered_child.split('\n')
+                    rendered_child = '\n'.join([first, *(f"    {line}" if line.strip() else "" for line in rest)])
                 rendered_parts.append(rendered_child)
             else:
                 # Other blocks go on their own lines, indented by 4 spaces; a paragraph after a blank line
@@ -366,9 +379,7 @@ def _abstract(node: Abstract) -> str:
 def _equation(node: Equation) -> str:
     if node.inline:
         return f"${node.code}$"
-    if node.env:  # the environment travels inside the formula, where MathJax/KaTeX read it too
-        return f"$$\n\\begin{{{node.env}}}\n{node.code}\n\\end{{{node.env}}}\n$$"
-    return f"$$\n{node.code}\n$$"
+    return f"$$\n{display_tex(node)}\n$$"
 
 
 _RENDERERS = {

@@ -36,6 +36,7 @@ _FRONT_MATTER = re.compile(r'\A---[ \t]*\n((?:[ \t]*(?:[A-Za-z_][\w-]*[ \t]*:.*)
 # A GFM footnote definition and its indented continuation lines.
 _FOOTNOTE_DEF = re.compile(r'^ {0,3}\[\^([^\]\s]+)\]:[ \t]*(.*(?:\n(?:[ \t]{2,}\S.*|[ \t]*$))*)', re.MULTILINE)
 _MATH_BLOCK = re.compile(r'(?<!\\)\$\$(.*?)(?<!\\)\$\$', re.MULTILINE | re.DOTALL)
+_MATH_DELIMITER = re.compile(r'(?<!\\)\$\$')
 # Text extracted by pymupdf4llm from a vector image, written right after the image.
 _PICTURE_TEXT = re.compile(
     r'(!\[.*?\]\(.*?\))\s*\*\*----- Start of picture text -----\*\*(.*?)\*\*----- End of picture text -----\*\*',
@@ -107,11 +108,16 @@ def smart_preprocess_markdown(text: str) -> str:
     text = text.replace('\r\n', '\n').replace('\r', '\n')
     new_lines: list[str] = []
     fence: str | None = None  # the opening fence while inside a code block
+    in_math = False  # inside a $$ formula, whose lines ("+ c", "- c") are not blocks
     after_heading = False
 
     for line in text.split('\n'):
         stripped = line.strip()
         fence_match = _FENCE_LINE.match(stripped)
+        if in_math:
+            new_lines.append(line)
+            in_math = len(_MATH_DELIMITER.findall(line)) % 2 == 0
+            continue
         if fence is not None:
             new_lines.append(line)
             closing = fence_match and fence_match.group(1)[0] == fence[0]
@@ -146,6 +152,7 @@ def smart_preprocess_markdown(text: str) -> str:
             new_lines.append("")
         new_lines.append(line)
         after_heading = bool(is_heading or is_setext)
+        in_math = fence is None and len(_MATH_DELIMITER.findall(line)) % 2 == 1
 
     return '\n'.join(new_lines)
 
@@ -336,8 +343,16 @@ def parse_markdown(
 
     text = _UNCLOSED_FENCE.sub(_encode_unclosed, text, count=1)
 
-    text = _MATH_BLOCK.sub(lambda m: _encode_placeholder(
-        'MATHBLOCK', {"code": m.group(1).strip(), "attach": _continues_block(m)}), text)
+    def _encode_math(m: re.Match) -> str:
+        lines = m.group(1).strip().split('\n')
+        # Like a fence's, the indentation of the opening $$ (in a list item) is not part of the formula
+        before = m.string[:m.start()]
+        indent = before[before.rfind('\n') + 1:]
+        if indent and not indent.strip():
+            lines = [line[len(indent):] if line.startswith(indent) else line.lstrip() for line in lines]
+        return _encode_placeholder('MATHBLOCK', {"code": '\n'.join(lines), "attach": _continues_block(m)})
+
+    text = _MATH_BLOCK.sub(_encode_math, text)
     text = _HTML_COMMENT.sub(_drop_comment, text)
 
     def _encode_picture_text(m: re.Match) -> str:

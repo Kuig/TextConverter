@@ -91,6 +91,33 @@ def split_spaces(content: str) -> tuple[str, str, str]:
     return re.match(r'(\s*)(.*?)(\s*)$', content, re.DOTALL).groups()
 
 
+def is_display_equation(node: Node) -> bool:
+    """Whether a node is a display formula, which a text format writes as a block of its own."""
+    return isinstance(node, Equation) and not node.inline
+
+
+def display_tex(node: Equation) -> str:
+    """A display formula's TeX between ``$$``, its environment inside it (where MathJax and KaTeX read it too)."""
+    return f"\\begin{{{node.env}}}\n{node.code}\n\\end{{{node.env}}}" if node.env else node.code
+
+
+def paragraph_parts(children: list[Node], is_block: Callable[[Node], bool]) -> list[list[Node] | Node]:
+    """A paragraph's children in order, as runs of inline nodes (lists) and the nodes ``is_block`` sets apart."""
+    parts: list[list[Node] | Node] = []
+    run: list[Node] = []
+    for child in children:
+        if is_block(child):
+            if run:
+                parts.append(run)
+                run = []
+            parts.append(child)
+        else:
+            run.append(child)
+    if run:
+        parts.append(run)
+    return parts
+
+
 def figure_image(node: Node) -> Image | None:
     """The captioned or labelled image a paragraph child shows as a figure (alone or as a link's content)."""
     if isinstance(node, Link) and len(node.content) == 1:

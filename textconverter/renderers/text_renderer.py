@@ -15,7 +15,10 @@ from ..ast import (
 from ..parsers._text_format import (
     CODE_INDENT, METADATA_LABELS, RULE, TITLE_RULE, UNDERLINES, display_width,
 )
-from ._common import bibliography_paragraphs, caption_paragraphs, latex_reference_macro, table_grid
+from ._common import (
+    bibliography_paragraphs, caption_paragraphs, display_tex, is_display_equation, latex_reference_macro,
+    paragraph_parts, table_grid,
+)
 
 # The footnotes met while rendering one document, numbered in order.
 _FOOTNOTES: ContextVar[list[Footnote] | None] = ContextVar("text_footnotes", default=None)
@@ -83,7 +86,9 @@ def _blocks(children: list[Node]) -> list[tuple[Node, str]]:
 
 
 def _inline(nodes: list[Node]) -> str:
-    return ''.join(_render_node(node) for node in nodes)
+    # Where only inline content fits (a heading, a cell), a display formula keeps to one line
+    return ''.join("$$" + display_tex(node).replace('\n', ' ') + "$$" if is_display_equation(node)
+                   else _render_node(node) for node in nodes)
 
 
 def _lines_of(text: str) -> str:
@@ -121,7 +126,10 @@ def _heading(node: Heading) -> str:
 
 
 def _paragraph(node: Paragraph) -> str:
-    blocks = [_lines_of(_inline(node.children)), *(_paragraph(p) for p in caption_paragraphs(node))]
+    """A paragraph; a display formula in it is a block of its own, since ``$$`` opens and closes a line."""
+    blocks = [_lines_of(_inline(part)) if isinstance(part, list) else _equation(part)
+              for part in paragraph_parts(node.children, is_display_equation)]
+    blocks.extend(_paragraph(p) for p in caption_paragraphs(node))
     return '\n\n'.join(filter(None, blocks))
 
 
@@ -197,9 +205,7 @@ def _quote(text: str) -> str:
 def _equation(node: Equation) -> str:
     if node.inline:
         return f"${node.code}$"
-    if node.env:
-        return f"$$\n\\begin{{{node.env}}}\n{node.code}\n\\end{{{node.env}}}\n$$"
-    return f"$$\n{node.code}\n$$"
+    return f"$$\n{display_tex(node)}\n$$"
 
 
 _RENDERERS = {

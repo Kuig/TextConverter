@@ -1,15 +1,18 @@
-"""Behaviour shared by the Markdown, HTML and LaTeX renderers, checked on all of them.
+"""Behaviour shared by the Markdown, HTML, LaTeX and text renderers, checked on all of them.
 
 Usage: python -m unittest discover -s tests -p "test_renderers.py"
 """
 from __future__ import annotations
 
 from textconverter.ast import (
-    Citation, Document, Equation, LineBreak, Link, Paragraph, Table, TableCell, TableRow, Text,
+    Citation, Document, Equation, Heading, LineBreak, Link, ListBlock, ListItem, Paragraph, Table, TableCell,
+    TableRow, Text,
 )
+from textconverter.parsers.markdown_parser import parse_markdown
 from textconverter.renderers.html_renderer import render_html
 from textconverter.renderers.latex_renderer import render_latex
 from textconverter.renderers.markdown_renderer import render_markdown
+from textconverter.renderers.text_renderer import render_text
 from _support import BaseConverterTest, setUpModule, tearDownModule
 
 
@@ -94,3 +97,54 @@ class TestInlineFeatures(BaseConverterTest):
     def test_html_escapes_reference_macros(self):
         doc = _doc(Paragraph(children=[Citation(keys=["a<b"])]))
         self.assertIn(r"\cite{a&lt;b}", render_html(doc))
+
+
+class TestDisplayFormulas(BaseConverterTest):
+    """A display formula inside a paragraph (as HTML pages and LaTeX write it)."""
+
+    _FORMULA = Equation(code="a = b\n+ c", inline=False)
+
+    def _paragraph(self) -> Document:
+        return _doc(Paragraph(children=[Text(content="states that: "), self._FORMULA, Text(content=" where x")]))
+
+    def test_text_formats_write_it_as_a_block_of_its_own(self):
+        for render in (render_markdown, render_text):
+            with self.subTest(render=render.__name__):
+                out = render(self._paragraph())
+                self.assertEqual(out, "states that:\n\n$$\na = b\n+ c\n$$\n\nwhere x\n")
+
+    def test_markdown_reads_it_back_as_written(self):
+        md = render_markdown(self._paragraph())
+        doc = parse_markdown(md)
+        self.assertEqual([type(c) for c in doc.children], [Paragraph, Equation, Paragraph])
+        self.assertEqual(doc.children[1], self._FORMULA)
+        self.assertEqual(render_markdown(doc), md)
+
+    def test_in_a_list_item_it_stays_in_the_item(self):
+        doc = _doc(ListBlock(ordered=False, items=[ListItem(children=[
+            Paragraph(children=[Text(content="a "), self._FORMULA, Text(content=" b")])])]))
+        md = render_markdown(doc)
+        self.assertEqual(md, "- a\n\n    $$\n    a = b\n    + c\n    $$\n\n    b\n")
+        (item,) = parse_markdown(md).children[0].items
+        self.assertEqual(item.children[1], self._FORMULA)
+
+    def test_where_only_inline_content_fits_it_keeps_to_one_line(self):
+        doc = _doc(Heading(level=1, children=[Text(content="T "), self._FORMULA]),
+                   Table(headers=[_cell("h")], rows=[TableRow(cells=[TableCell(children=[self._FORMULA])])]))
+        md = render_markdown(doc)
+        self.assertIn("# T $a = b + c$\n", md)
+        self.assertIn("| $a = b + c$ |", md)
+        heading, table = parse_markdown(md).children
+        self.assertIsInstance(heading, Heading)
+        self.assertIsInstance(table, Table)
+        self.assertIn("| $$a = b + c$$ |", render_text(doc))
+
+    def test_html_and_latex_keep_it_in_place(self):
+        self.assertEqual(render_html(self._paragraph()).count("<p>"), 2)
+        self.assertIn("states that: \\[\na = b\n+ c\n\\] where x", render_latex(self._paragraph()))
+
+    def test_markdown_formula_lines_are_not_blocks(self):
+        for line in ("+ c", "- c", "1. c", "# c", "> c"):
+            with self.subTest(line=line):
+                (equation,) = parse_markdown(f"$$\na = b\n{line}\n$$\n").children
+                self.assertEqual(equation, Equation(code=f"a = b\n{line}", inline=False))

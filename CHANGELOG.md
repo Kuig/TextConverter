@@ -44,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A code block marked `class="brush: js"` (SyntaxHighlighter, MDN) keeps its language.
 - Formulas of Wikipedia pages served as MathML without a TeX annotation are read from their TeX source (`data-mw`)
   instead of their visible text, which gave unreadable runs such as `{C=C0NDL=ANα+BDβ+L0`.
+- A display formula inside a paragraph (as Wikipedia writes it) is a block of its own in Markdown and plain text,
+  between the paragraph's text before and after it, instead of a `$$` on a line with text and a line break after each
+  of its lines; in a list item it stays in the item. In a heading or a table cell, where a block cannot go, Markdown
+  writes it inline on one line.
+- A line of a Markdown `$$` formula that looks like a block (`+ c`, `- c`, `1. c`) no longer gets a blank line inserted
+  before it, and a formula indented under a list item loses that indentation, as a fenced code block does.
 
 ## [0.5.2] - 2026-11-13
 

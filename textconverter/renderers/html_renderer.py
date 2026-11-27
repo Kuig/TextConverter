@@ -9,8 +9,8 @@ from ..ast import (
     Table, TableCell, Text, frame_fields,
 )
 from ._common import (
-    bibliography_paragraphs, figure_image, latex_reference_macro, reference_numbers, safe_href, summary_text,
-    table_grid,
+    bibliography_paragraphs, figure_image, is_display_equation, latex_reference_macro, paragraph_parts,
+    reference_numbers, safe_href, summary_text, table_grid,
 )
 from .templates import PRINT_TEMPLATE, get_template
 
@@ -122,7 +122,7 @@ def _heading(node: Heading) -> str:
 
 def _is_block(node: Node) -> bool:
     """A paragraph child that HTML only allows outside ``<p>``: a display formula or a figure."""
-    return (isinstance(node, Equation) and not node.inline) or figure_image(node) is not None
+    return is_display_equation(node) or figure_image(node) is not None
 
 
 def _figure(node: Node) -> str:
@@ -135,21 +135,13 @@ def _figure(node: Node) -> str:
 def _paragraph(node: Paragraph) -> str:
     """A paragraph; display formulas and figures split it, since ``<p>`` cannot hold them."""
     out: list[str] = []
-    run: list[Node] = []
-
-    def flush() -> None:
-        text = _text_lines(run)
-        if text.strip():
-            out.append(f"<p>{text}</p>")
-        run.clear()
-
-    for child in node.children:
-        if _is_block(child):
-            flush()
-            out.append(_figure(child) if figure_image(child) else _render_node(child))
+    for part in paragraph_parts(node.children, _is_block):
+        if isinstance(part, list):
+            text = _text_lines(part)
+            if text.strip():
+                out.append(f"<p>{text}</p>")
         else:
-            run.append(child)
-    flush()
+            out.append(_figure(part) if figure_image(part) else _render_node(part))
     return '\n'.join(out)
 
 
