@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import re
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -55,15 +56,31 @@ class _MathCapture:
 
     ``kind`` is ``"mathml"`` (``<math>``, TeX from its annotation),
     ``"script"`` (``<script type="math/tex">``) or ``"element"`` (an element
-    with class ``math`` holding delimited TeX). ``text`` is the MathML's
-    visible text, used when it has no TeX annotation.
+    with class ``math`` holding delimited TeX). ``source`` is the TeX a
+    MediaWiki ``<math>`` carries in ``data-mw``, used when it has no TeX
+    annotation; ``text`` is the MathML's visible text, used when it has neither.
     """
     kind: str
     inline: bool
     code: str = ""
     depth: int = 1
     in_annotation: bool = False
+    source: str = ""
     text: str = ""
+
+
+def _mediawiki_tex(data_mw: str | None) -> str:
+    """The TeX source a MediaWiki (Parsoid) ``<math>`` holds in its ``data-mw`` JSON, or ``""``."""
+    if not data_mw:
+        return ""
+    try:
+        data = json.loads(data_mw)
+    except ValueError:
+        return ""
+    if not isinstance(data, dict) or data.get('name') != 'math' or not isinstance(data.get('body'), dict):
+        return ""
+    source = data['body'].get('extsrc')
+    return source if isinstance(source, str) else ""
 
 
 def _language(classes: list[str]) -> str | None:
@@ -154,7 +171,8 @@ class ASTHTMLParser(HTMLParser):
             self.just_parsed_math = False
 
         if tag == 'math':
-            self._math = _MathCapture('mathml', inline=attr_dict.get('display') != 'block')
+            self._math = _MathCapture('mathml', inline=attr_dict.get('display') != 'block',
+                                      source=_mediawiki_tex(attr_dict.get('data-mw')))
             return
         if tag == 'title':
             self._in_title = True
@@ -422,8 +440,9 @@ class ASTHTMLParser(HTMLParser):
                 return
             if tag != 'math':
                 return
-            # Without a TeX annotation, the formula's visible text stands in for it
-            code = strip_displaystyle(math.code) or _WHITESPACE.sub(' ', math.text).strip()
+            # Without a TeX annotation, the MediaWiki source, else the formula's visible text, stands in for it
+            code = (strip_displaystyle(math.code) or strip_displaystyle(math.source.strip())
+                    or _WHITESPACE.sub(' ', math.text).strip())
             self.just_parsed_math = True
             if not code:
                 self._math = None

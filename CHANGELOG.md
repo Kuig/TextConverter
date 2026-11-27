@@ -42,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The text of a link or of any other element inside `<pre>` was lost (an RFC's references, highlighted code).
 - A code block marked `class="brush: js"` (SyntaxHighlighter, MDN) keeps its language.
+- Formulas of Wikipedia pages served as MathML without a TeX annotation are read from their TeX source (`data-mw`)
+  instead of their visible text, which gave unreadable runs such as `{C=C0NDL=ANα+BDβ+L0`.
 
 ## [0.5.2] - 2026-11-13
 

@@ -254,6 +254,39 @@ class TestHtmlStructures(BaseConverterTest):
         (para,) = _parse("<p>m <math></math> e</p>").children
         self.assertFalse(any(isinstance(n, Equation) for n in para.children))
 
+    def test_mediawiki_mathml_gives_its_tex_source(self):
+        from textconverter.ast import Equation
+        # Parsoid's markup: the TeX is only in data-mw
+        html = ('<p>the cost <math class="mwe-math-element" data-mw=\'{"name":"math","attrs":{},'
+                '"body":{"extsrc":"C"}}\'><mi>C</mi></math> states that: '
+                '<math display="block" data-mw=\'{"name":"math","attrs":{"display":"block"},'
+                '"body":{"extsrc":"\\\\begin{cases}\\nC = C_0 ND\\n\\\\end{cases}"}}\'>'
+                '<mrow><mo>{</mo><mi>C</mi><mo>=</mo><msub><mi>C</mi><mn>0</mn></msub></mrow></math>'
+                ' where</p>')
+        (para,) = _parse(html).children
+        equations = [n for n in para.children if isinstance(n, Equation)]
+        self.assertEqual(equations, [Equation(code="C", inline=True),
+                                     Equation(code="\\begin{cases}\nC = C_0 ND\n\\end{cases}", inline=False)])
+        # The main-content extraction keeps data-mw on <math>
+        md = textconverter.convert_text(f"<main>{html}</main>", "html", "markdown",
+                                        textconverter.ConvertOptions(extract_html=True))
+        self.assertIn("C = C_0 ND", md)
+        self.assertNotIn("{C=", md)
+
+    def test_tex_annotation_wins_over_mediawiki_source(self):
+        from textconverter.ast import Equation
+        html = ('<p><math data-mw=\'{"name":"math","body":{"extsrc":"a"}}\'><semantics><mi>b</mi>'
+                '<annotation encoding="application/x-tex">b</annotation></semantics></math></p>')
+        (para,) = _parse(html).children
+        self.assertEqual(para.children, [Equation(code="b", inline=True)])
+
+    def test_unreadable_data_mw_keeps_the_visible_text(self):
+        from textconverter.ast import Equation
+        for data_mw in ('{not json', '{"name":"ref","body":{"extsrc":"a"}}', '[1]'):
+            with self.subTest(data_mw=data_mw):
+                (para,) = _parse(f"<p><math data-mw='{data_mw}'><mi>x</mi></math></p>").children
+                self.assertEqual(para.children, [Equation(code="x", inline=True)])
+
     def test_superscript_and_subscript(self):
         from textconverter.ast import Text
         (para,) = _parse("<p>H<sub>2</sub>O and x<sup>2</sup></p>").children

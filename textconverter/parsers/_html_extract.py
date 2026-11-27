@@ -133,9 +133,10 @@ class _ContentExtractor(HTMLParser):
             if tag == 'a' and (ad.get('href') or '').startswith('#') and _HEADINGS.intersection(self._open):
                 self._unwrapped.add(len(self._open) - 1)
                 return
+        # A MediaWiki formula's TeX source is in data-mw, which Parsoid puts on most other elements too
         attr_str = ''.join(
             f' {k}="{html.escape(v, quote=True)}"' for k, v in attrs
-            if k in _SAFE_ATTRS and v
+            if (k in _SAFE_ATTRS or (tag == 'math' and k == 'data-mw')) and v
         )
         self._emit(f'<{tag}{attr_str}>')
 
