@@ -3,6 +3,7 @@ import os
 from ..ast import Document, Image, Paragraph, walk
 from ..formats import PDF_MODES, check_choice
 from ..logger import log_action, log_warning
+from ._bold_headings import promote_bold_headings
 from .markdown_parser import parse_markdown
 
 # GLM-OCR's reference pipeline renders pages at 200 DPI; more mostly costs time.
@@ -83,6 +84,7 @@ def parse_pdf(
 
     # Re-parse through our own Markdown parser to keep the AST consistent
     doc = parse_markdown(md_text, code_parsing=code_parsing, indented_code=False)
+    promote_bold_headings(doc)
 
     # Strip the directory prefix from image paths so references stay relative to the document
     for node in walk(doc):

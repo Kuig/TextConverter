@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Site cleanup profiles for arXiv abstract pages, GitHub repository pages, MDN Web Docs, RFC Editor pages, Wiktionary
   and Wikidata, next to Wikipedia's. They keep what a reader (or a model) needs from the page, such as the links to an
   arXiv paper's PDF and a repository's file tree, and make the page's links absolute.
+- PDF section titles set in bold body text become headings when the PDF has no other headings (or only its title),
+  with the level taken from their numbering (`3.1. Data Collection` under `3. Methodology`). They used to be bold
+  paragraphs, so a converted paper had no sections.
 - `--extract-html` warns when a page has no text without JavaScript (a single-page app), instead of returning an empty
   document silently.
 

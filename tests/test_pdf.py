@@ -10,7 +10,12 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import textconverter
+from textconverter.ast import Document, Heading, Paragraph, Text
 from textconverter.config import AppConfig
+from textconverter.parsers._bold_headings import promote_bold_headings
+from textconverter.parsers.markdown_parser import parse_markdown
+from textconverter.parsers.pdf_parser import _import_pymupdf4llm, parse_pdf
+from textconverter.renderers._common import plain_text
 from _support import BaseConverterTest, setUpModule, tearDownModule, INPUT_DIR, OUTPUT_DIR
 
 
@@ -43,6 +48,96 @@ class TestPdfParser(BaseConverterTest):
         textconverter.save_to_file(str(in_path), str(out_path))
         self.assertTrue(out_path.exists())
         self.assertGreater(out_path.stat().st_size, 0, "Output is empty")
+
+
+def _bold(text):
+    return Paragraph(children=[Text(text, bold=True)])
+
+
+def _prose(words=12):
+    return Paragraph(children=[Text(" ".join(["Running text of the section."] * words))])
+
+
+def _headings(doc):
+    return [(b.level, plain_text(b.children)) for b in doc.children if isinstance(b, Heading)]
+
+
+class TestBoldHeadings(BaseConverterTest):
+    """Bold paragraphs read as headings when a PDF has no heading structure."""
+
+    def _promote(self, *blocks):
+        doc = Document(children=list(blocks))
+        promote_bold_headings(doc)
+        return doc
+
+    def test_numbering_gives_the_level(self):
+        doc = self._promote(_bold("1. Introduction"), _prose(), _bold("1.1 Scope"), _prose(),
+                            _bold("2 Methods"), _bold("2.1. Data"), _prose())
+        self.assertEqual(_headings(doc), [(1, "1. Introduction"), (2, "1.1 Scope"),
+                                          (1, "2 Methods"), (2, "2.1. Data")])
+
+    def test_levels_start_below_a_title(self):
+        doc = self._promote(Heading(level=1, children=[Text("Paper")]), _bold("I. INTRODUCTION"),
+                            _prose(), _bold("3.1. Data"), _prose())
+        self.assertEqual(_headings(doc), [(1, "Paper"), (2, "I. INTRODUCTION"), (3, "3.1. Data")])
+
+    def test_a_document_with_headings_is_left_alone(self):
+        blocks = (Heading(level=1, children=[Text("A")]), _bold("1. Intro"), _prose(),
+                  Heading(level=1, children=[Text("B")]))
+        self.assertEqual(len(_headings(self._promote(*blocks))), 2)
+
+    def test_a_heading_after_a_candidate_is_not_a_title(self):
+        doc = self._promote(_bold("1. Intro"), _prose(), Heading(level=1, children=[Text("B")]))
+        self.assertIsInstance(doc.children[0], Paragraph)
+
+    def test_unnumbered_titles_need_running_text_after_them(self):
+        doc = self._promote(_bold("ABSTRACT"), _prose(), _bold("Related Work"), _prose(),
+                            _bold("Column 1 Column 2 Column 3"),
+                            Paragraph(children=[Text("Entry 1 Entry 2 Entry 3")]))
+        self.assertEqual(_headings(doc), [(1, "ABSTRACT"), (1, "Related Work")])
+
+    def test_what_is_not_a_title_stays_a_paragraph(self):
+        doc = self._promote(
+            Paragraph(children=[Text("Table 1.", bold=True), Text(" General caption")]),
+            _bold("Keywords:"), _prose(),
+            _bold("A whole sentence in bold."), _prose(),
+            _bold(" ".join(["Long bold text"] * 8)), _prose(),
+            _bold("2026"), _prose(),
+        )
+        self.assertEqual(_headings(doc), [])
+
+    def test_the_bold_goes_and_other_formatting_stays(self):
+        doc = self._promote(Paragraph(children=[Text("1.", bold=True), Text(" "),
+                                                Text("Scope", bold=True, italic=True), Text(" ")]),
+                            _prose())
+        heading = doc.children[0]
+        self.assertIsInstance(heading, Heading)
+        self.assertEqual([(t.content, t.bold, t.italic) for t in heading.children],
+                         [("1.", False, False), (" ", False, False), ("Scope", False, True)])
+
+    def test_journal_sections(self):
+        doc = parse_pdf(str(INPUT_DIR / "Journal PDF.pdf"), write_images=False)
+        self.assertEqual(_headings(doc)[1:], [
+            (2, "ABSTRACT"), (2, "1. INTRODUCTION"), (2, "2. LITERATURE REVIEW"), (2, "3. METHODOLOGY"),
+            (3, "3.1. Data Collection"), (3, "3.2. Data Preprocessing"), (3, "3.3. Model Design"),
+            (2, "4. RESULTS"), (2, "5. DISCUSSION"), (2, "6. CONCLUSION"), (2, "7. REFERENCES"),
+        ])
+
+    def test_weird_journal_sections(self):
+        doc = parse_pdf(str(INPUT_DIR / "Weird Journal PDF.pdf"), write_images=False)
+        self.assertEqual(_headings(doc)[1:], [
+            (2, "1 INTRODUCTION"), (2, "2 METHODS, OBSERVATIONS, SIMULATIONS ETC."), (3, "2.1 Maths"),
+            (2, "3 CONCLUSIONS"), (3, "2.2 Figures and tables"), (2, "ACKNOWLEDGEMENTS"),
+            (2, "DATA AVAILABILITY"), (2, "REFERENCES"), (2, "APPENDIX A: SOME EXTRA MATERIAL"),
+        ])
+
+    def test_pdfs_with_headings_are_unchanged(self):
+        for name in ("Simple Pdf.pdf", "Vector Image PDF.pdf"):
+            with self.subTest(name):
+                path = str(INPUT_DIR / name)
+                markdown = _import_pymupdf4llm().to_markdown(path, write_images=False)
+                expected = parse_markdown(markdown, indented_code=False)
+                self.assertEqual(_headings(parse_pdf(path, write_images=False)), _headings(expected))
 
 
 class TestRasterMode(BaseConverterTest):
