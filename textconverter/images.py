@@ -148,11 +148,14 @@ def crop_blob(blob: bytes, extension: str, crop: tuple[float, float, float, floa
 
 
 def store_image(data: bytes, target_dir: str, basename: str) -> str:
-    """Write ``data`` to ``target_dir`` and return the path.
+    """Write ``data`` to ``target_dir`` and return its absolute path.
 
+    The path is absolute so that a relative ``target_dir`` (relative to the
+    current directory) is not later read against the document's directory.
     An existing file with the same content is reused; one with different
     content gets a numbered sibling (``name_1.png``, ...).
     """
+    target_dir = os.path.abspath(target_dir)
     os.makedirs(target_dir, exist_ok=True)
     base, ext = os.path.splitext(basename)
     name, counter = basename, 0

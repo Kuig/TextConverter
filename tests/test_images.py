@@ -223,6 +223,36 @@ class TestImagePaths(_WebTest):
         self.assertEqual(html.count('src="data:image/png;base64,'), 2)
         self.assertNotEqual(Path(os.getcwd()), src.parent)
 
+    def _chdir_tmp(self) -> None:
+        cwd = os.getcwd()
+        os.chdir(self.tmp)
+        self.addCleanup(os.chdir, cwd)
+
+    def test_relative_paths_link_downloads_from_the_output(self):
+        """A downloaded image used to get the output's folder twice (``../A/B/doc_images/...``)."""
+        self._source()
+        self._chdir_tmp()
+        textconverter.save_to_file("A/doc.md", "B/doc.md")
+        md = (self.tmp / "B" / "doc.md").read_text(encoding="utf-8")
+        self.assertIn("(../A/img/local.png)", md)
+        self.assertIn("(doc_images/remote.png)", md)
+        self.assertTrue((self.tmp / "B" / "doc_images" / "remote.png").exists())
+
+    def test_relative_paths_link_data_images_from_the_output(self):
+        import base64
+        src_dir = self.tmp / "A"
+        src_dir.mkdir()
+        data = base64.b64encode(PNG).decode("ascii")
+        (src_dir / "doc.html").write_text(f'<p><img src="data:image/png;base64,{data}" alt="d"></p>',
+                                          encoding="utf-8")
+        self._chdir_tmp()
+        textconverter.save_to_file("A/doc.html", "B/out.md",
+                                   ConvertOptions(image_handling="keep", image_output="link"))
+        md = (self.tmp / "B" / "out.md").read_text(encoding="utf-8")
+        files = list((self.tmp / "B" / "out_images").iterdir())
+        self.assertEqual(len(files), 1)
+        self.assertIn(f"(out_images/{files[0].name})", md)
+
     def test_data_urls_are_not_treated_as_files(self):
         from textconverter.images import resolve_local
         self.assertIsNone(resolve_local("data:image/png;base64,AAAA", "x"))

@@ -319,6 +319,18 @@ class TestDocxThroughTheApi(BaseConverterTest):
             html = textconverter.convert(str(FIXTURE), "html")
             self.assertIn("data:image/jpeg;base64,", html)
 
+    def test_images_link_from_a_relative_output_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                textconverter.save_to_file(str(FIXTURE), os.path.join("out", "doc.md"))
+            finally:
+                os.chdir(cwd)
+            with open(os.path.join(tmp, "out", "doc.md"), encoding="utf-8") as f:
+                self.assertIn("(doc_images/image_1.jpeg)", f.read())
+            self.assertTrue(os.path.isfile(os.path.join(tmp, "out", "doc_images", "image_1.jpeg")))
+
     def test_text_conversion_needs_a_file(self):
         with self.assertRaisesRegex(ValueError, "needs a file"):
             textconverter.convert_text("x", "docx", "markdown")
