@@ -133,6 +133,15 @@ class TestImageDownload(_WebTest):
         self.assertIn("(imgs/pic.png)", md)
         self.assertIn("(imgs/b.png)", md)
 
+    def test_text_source_resolves_images_against_its_url(self):
+        """Pasted HTML downloads its relative images from the page it was copied from, not the page itself."""
+        web = self.serve({"https://x.test/a/pic.png": (PNG, "image/png")})
+        source = textconverter.TextSource('<p><img src="pic.png" alt="p"></p>', "html", "https://x.test/a/page")
+        out = self.tmp / "out.md"
+        textconverter.save_to_file(source, str(out), ConvertOptions(image_handling="keep", image_output="link"))
+        self.assertIn("(out_images/pic.png)", out.read_text(encoding="utf-8"))
+        self.assertEqual(web.requested, ["https://x.test/a/pic.png"])
+
     def test_empty_source_does_not_download_the_page(self):
         self._page('<p>x</p><img src="">', {})
         self.assertEqual(self.requested, ["https://x.test/a/page"])

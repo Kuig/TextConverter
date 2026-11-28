@@ -1,4 +1,4 @@
-"""The public API shape (convert, convert_text, save_to_file, ConvertOptions) and
+"""The public API shape (convert, convert_text, save_to_file, ConvertOptions, TextSource) and
 the source-independent AST passes applied by api.convert().
 
 Usage: python -m unittest discover -s tests -p "test_api.py"
@@ -190,6 +190,33 @@ class TestTextAndFiles(BaseConverterTest):
     def test_binary_formats_need_a_file(self):
         with self.assertRaisesRegex(ValueError, "needs a file"):
             textconverter.convert_text("%PDF-1.7", "pdf", "markdown")
+
+    def test_text_source_converts_and_saves_like_a_file(self):
+        """A TextSource reaches every output, the Office ones included, which only save_to_file writes."""
+        source = textconverter.TextSource("# Title\n\nSome *text*.", "markdown")
+        self.assertIn("<h1>Title</h1>", textconverter.convert(source, "html"))
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("out.docx", "out.txt"):
+                with self.subTest(name=name):
+                    out = os.path.join(tmp, name)
+                    self.assertEqual(textconverter.save_to_file(source, out), [out])
+                    self.assertTrue(os.path.getsize(out))
+
+    def test_text_source_url_reaches_the_site_profiles(self):
+        from unittest.mock import patch
+        source = textconverter.TextSource("<main><p>x</p></main>", "html", "https://en.wikipedia.org/wiki/X")
+        with patch("textconverter.api.resolve_profiles", return_value=()) as resolve:
+            textconverter.convert(source, "markdown", ConvertOptions(extract_html=True))
+        self.assertEqual(resolve.call_args.args[0], "https://en.wikipedia.org/wiki/X")
+
+    def test_text_source_formats_are_checked(self):
+        with self.assertRaisesRegex(ValueError, "needs a file"):
+            textconverter.TextSource("x", "docx")
+        with self.assertRaisesRegex(ValueError, "Unknown from_format"):
+            textconverter.TextSource("x", "rst")
+        with self.assertRaisesRegex(ValueError, "differs"):
+            textconverter.convert(textconverter.TextSource("x", "html"), "markdown", from_format="markdown")
+        textconverter.convert(textconverter.TextSource("x", "html"), "markdown", from_format="html")
 
     def test_convert_missing_file_raises(self):
         with self.assertRaises(FileNotFoundError):

@@ -2,8 +2,34 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .formats import IMAGE_HANDLING_CHOICES, IMAGE_OUTPUT_CHOICES, OUTPUT_FORMATS, PDF_MODES, TEMPLATES, check_choice
+from .formats import (
+    IMAGE_HANDLING_CHOICES, IMAGE_OUTPUT_CHOICES, INPUT_FORMATS, OUTPUT_FORMATS, PDF_MODES, TEMPLATES, check_choice,
+)
 from .logger import log_warning
+
+
+@dataclass(frozen=True)
+class TextSource:
+    """A document given as text, which ``convert`` and ``save_to_file`` take in place of a path or URL.
+
+    Attributes:
+        text: The document.
+        from_format: Its format: one of ``formats.INPUT_FORMATS`` that is not
+            binary (``"html"``, ``"markdown"``, ``"text"``, ...).
+        url: The page the text comes from, if any: site cleanup recognizes the
+            site by it, and relative image addresses resolve against it.
+
+    Raises:
+        ValueError: If ``from_format`` is unknown or needs a file (PDF, Word, image).
+    """
+    text: str
+    from_format: str
+    url: str | None = None
+
+    def __post_init__(self) -> None:
+        check_choice("from_format", self.from_format, INPUT_FORMATS)
+        if INPUT_FORMATS[self.from_format].binary:
+            raise ValueError(f"{self.from_format} input needs a file: call convert() with its path.")
 
 
 @dataclass

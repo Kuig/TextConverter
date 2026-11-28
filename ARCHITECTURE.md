@@ -37,7 +37,7 @@ TextConverter/
     ├── regions.py                   ← Page segmentation with Pillow: blocks, reading order, contact sheet, crops
     ├── logger.py                    ← Dual-backend logger (console / Streamlit)
     ├── mcp_tools.py                 ← MCP tool definitions
-    ├── options.py                   ← ConvertOptions dataclass (validated conversion options)
+    ├── options.py                   ← ConvertOptions dataclass (validated conversion options), TextSource (a document given as text)
     ├── parsers/                     ← Format-specific parsers
     ├── renderers/                   ← Format-specific renderers
     ├── site_profiles/               ← Source-specific HTML cleanup (base.py; one module per site: wikipedia.py, arxiv.py, github.py, ...)

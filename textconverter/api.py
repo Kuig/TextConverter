@@ -45,7 +45,10 @@ from .formats import (
     INPUT_FORMATS, TEXT_OUTPUT_FORMATS, check_choice,
     infer_input_format, infer_input_format_from_media_type, infer_output_format,
 )
-from .options import ConvertOptions, ImagePlan, resolve_images
+from .options import ConvertOptions, ImagePlan, TextSource, resolve_images
+
+# A file path, an http(s) URL, or a document given as text.
+Source = str | TextSource
 
 # The formats that have no bibliography of their own: they show it as LaTeX macros.
 _MACRO_BIBLIOGRAPHY = ("markdown", "html", "docx", "pptx", "text")
@@ -57,8 +60,8 @@ _PACKAGE_FOLDERS = {"docx": "word/", "pptx": "ppt/", "xlsx": "xl/"}
 Render = Callable[[Document], Any]
 
 
-def _is_url(source: str) -> bool:
-    return source.startswith(("http://", "https://"))
+def _is_url(source: Source) -> bool:
+    return isinstance(source, str) and source.startswith(("http://", "https://"))
 
 
 def _read_text(path: str, from_format: str) -> str:
@@ -333,21 +336,12 @@ def convert_text(
             is not installed.
     """
     _check_formats(from_format, to_format)
-    if INPUT_FORMATS[from_format].binary:
-        raise ValueError(f"{from_format} input needs a file: call convert() with its path.")
-    options = options or ConvertOptions()
-    config = config or load_config()
-    plan = resolve_images(options, from_format, to_format)
-    doc = _parse(from_format, options, config, text=text)
-    with _image_folder(plan.output, output_dir, image_dir_name) as (parent, name):
-        return _transform_and_render(doc, from_format, to_format, options, plan, config,
-                                     output_dir=output_dir, image_parent=parent, image_dir_name=name,
-                                     source_url=None, source_path=None,
-                                     render=_text_render(to_format, options))
+    return convert(TextSource(text, from_format), to_format, options,
+                   output_dir=output_dir, image_dir_name=image_dir_name, config=config)
 
 
 def convert(
-    source: str,
+    source: Source,
     to_format: str,
     options: ConvertOptions | None = None,
     *,
@@ -356,18 +350,17 @@ def convert(
     image_dir_name: str | None = None,
     config: AppConfig | None = None,
 ) -> str:
-    """Convert a file or a remote URL and return the result as a string.
-
-    For text given directly, use ``convert_text``.
+    """Convert a file, a remote URL or a ``TextSource`` and return the result as a string.
 
     Args:
-        source: A file path, or an ``http://``/``https://`` URL.
+        source: A file path, an ``http://``/``https://`` URL, or a document
+            given as text (``TextSource``, which carries its format).
         to_format: Target format (``"markdown"``, ``"html"``, ``"latex"``,
             ``"json"``); PDF output goes through ``save_to_file``.
         options: Conversion options; defaults when None.
         from_format: Source format. When None it is inferred from the file
             extension; for a URL, from the response's ``Content-Type``, then
-            the URL's extension, else HTML.
+            the URL's extension, else HTML. A ``TextSource`` has its own.
         output_dir: Directory for downloaded and extracted images.
         image_dir_name: Subdirectory of ``output_dir`` for those images.
         config: Configuration to use instead of config.json.
@@ -377,7 +370,8 @@ def convert(
 
     Raises:
         FileNotFoundError: If ``source`` is neither a URL nor an existing file.
-        ValueError: If a format is unknown or cannot be inferred.
+        ValueError: If a format is unknown or cannot be inferred, or
+            ``from_format`` is not the format of a ``TextSource``.
         DownloadError: If the URL cannot be downloaded (a ``RuntimeError``).
         ImportError: If the conversion needs ``unified_ai_client`` and it is
             not installed.
@@ -390,7 +384,7 @@ def convert(
 
 
 def _convert(
-    source: str,
+    source: Source,
     to_format: str,
     options: ConvertOptions,
     config: AppConfig,
@@ -401,11 +395,16 @@ def _convert(
     render: Render,
     overlay_path: str | None = None,
 ) -> Any:
-    """Parse a file or URL, transform it and pass the document to ``render`` (what ``convert`` does).
+    """Parse a file, URL or text, transform it and pass the document to ``render`` (what ``convert`` does).
 
     ``render`` runs while the conversion's temporary image folder still
     exists, so a renderer can read the images from disk.
     """
+    if isinstance(source, TextSource):
+        if from_format not in (None, source.from_format):
+            raise ValueError(f"from_format '{from_format}' differs from the source's own '{source.from_format}'.")
+        return _convert_text(source.text, source.from_format, to_format, options, config, source_url=source.url,
+                             output_dir=output_dir, image_dir_name=image_dir_name, render=render)
     if _is_url(source):
         return _convert_url(source, from_format, to_format, options, config,
                             output_dir=output_dir, image_dir_name=image_dir_name, render=render,
@@ -429,6 +428,27 @@ def _convert(
                                      output_dir=output_dir, image_parent=parent, image_dir_name=name,
                                      source_url=None, source_path=source, render=render,
                                      scratch=scratch, overlay_path=overlay_path)
+
+
+def _convert_text(
+    text: str,
+    from_format: str,
+    to_format: str,
+    options: ConvertOptions,
+    config: AppConfig,
+    *,
+    source_url: str | None,
+    output_dir: str | None,
+    image_dir_name: str | None,
+    render: Render,
+) -> Any:
+    """Convert a text document; ``source_url`` is the page it comes from, if any."""
+    plan = resolve_images(options, from_format, to_format)
+    doc = _parse(from_format, options, config, text=text, source_url=source_url)
+    with _image_folder(plan.output, output_dir, image_dir_name) as (parent, name):
+        return _transform_and_render(doc, from_format, to_format, options, plan, config,
+                                     output_dir=output_dir, image_parent=parent, image_dir_name=name,
+                                     source_url=source_url, source_path=None, render=render)
 
 
 _META_CHARSET = re.compile(rb'<meta[^>]+charset\s*=\s*["\']?([\w.:-]+)', re.IGNORECASE)
@@ -475,21 +495,17 @@ def _convert_url(
                        or infer_input_format(url_path) or "html")
 
     fmt = INPUT_FORMATS[from_format]
-    plan = resolve_images(options, from_format, to_format)
-    folder = _image_folder(plan.output, output_dir, image_dir_name)
     if not fmt.binary:
-        doc = _parse(from_format, options, config, text=_decode(download), source_url=url)
-        with folder as (parent, name):
-            return _transform_and_render(doc, from_format, to_format, options, plan, config,
-                                         output_dir=output_dir, image_parent=parent, image_dir_name=name,
-                                         source_url=url, source_path=None, render=render)
+        return _convert_text(_decode(download), from_format, to_format, options, config, source_url=url,
+                             output_dir=output_dir, image_dir_name=image_dir_name, render=render)
 
+    plan = resolve_images(options, from_format, to_format)
     ext = os.path.splitext(url_path)[1].lower()
     with tempfile.TemporaryDirectory(prefix="textconverter_scratch_") as scratch:
         temp_path = os.path.join(scratch, f"source{ext if ext in fmt.extensions else fmt.extensions[0]}")
         with open(temp_path, "wb") as f:
             f.write(download.data)
-        with folder as (parent, name):
+        with _image_folder(plan.output, output_dir, image_dir_name) as (parent, name):
             doc = _parse(from_format, options, config, path=temp_path, output_dir=parent, image_dir_name=name,
                          source_url=url, write_images=plan.handling != "discard", scratch=scratch)
             return _transform_and_render(doc, from_format, to_format, options, plan, config,
@@ -511,7 +527,7 @@ def _office_writer(to_format: str) -> Callable[..., None]:
 
 
 def _save_office(
-    source: str,
+    source: Source,
     output_path: str,
     to_format: str,
     options: ConvertOptions,
@@ -535,7 +551,7 @@ def _save_office(
 
 
 def _save_pdf(
-    source: str,
+    source: Source,
     output_path: str,
     options: ConvertOptions,
     from_format: str | None,
@@ -552,7 +568,7 @@ def _save_pdf(
 
 
 def _save_csv(
-    source: str,
+    source: Source,
     output_path: str,
     options: ConvertOptions,
     from_format: str | None,
@@ -578,14 +594,14 @@ def _save_csv(
 
 
 def save_to_file(
-    source: str,
+    source: Source,
     output_path: str,
     options: ConvertOptions | None = None,
     *,
     from_format: str | None = None,
     config: AppConfig | None = None,
 ) -> list[str]:
-    """Convert a file or a remote URL and write the result to ``output_path``.
+    """Convert a file, a remote URL or a ``TextSource`` and write the result to ``output_path``.
 
     The output format comes from the extension of ``output_path``; linked
     images are written to a ``<output stem>_images`` folder next to it, while
@@ -604,10 +620,11 @@ def save_to_file(
     output: the image with what the AI found in it, to check a detection by eye.
 
     Args:
-        source: A file path, or an ``http://``/``https://`` URL.
+        source: A file path, an ``http://``/``https://`` URL, or a document
+            given as text (``TextSource``).
         output_path: Where to write the result.
         options: Conversion options; defaults when None.
-        from_format: Source format; inferred from the extension when None.
+        from_format: Source format; inferred as ``convert`` does when None.
         config: Configuration to use instead of config.json.
 
     Returns:
@@ -625,7 +642,7 @@ def save_to_file(
     to_format = infer_output_format(output_path)
     if to_format is None:
         raise ValueError(f"Could not infer the output format from the extension of {output_path}.")
-    if (not _is_url(source) and os.path.exists(source) and os.path.exists(output_path)
+    if (isinstance(source, str) and not _is_url(source) and os.path.exists(source) and os.path.exists(output_path)
             and os.path.samefile(source, output_path)):
         raise ValueError(f"The output path is the source file itself: {output_path}")
     if from_format is not None:
@@ -648,7 +665,7 @@ def _modified(path: pathlib.Path) -> int | None:
 
 
 def _save(
-    source: str,
+    source: Source,
     output_path: str,
     to_format: str,
     options: ConvertOptions,

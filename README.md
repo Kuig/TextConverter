@@ -211,7 +211,7 @@ html = convert_text("# Title\n\nSome *text*.", "markdown", "html")
 save_to_file("https://example.com", "DocsOutput/example.md", ConvertOptions(extract_html=True))
 ```
 
-Every parameter of `convert()`, `convert_text()`, `save_to_file()` and `ConvertOptions` is documented in **[docs/api.md](docs/api.md)**.
+Every parameter of `convert()`, `convert_text()`, `save_to_file()`, `ConvertOptions` and `TextSource` is documented in **[docs/api.md](docs/api.md)**.
 
 ### Windows Context Menu Integration
 

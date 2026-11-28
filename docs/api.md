@@ -1,13 +1,14 @@
 # Library API
 
-The functions live in `textconverter.api` and, with `ConvertOptions`, are also exported by the `textconverter` package. The CLI, the MCP tools and the GUI are thin wrappers around them.
+The functions live in `textconverter.api` and, with `ConvertOptions` and `TextSource`, are also exported by the `textconverter` package. The CLI, the MCP tools and the GUI are thin wrappers around them.
 
 ```python
-from textconverter import ConvertOptions, convert, convert_text, save_to_file
+from textconverter import ConvertOptions, TextSource, convert, convert_text, save_to_file
 
 md = convert("DocsInput/document.pdf", "markdown")
 html = convert_text("# Title", "markdown", "html", ConvertOptions(template="dark"))
 save_to_file("https://example.com", "DocsOutput/example.md", ConvertOptions(extract_html=True))
+save_to_file(TextSource("<p>Pasted</p>", "html", "https://example.com/page"), "DocsOutput/page.docx")
 ```
 
 ## `ConvertOptions`
@@ -35,11 +36,22 @@ How a document is converted. Values are checked on creation: an unknown `templat
 - `site_cleanup`: Override for site-specific HTML cleanup during `extract_html`. `None` uses the `html.site_cleanup` config default; `False` disables it for this call.
 - `pdf_mode`: How PDF input is read. `"text"` (default) uses the text layer; `"raster"` renders every page at 200 DPI to an image, which `image_handling` then treats like any other (by default each page is classified and its text transcribed), for scans or PDFs whose text layer is unusable. `"discard"` raises `ValueError` there and on an image source, whose images are the document.
 
+## `TextSource`
+
+```python
+@dataclass(frozen=True)
+class TextSource:
+    text: str
+    from_format: str
+    url: str | None = None
+```
+A document given as text, which `convert()` and `save_to_file()` take in place of a path or URL; this is how text reaches the outputs that only `save_to_file()` writes (PDF, Word, PowerPoint, Excel). `from_format` is required and must be a text format (`"markdown"`, `"text"`, `"html"`, `"latex"`, `"json"`, `"csv"`): an unknown or binary one raises `ValueError` on creation. `url` is the page the text comes from, such as HTML copied from a browser: site cleanup recognizes the site by it, and relative image addresses are downloaded from it. Passing a `from_format` to `convert()` or `save_to_file()` that is not the source's own raises `ValueError`.
+
 ## `convert()`
 
 ```python
 def convert(
-    source: str,
+    source: str | TextSource,
     to_format: str,
     options: ConvertOptions | None = None,
     *,
@@ -49,9 +61,9 @@ def convert(
     config: AppConfig | None = None,
 ) -> str:
 ```
-Convert a file or a remote URL and return the result as a string.
+Convert a file, a remote URL or a `TextSource` and return the result as a string.
 
-- `source`: A file path, or an `http://`/`https://` URL. A path that does not exist raises `FileNotFoundError`.
+- `source`: A file path, an `http://`/`https://` URL, or a `TextSource`. A path that does not exist raises `FileNotFoundError`.
 - `to_format`: `"markdown"`, `"text"` (plain text), `"html"`, `"latex"`, `"json"` or `"csv"` (the first table; PDF, Word, PowerPoint and Excel output go through `save_to_file()`, which also writes one CSV file per table).
 - `from_format`: `"markdown"`, `"text"`, `"html"`, `"latex"`, `"json"`, `"pdf"`, `"docx"`, `"pptx"`, `"csv"`, `"xlsx"` or `"image"`. Inferred when omitted: from the file extension (`.txt` and `.text` are plain text, `from_format="markdown"` reads one written in Markdown; the AST is `"json"` from a `.aston` file, and a `.json` file is read as one only with `from_format="json"`); for a URL, from the response's `Content-Type`, then the URL's extension, else HTML. A downloaded text page is decoded with the charset of its `Content-Type` or `<meta charset>`, else UTF-8. A PDF, Word, PowerPoint or Excel source that is not what `from_format` says raises `ValueError`.
 - A URL that cannot be downloaded raises `textconverter._net.DownloadError` (a `RuntimeError`).
@@ -72,13 +84,13 @@ def convert_text(
     config: AppConfig | None = None,
 ) -> str:
 ```
-Convert a document given as text. `from_format` is required and must be a text format (`"markdown"`, `"text"`, `"html"`, `"latex"`, `"json"`, `"csv"`); the text is never read as a file path, even when it names an existing file. Other parameters as in `convert()`.
+Convert a document given as text: `convert(TextSource(text, from_format), to_format, ...)`. `from_format` is required and must be a text format (`"markdown"`, `"text"`, `"html"`, `"latex"`, `"json"`, `"csv"`); the text is never read as a file path, even when it names an existing file. Other parameters as in `convert()`.
 
 ## `save_to_file()`
 
 ```python
 def save_to_file(
-    source: str,
+    source: str | TextSource,
     output_path: str,
     options: ConvertOptions | None = None,
     *,
@@ -86,7 +98,7 @@ def save_to_file(
     config: AppConfig | None = None,
 ) -> list[str]:
 ```
-Convert a file or URL like `convert()`, write the result to `output_path` and return the paths written (`[output_path]`, or one path per table for a `.csv` output with several tables, then `<output stem>_regions.png` for an image source: the image with what the AI found in it). The output format comes from its extension (`.md`, `.txt`, `.html`, `.tex`, `.aston` for `"json"`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`); linked images go to a `<output stem>_images` folder next to it, while embedded ones leave no folder. An output path that is the source file itself raises `ValueError`, and a missing output folder is created before the conversion starts (`OSError` if it cannot be).
+Convert a file, URL or `TextSource` like `convert()`, write the result to `output_path` and return the paths written (`[output_path]`, or one path per table for a `.csv` output with several tables, then `<output stem>_regions.png` for an image source: the image with what the AI found in it). The output format comes from its extension (`.md`, `.txt`, `.html`, `.tex`, `.aston` for `"json"`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`); linked images go to a `<output stem>_images` folder next to it, while embedded ones leave no folder. An output path that is the source file itself raises `ValueError`, and a missing output folder is created before the conversion starts (`OSError` if it cannot be).
 
 A `.pdf` output path renders the document as HTML with a print version of the light theme (smaller type, code lines wrapped) and prints it: with a headless Edge, Chrome or Chromium when one is installed (full styling, formulas typeset by MathJax when online), otherwise with PyMuPDF's built-in layout engine (simpler styling, formulas shown as TeX). `template` is ignored, and images are embedded in the PDF. Nothing reads a PDF back, so references show what they stand for: notes are numbered and listed at the end, a citation shows its keys in brackets, `\ref` the number of its label when it can be told (a section, table or figure), else the label in brackets; the bibliography shows its entries only. HTML output keeps the macros visible.
 

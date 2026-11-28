@@ -15,5 +15,5 @@ if sys.stderr.encoding and sys.stderr.encoding.lower() != "utf-8":
     )
 
 from .api import convert, convert_text, save_to_file
-from .options import ConvertOptions
+from .options import ConvertOptions, TextSource
 
