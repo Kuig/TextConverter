@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-28
+
 ### Added
 
 - The clipboard as a source, on Windows: `textconverter convert --clipboard out.md`, and **Source: Clipboard** in the
@@ -715,7 +717,8 @@ owcolor`, ...), and a row or cell no longer ends inside a group or a nested tabl
   classification and description, heuristic code detection, equations, and CLI, MCP, GUI and
   library interfaces.
 
-[Unreleased]: https://github.com/Kuig/TextConverter/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/Kuig/TextConverter/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Kuig/TextConverter/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/Kuig/TextConverter/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Kuig/TextConverter/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Kuig/TextConverter/compare/v0.4.1...v0.5.0
