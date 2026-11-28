@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes it inline on one line.
 - A line of a Markdown `$$` formula that looks like a block (`+ c`, `- c`, `1. c`) no longer gets a blank line inserted
   before it, and a formula indented under a list item loses that indentation, as a fenced code block does.
+- Wikipedia pages: a section the cleanup leaves empty loses its heading too, so `keep_reference_list: false` no longer
+  leaves an empty `References` heading (with its empty subsections) at the end of the article.
 
 ## [0.5.2] - 2026-11-13
 

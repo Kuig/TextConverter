@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..ast import Document, Heading, Node
 from ..config import HtmlConfig, WikipediaCleanupConfig
-from .base import SelectorProfile, node_text
+from .base import SelectorProfile, drop_empty_sections, node_text
 
 # MediaWiki generates these class/id hooks from software, not from article text,
 # so they are identical across every language edition.
@@ -62,7 +62,9 @@ class WikipediaProfile(SelectorProfile):
     Settings: :class:`textconverter.config.WikipediaCleanupConfig` (``html.wikipedia``).
     Removes edit links, navboxes, maintenance banners, the table of contents,
     category footers and (optionally) inline ``[n]`` citation markers, and
-    prunes a configurable set of end-matter sections. Images are left untouched
+    prunes a configurable set of end-matter sections; a heading the cleanup
+    leaves without content (the reference list's, with ``keep_reference_list``
+    off) goes too. Images are left untouched
     so the caller's image handling stays in control. Any MediaWiki page
     (Wiktionary, Wikidata, ...) is recognized by its fingerprint.
     """
@@ -107,6 +109,12 @@ class WikipediaProfile(SelectorProfile):
 
     def clean_ast(self, doc: Document) -> None:
         super().clean_ast(doc)
+        self._drop_end_sections(doc)
+        # What the cleanup emptied (the reference list, a banner-only section) goes with its heading
+        drop_empty_sections(doc)
+
+    def _drop_end_sections(self, doc: Document) -> None:
+        """Remove the sections titled as one of ``drop_sections``, their subsections included."""
         drop_titles = self._resolve_drop_titles(self.cfg.drop_sections)
         if not drop_titles:
             return

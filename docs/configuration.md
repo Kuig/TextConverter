@@ -99,7 +99,7 @@ The categories are `photo_drawing_or_comic`, `diagram`, `text`, `table`, `formul
 | `site_cleanup` | `true` | Whether site-specific cleanup profiles run during `--extract-html`; `--no-site-cleanup` overrides it for one run |
 | `wikipedia.drop_sections` | `["see also", "external links", "further reading"]` | End-matter sections to remove. An English canonical name also removes its known translations; any other entry is matched literally, so non-English wikis can list their own titles |
 | `wikipedia.drop_citation_marks` | `true` | Remove inline `[n]` citation markers |
-| `wikipedia.keep_reference_list` | `true` | Keep the citation list at the end of the article |
+| `wikipedia.keep_reference_list` | `true` | Keep the citation list at the end of the article; without it, its section heading goes too |
 | `wikipedia.extra_strip_selectors` | `[]` | Additional MediaWiki class names or element ids to remove |
 
 ## Saving from the GUI

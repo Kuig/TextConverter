@@ -114,12 +114,29 @@ class TestWikipediaCleanup(BaseConverterTest):
 
         md = self._render(profiles=[WikipediaProfile(WikipediaCleanupConfig(keep_reference_list=False))])
         self.assertNotIn("Full citation text", md)
+        self.assertNotIn("## References", md)
 
         md = self._render(profiles=[WikipediaProfile(WikipediaCleanupConfig(drop_citation_marks=False))])
         self.assertIn(r"[<sup>\[1\]</sup>](#cite_note-1)", md)
 
         md = self._render(profiles=[WikipediaProfile(WikipediaCleanupConfig(extra_strip_selectors=["infobox"]))])
         self.assertNotIn("Founded", md)
+
+    def test_sections_left_empty_lose_their_heading(self):
+        """Without the reference list, its section and empty subsections go; a section with content stays."""
+        from textconverter.config import WikipediaCleanupConfig
+        from textconverter.parsers.html_parser import parse_html
+        from textconverter.renderers.markdown_renderer import render_markdown
+        from textconverter.site_profiles import WikipediaProfile
+
+        html = ('<html><body class="mediawiki"><div id="mw-content-text"><h1>Article</h1><p>Body.</p>'
+                '<h2>Notes</h2><h3>Remarks</h3><p>A remark.</p>'
+                '<h2>References</h2><h3>Citations</h3><div class="reflist"><ol><li>Cite.</li></ol></div>'
+                '<h3>Sources</h3><div class="refbegin"><ul><li>Source.</li></ul></div>'
+                '</div></body></html>')
+        profile = WikipediaProfile(WikipediaCleanupConfig(keep_reference_list=False))
+        md = render_markdown(parse_html(html, extract_html=True, profiles=[profile]))
+        self.assertEqual(md, "# Article\n\nBody.\n\n## Notes\n\n### Remarks\n\nA remark.\n")
 
 
 class TestArxivProfile(_ProfileTest):
