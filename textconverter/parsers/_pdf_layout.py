@@ -1,13 +1,17 @@
-"""Repairs of the page layout in pymupdf4llm's text: the furniture printed on every page.
+"""Repairs of the page layout in pymupdf4llm's text.
 
 Running heads, footers and page numbers sit in the outermost line at the top or
 the bottom of a page. ``page_furniture`` finds them from the PDF's geometry and
-``strip_furniture`` removes them from a page's Markdown.
+``strip_furniture`` removes them from a page's Markdown. ``join_split_paragraphs``
+then joins the paragraphs pymupdf4llm ends in the middle of a sentence.
 """
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+
+from ..ast import Document, Image, Node, Paragraph, Text, walk
+from ..renderers._common import plain_text
 
 # The share of the page height, at the top and at the bottom, where furniture sits.
 _BAND = 0.1
@@ -120,3 +124,56 @@ def _is_furniture(line: str, keys: list[str]) -> bool:
     for key in keys:
         rest = rest.replace(key, '', 1)
     return not rest
+
+
+# What ends a sentence or a clause, before any closing quotes or brackets.
+_SENTENCE_END = re.compile(r'[.!?:;]["\'”’»)\]]*$')
+# A citation mark opening a paragraph: "[3], [4]. Consequently".
+_CITATION_START = re.compile(r'\[\d')
+
+
+def join_split_paragraphs(doc: Document) -> None:
+    """Join the top-level paragraphs that pymupdf4llm ends in the middle of a sentence, in place.
+
+    A paragraph whose text ends without punctuation goes on in the next one
+    when that starts in lowercase, with a citation mark (``[3]``) or with
+    ``,;)``; one that ends with a comma goes on in the next whatever it starts
+    with. A paragraph of bold text only (a title) or with an image is never
+    joined.
+    """
+    out: list[Node] = []
+    for block in doc.children:
+        previous = out[-1] if out else None
+        if isinstance(previous, Paragraph) and isinstance(block, Paragraph) and _continues(previous, block):
+            if not _edge_space(previous.children[-1], block.children[0]):
+                previous.children.append(Text(content=" "))
+            previous.children.extend(block.children)
+            continue
+        out.append(block)
+    doc.children[:] = out
+
+
+def _continues(first: Paragraph, second: Paragraph) -> bool:
+    """Whether ``second`` goes on with the sentence ``first`` leaves open."""
+    if not first.children or not second.children or _apart(first) or _apart(second):
+        return False
+    end, start = plain_text(first.children).rstrip(), plain_text(second.children).lstrip()
+    if not end or not start or _SENTENCE_END.search(end):
+        return False
+    return end.endswith(',') or start[0].islower() or start[0] in ',;)' or bool(_CITATION_START.match(start))
+
+
+def _apart(paragraph: Paragraph) -> bool:
+    """A paragraph that stands on its own: bold text only (a title) or one with an image."""
+    if any(isinstance(node, Image) for node in walk(paragraph)):
+        return True
+    if not all(isinstance(node, Text) for node in paragraph.children):
+        return False
+    texts = [node for node in paragraph.children if node.content.strip()]
+    return bool(texts) and all(node.bold for node in texts)
+
+
+def _edge_space(last: Node, first: Node) -> bool:
+    """Whether a space already separates the two paragraphs' texts."""
+    return ((isinstance(last, Text) and last.content[-1:].isspace())
+            or (isinstance(first, Text) and first.content[:1].isspace()))

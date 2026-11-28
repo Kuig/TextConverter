@@ -13,7 +13,7 @@ import textconverter
 from textconverter.ast import Document, Heading, Paragraph, Text
 from textconverter.config import AppConfig
 from textconverter.parsers._bold_headings import promote_bold_headings
-from textconverter.parsers._pdf_layout import page_furniture, strip_furniture
+from textconverter.parsers._pdf_layout import join_split_paragraphs, page_furniture, strip_furniture
 from textconverter.parsers.markdown_parser import parse_markdown
 from textconverter.parsers.pdf_parser import _import_pymupdf4llm, parse_pdf
 from textconverter.renderers._common import plain_text
@@ -187,6 +187,49 @@ class TestPageFurniture(BaseConverterTest):
     def test_furniture_is_looked_for_only_near_the_ends_of_a_page(self):
         page = "\n".join(["a", "b", "c", "2", "d", "e", "f"])
         self.assertEqual(strip_furniture(page, ["2"]), page)
+
+
+def _texts(*contents):
+    return [Paragraph(children=[Text(content)]) for content in contents]
+
+
+class TestSplitParagraphs(BaseConverterTest):
+    """Paragraphs that pymupdf4llm ends in the middle of a sentence."""
+
+    def _join(self, *blocks):
+        doc = Document(children=list(blocks))
+        join_split_paragraphs(doc)
+        return [plain_text(block.children) for block in doc.children]
+
+    def test_what_goes_on_is_joined(self):
+        for second in ("[3], [4]. Consequently", "and then", ", then", "; then", ") then"):
+            with self.subTest(second=second):
+                self.assertEqual(self._join(*_texts("patterns", second)), [f"patterns {second}"])
+        self.assertEqual(self._join(*_texts("techniques,", "AI enables")), ["techniques, AI enables"])
+        self.assertEqual(self._join(*_texts("a", "b", "c")), ["a b c"])
+
+    def test_what_ends_or_starts_a_sentence_is_not(self):
+        for first, second in (("Ends here.", "and then"), ("Listed:", "[1] item"), ("(see it.)", "and"),
+                              ("No punctuation", "Capital start"), ("Section", "12")):
+            with self.subTest(first=first, second=second):
+                self.assertEqual(self._join(*_texts(first, second)), [first, second])
+
+    def test_titles_and_images_are_not_joined(self):
+        from textconverter.ast import Image
+        self.assertEqual(self._join(_bold("1. Scope"), *_texts("lowercase text")), ["1. Scope", "lowercase text"])
+        picture = Paragraph(children=[Image(src="p.png", alt="")])
+        self.assertEqual(len(self._join(*_texts("text"), picture)), 2)
+
+    def test_no_double_space(self):
+        self.assertEqual(self._join(*_texts("patterns ", "[3] next")), ["patterns [3] next"])
+
+    def test_journal_sentences_are_whole(self):
+        doc = parse_pdf(str(INPUT_DIR / "Journal PDF.pdf"), write_images=False)
+        paragraphs = [plain_text(p.children) for p in doc.children if isinstance(p, Paragraph)]
+        # Only the reference list starts with a citation mark
+        self.assertFalse([p for p in paragraphs if p.startswith(("[3],", "[9].", "[12].", "AI enables"))])
+        self.assertTrue(any("laundering patterns [3], [4]. Consequently" in p for p in paragraphs))
+        self.assertTrue(any("analysis techniques, AI enables" in p for p in paragraphs))
 
 
 class TestRasterMode(BaseConverterTest):
