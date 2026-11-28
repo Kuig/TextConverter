@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- PDF text loses the furniture printed on its pages: running heads (also when they alternate between even and odd
+  pages), footers and page numbers, found from where they sit on the page. They came out in the middle of the text,
+  often in the middle of a sentence split across two pages.
 - A picture cropped in Word or PowerPoint is extracted cropped, as the document shows it, in every output format.
 - `--extract-html` keeps a `<header>` inside the main block (an article's title and byline) and drops `hidden`
   elements; a heading's permalink keeps only its text. A Wikipedia page keeps its title again (the current skin puts it

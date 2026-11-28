@@ -13,6 +13,7 @@ import textconverter
 from textconverter.ast import Document, Heading, Paragraph, Text
 from textconverter.config import AppConfig
 from textconverter.parsers._bold_headings import promote_bold_headings
+from textconverter.parsers._pdf_layout import page_furniture, strip_furniture
 from textconverter.parsers.markdown_parser import parse_markdown
 from textconverter.parsers.pdf_parser import _import_pymupdf4llm, parse_pdf
 from textconverter.renderers._common import plain_text
@@ -138,6 +139,54 @@ class TestBoldHeadings(BaseConverterTest):
                 markdown = _import_pymupdf4llm().to_markdown(path, write_images=False)
                 expected = parse_markdown(markdown, indented_code=False)
                 self.assertEqual(_headings(parse_pdf(path, write_images=False)), _headings(expected))
+
+
+class TestPageFurniture(BaseConverterTest):
+    """Running heads, footers and page numbers: found from the geometry, removed from each page's text."""
+
+    def test_journal_furniture(self):
+        self.assertEqual(page_furniture(str(INPUT_DIR / "Journal PDF.pdf")), {
+            1: ["Volume X, Issue X, Year", "LGU J. Comput. Sci. & IT"],
+            2: ["SHORT PAPER TITLE", "2"], 3: ["Author1 and Author2 (Year)", "3"], 4: ["SHORT PAPER TITLE", "4"],
+        })
+
+    def test_furniture_leaves_the_text(self):
+        cases = {
+            "Journal PDF.pdf": ["Volume X", "SHORT PAPER TITLE", "Author1 and Author2 (Year)"],
+            "Weird Journal PDF.pdf": ["Preprint 26 March", "Compiled using", "Smith et al.", "© 2026 The Authors"],
+        }
+        for name, gone in cases.items():
+            with self.subTest(name):
+                doc = parse_pdf(str(INPUT_DIR / name), write_images=False)
+                paragraphs = [plain_text(p.children).strip() for p in doc.children if isinstance(p, Paragraph)]
+                for text in gone:
+                    self.assertFalse(any(text in p for p in paragraphs), text)
+                self.assertFalse(any(re.fullmatch(r"\d", p) for p in paragraphs), "a page number is left")
+                self.assertFalse(any(p.startswith("MNRAS") for p in paragraphs))
+
+    def test_pdfs_without_furniture_are_unchanged(self):
+        for name in ("Simple Pdf.pdf", "Vector Image PDF.pdf"):
+            with self.subTest(name):
+                path = str(INPUT_DIR / name)
+                self.assertEqual(page_furniture(path), {})
+                markdown = _import_pymupdf4llm().to_markdown(path, write_images=False)
+                expected = parse_markdown(markdown, indented_code=False)
+                promote_bold_headings(expected)
+                self.assertEqual(parse_pdf(path, write_images=False), expected)
+
+    def test_only_lines_made_of_furniture_go(self):
+        page = "\n".join(["Running Head 2", "", "Body text", "Running Head mentioned here", "| 2 | x |",
+                          "22", "2"])
+        self.assertEqual(strip_furniture(page, ["Running Head", "2"]),
+                         "\n".join(["", "Body text", "Running Head mentioned here", "| 2 | x |", "22"]))
+
+    def test_formatting_and_spacing_do_not_matter(self):
+        page = "MNRAS **000**, 1–2 (2026) Preprint 26 March 2026\n\nText"
+        self.assertEqual(strip_furniture(page, ["MNRAS 000, 1–2 (2026)", "Preprint 26 March 2026"]), "\nText")
+
+    def test_furniture_is_looked_for_only_near_the_ends_of_a_page(self):
+        page = "\n".join(["a", "b", "c", "2", "d", "e", "f"])
+        self.assertEqual(strip_furniture(page, ["2"]), page)
 
 
 class TestRasterMode(BaseConverterTest):

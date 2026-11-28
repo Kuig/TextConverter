@@ -4,6 +4,7 @@ from ..ast import Document, Image, Paragraph, walk
 from ..formats import PDF_MODES, check_choice
 from ..logger import log_action, log_warning
 from ._bold_headings import promote_bold_headings
+from ._pdf_layout import page_furniture, strip_furniture
 from .markdown_parser import parse_markdown
 
 # GLM-OCR's reference pipeline renders pages at 200 DPI; more mostly costs time.
@@ -68,7 +69,10 @@ def parse_pdf(
             os.makedirs(target_dir, exist_ok=True)
             created_dir = target_dir
         kwargs['image_path'] = target_dir
-    md_text = pymupdf4llm.to_markdown(file_path, **kwargs)
+    # Page by page, so that each page loses its own running heads, footers and page numbers
+    furniture = page_furniture(file_path)
+    md_text = ''.join(strip_furniture(chunk['text'], furniture.get(chunk['metadata'].get('page'), []))
+                      for chunk in pymupdf4llm.to_markdown(file_path, page_chunks=True, **kwargs))
 
     # Clean up created_dir if it was created but remains empty (no images in PDF)
     if created_dir and os.path.exists(created_dir):
