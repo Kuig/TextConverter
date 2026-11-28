@@ -5,10 +5,11 @@ import subprocess
 import sys
 
 from textconverter.api import save_to_file
+from textconverter.clipboard import read_clipboard
 from textconverter.formats import IMAGE_HANDLING_CHOICES, IMAGE_OUTPUT_CHOICES, INPUT_FORMATS, PDF_MODES, TEMPLATES
-from textconverter.options import ConvertOptions
+from textconverter.options import ConvertOptions, TextSource
 from textconverter import logger
-from textconverter.logger import log_success, log_error
+from textconverter.logger import log_action, log_success, log_error
 
 
 def cmd_convert(args: argparse.Namespace) -> None:
@@ -19,7 +20,7 @@ def cmd_convert(args: argparse.Namespace) -> None:
     """
     try:
         written = save_to_file(
-            args.source,
+            _source(args),
             args.output,
             ConvertOptions(
                 template=args.template,
@@ -37,6 +38,23 @@ def cmd_convert(args: argparse.Namespace) -> None:
     except Exception as exc:
         log_error(f"Error: {exc}")
         sys.exit(1)
+
+
+def _source(args: argparse.Namespace) -> str | TextSource:
+    """The source of ``convert``: the path or URL given, or the clipboard with ``--clipboard``.
+
+    Raises:
+        ValueError: If both a source and ``--clipboard`` are given, or neither.
+        ClipboardError: If the clipboard cannot be read or holds no text.
+    """
+    if args.clipboard == bool(args.source):
+        raise ValueError("Give a source file or URL, or --clipboard, not both.")
+    if not args.clipboard:
+        return args.source
+    source = read_clipboard(args.from_format)
+    origin = f" from {source.url}" if source.url else ""
+    log_action(f"Reading the clipboard: {len(source.text):,} characters of {source.from_format}{origin}")
+    return source
 
 
 def cmd_mcp(args: argparse.Namespace) -> None:
@@ -86,8 +104,15 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     p_convert = subparsers.add_parser("convert", help="Convert and save a document.")
-    p_convert.add_argument("source", help="Source file path or remote URL (e.g., http:// or https://).")
+    p_convert.add_argument("source", nargs="?",
+                           help="Source file path or remote URL (e.g., http:// or https://); omitted with --clipboard.")
     p_convert.add_argument("output", help="Output file path (format inferred from extension).")
+    p_convert.add_argument(
+        "--clipboard",
+        action="store_true",
+        help="Convert the clipboard (Windows): the HTML a browser copied, else the plain text; "
+             "with --from, the plain text in that format.",
+    )
     p_convert.add_argument(
         "--from",
         dest="from_format",

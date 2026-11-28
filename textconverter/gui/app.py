@@ -13,7 +13,8 @@ from textconverter.formats import (
     IMAGE_HANDLING_CHOICES, IMAGE_OUTPUT_CHOICES, INPUT_FORMATS, OUTPUT_FORMATS, PDF_MODES, TEMPLATE_CHOICES,
     infer_input_format, infer_output_format,
 )
-from textconverter.options import ConvertOptions, resolve_images
+from textconverter.options import ConvertOptions, TextSource, resolve_images
+from textconverter.clipboard import ClipboardError, read_clipboard
 from textconverter.config import DEFAULT_CONTEXT_SIZE, AppConfig, load_config
 from textconverter.gui.file_dialog import ask_path
 
@@ -61,6 +62,11 @@ IMAGE_OUTPUT_LABELS = {"auto": "Automatic", "embed": "Embedded in the output", "
 # The image handling choices that need no AI model.
 NO_AI_HANDLING = ("auto", "discard", "keep")
 CONTEXT_SIZES = (4096, 8192, 16384, 32768, 65536, 131072, 262144)
+SOURCE_KIND_LABELS = {"file": "File or URL", "clipboard": "Clipboard"}
+# How the clipboard is read: "auto" takes a browser's HTML, a format reads the plain text in it.
+CLIPBOARD_FORMAT_LABELS = {"auto": "Automatic: a browser's HTML, else plain text", "text": "Plain text",
+                           "markdown": "Markdown", "html": "HTML", "latex": "LaTeX", "json": "AST (JSON)",
+                           "csv": "CSV"}
 
 
 @st.cache_data(show_spinner=False)
@@ -104,7 +110,7 @@ def _start_source() -> str:
 def _init_state() -> None:
     """Fill the session state with the paths and the AI selection from config.json."""
     ai = load_config().ai
-    defaults = {"source": _start_source(), "output": "", "provider": ai.provider,
+    defaults = {"source": _start_source(), "output": "", "source_kind": "file", "provider": ai.provider,
                 "context_size": _configured_context_size(ai.provider)}
     defaults.update({key: getattr(ai, key) for key in MODEL_KEYS})
     for key, value in defaults.items():
@@ -128,7 +134,8 @@ def _path_field(label: str, key: str, placeholder: str, filetypes: list, save: b
             if selected:
                 st.session_state[key] = selected
     with col_text:
-        return st.text_input(label, key=key, placeholder=placeholder)
+        # The source field is hidden while the clipboard is the source: keep what was typed.
+        return st.text_input(label, key=key, placeholder=placeholder, persist_state="page")
 
 
 def _provider_picker() -> str:
@@ -194,9 +201,26 @@ def _image_outputs() -> tuple[str, ...]:
     return OUTPUT_FORMATS[to_format].image_outputs if to_format else IMAGE_OUTPUT_CHOICES[1:]
 
 
-def _images_note(options: ConvertOptions) -> str:
-    """What the image options come to for the paths typed; empty until they tell both formats."""
-    from_format = infer_input_format(st.session_state.source)
+def _clipboard() -> tuple[TextSource | None, str]:
+    """The clipboard read as the chosen format says, and '' or why it cannot be converted.
+
+    It is read on every run, so the note under it and Convert see what is on it now.
+    """
+    chosen = st.session_state.get("clipboard_format", "auto")
+    try:
+        return read_clipboard(None if chosen == "auto" else chosen), ""
+    except (ClipboardError, ValueError) as exc:
+        return None, str(exc)
+
+
+def _clipboard_note(clip: TextSource) -> str:
+    """What the clipboard holds: its format, the page it comes from, its size."""
+    origin = f" from {clip.url}" if clip.url else ""
+    return f"Clipboard: {CLIPBOARD_FORMAT_LABELS[clip.from_format]}{origin}, {len(clip.text):,} characters."
+
+
+def _images_note(options: ConvertOptions, from_format: str | None) -> str:
+    """What the image options come to for this source and output; empty until both formats are known."""
     to_format = infer_output_format(st.session_state.output)
     if from_format is None or to_format is None:
         return ""
@@ -223,6 +247,9 @@ st.set_page_config(page_title="TextConverter", page_icon="📝", layout="wide")
 st.title("📝 TextConverter: Document Conversion")
 st.caption("Convert between PDF, HTML, Markdown, LaTeX and JSON, and to PDF, with optional AI features.")
 _init_state()
+from_clipboard = st.session_state.source_kind == "clipboard"
+clip, clip_problem = _clipboard() if from_clipboard else (None, "")
+source_format = (clip.from_format if clip else None) if from_clipboard else infer_input_format(st.session_state.source)
 
 with st.sidebar:
     st.header("⚙️ Options")
@@ -245,7 +272,7 @@ with st.sidebar:
     )
     if len(image_outputs) < 2:
         image_output = "auto"
-    images_note = _images_note(ConvertOptions(image_handling=image_handling, pdf_mode=pdf_mode))
+    images_note = _images_note(ConvertOptions(image_handling=image_handling, pdf_mode=pdf_mode), source_format)
     if images_note:
         st.caption(images_note)
     code_parsing = st.checkbox("Enable code detection", help="Markdown, plain text, Word and PowerPoint sources, and PDF sources in text mode.")
@@ -280,16 +307,27 @@ with st.sidebar:
                 except OSError as exc:
                     st.error(f"Save failed: {exc}")
 
+st.radio("Source", tuple(SOURCE_KIND_LABELS), key="source_kind", format_func=SOURCE_KIND_LABELS.get,
+         horizontal=True, help="Clipboard: copy a page in the browser (Ctrl+A, Ctrl+C), or any text.")
 col1, col2 = st.columns(2)
 with col1:
-    source = _path_field("Source file path or URL", "source",
-                         "DocsInput/document.pdf or https://example.com", INPUT_FILETYPES, save=False)
+    if from_clipboard:
+        st.selectbox("Clipboard content", tuple(CLIPBOARD_FORMAT_LABELS), key="clipboard_format",
+                     format_func=CLIPBOARD_FORMAT_LABELS.get, persist_state="page",
+                     help="A format reads the clipboard's plain text in it, such as Markdown copied from a web page.")
+        st.caption(f"⚠️ {clip_problem}" if clip_problem else _clipboard_note(clip))
+        source = clip
+    else:
+        source = _path_field("Source file path or URL", "source",
+                             "DocsInput/document.pdf or https://example.com", INPUT_FILETYPES, save=False)
 with col2:
     output = _path_field("Output file path", "output",
                          "DocsOutput/document.md", OUTPUT_FILETYPES, save=True)
 
 if st.button("Convert", type="primary", use_container_width=True):
-    if not source or not output:
+    if from_clipboard and not clip:
+        st.error(clip_problem)
+    elif not source or not output:
         st.error("Source and output paths are required.")
     else:
         with st.spinner("Converting..."):

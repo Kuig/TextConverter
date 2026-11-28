@@ -22,6 +22,8 @@ TextConverter/
 ├── DocsOutput/                      ← Generated output documents
 ├── tests/                           ← Unit test suite (unittest)
 ├── Windows Integration/             ← Windows shell context menu integration
+│   ├── convert.cmd                  ← Runs one menu entry: a file, or the clipboard into a folder, never overwriting
+│   ├── launch_gui.bat               ← Starts the GUI, optionally on a file
 │   └── generate_registry_files.ps1  ← Dynamic registry file generator
 └── textconverter/                   ← Core package
     ├── __init__.py                  ← Package initializer, UTF-8 console setup
@@ -65,10 +67,10 @@ Citations and cross-references (`\cite`, `\ref`, `\label` and their kin in natbi
 
 All four interfaces are thin wrappers around the same `convert()`/`convert_text()`/`save_to_file()` API in `api.py`, and take their choices (formats, modes, templates) from `formats.py`:
 
-- **CLI** (`__main__.py`): `argparse` subcommands (`convert`, `mcp`, `gui`).
+- **CLI** (`__main__.py`): `argparse` subcommands (`convert`, `mcp`, `gui`). `convert --clipboard` takes its source from `clipboard.read_clipboard()`, a `TextSource`, in place of a path.
 - **MCP server** (`mcp_tools.py`): `MCPServer` tools (mcp 2.x) over stdio, for use from AI agents/IDEs; a failed conversion is raised as `ToolError`, which the client receives as `isError` with the message.
 - **Python library**: direct import of `textconverter.api`.
-- **Streamlit GUI** (`gui/app.py`): sidebar for options and for the AI provider, models and context size (models listed live by `unified_ai_client`, saved to `config.json` on request), main area for source/output and results. The chosen models reach `save_to_file()` as a `config` override, so the GUI holds no conversion logic.
+- **Streamlit GUI** (`gui/app.py`): sidebar for options and for the AI provider, models and context size (models listed live by `unified_ai_client`, saved to `config.json` on request), main area for source (a path or URL, or the clipboard as a `TextSource`)/output and results. The chosen models reach `save_to_file()` as a `config` override, so the GUI holds no conversion logic.
 
 ## Invariants
 

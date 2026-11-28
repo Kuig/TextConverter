@@ -172,7 +172,14 @@ textconverter convert DocsInput/document.md DocsOutput/document.html --code-pars
 
 # Tell the source format when neither the extension nor the server's Content-Type does
 textconverter convert https://example.com/export DocsOutput/export.md --from markdown
+
+# The page you are reading: select it in the browser (Ctrl+A, Ctrl+C), then convert the clipboard (Windows)
+textconverter convert --clipboard DocsOutput/page.md --extract-html
+#   ...Markdown copied from a page or an editor: read the clipboard's plain text in that format
+textconverter convert --clipboard DocsOutput/notes.docx --from markdown
 ```
+
+`--clipboard` takes the HTML a browser puts on the clipboard, with the address of the page, so relative images are downloaded and site cleanup recognizes the site; no download of the page is needed, which also gets around sites that refuse automated clients. Without HTML on the clipboard it reads the plain text as plain text; with `--from` it always reads the plain text, in that format. The page's `<title>` is not part of a copy.
 
 ### MCP Server
 
@@ -194,7 +201,7 @@ textconverter gui
 textconverter gui DocsInput/document.pdf   # starts with the file as the source
 ```
 
-The sidebar holds the conversion options, with one line saying what the image options come to for the paths typed, and the AI selection: a provider menu (local servers that answer and cloud providers with a key) and menus for the classification, description and OCR models, listing the models that accept images, plus a context size slider (4k to 256k tokens). **Save as default** writes the selection to `config.json` in the working directory.
+**Source** chooses between a file or URL and the clipboard; with the clipboard, a line says what it holds ("HTML from https://..., 12,345 characters"), read again on every change and when you press **Convert**, and a menu reads its plain text in a given format instead, as `--from` does. The sidebar holds the conversion options, with one line saying what the image options come to for the source and output, and the AI selection: a provider menu (local servers that answer and cloud providers with a key) and menus for the classification, description and OCR models, listing the models that accept images, plus a context size slider (4k to 256k tokens). **Save as default** writes the selection to `config.json` in the working directory.
 
 ### Library
 
@@ -223,6 +230,7 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
 * **Same behavior as the CLI**: Every conversion runs `Windows Integration/convert.cmd`, which calls `textconverter convert` with its default options (so `--image-handling auto`). PDF sources also get `--code-parsing`. If a conversion fails, the window stays open to show the error.
 * **Open with TextConverter**: Opens the GUI with the file as its source, for every other option: what happens to the images, raster PDF pages, the main content of an HTML page, and so on. Explorer shows at most 16 entries of a menu, submenus included, so the menu does not hold the options itself.
 * **Nothing is overwritten**: The result goes next to the source file as `<name>_converted<ext>`, then `<name>_converted2<ext>` and so on.
+* **Paste with TextConverter**: Right-click the empty space of a folder to convert the clipboard into it, as `clipboard_converted<ext>` (numbered the same way), to any of the formats above. Select a page in the browser (Ctrl+A, Ctrl+C) first: these entries run `textconverter convert --clipboard` with `--extract-html`, so the page's menus go and its main content stays.
 
 #### Setup
 1. Open a PowerShell terminal in the project root.
@@ -232,7 +240,7 @@ You can integrate `TextConverter` directly into the Windows Explorer right-click
    .\generate_registry_files.ps1
    ```
    This dynamically detects the project folder and generates two registry files: `register.reg` and `unregister.reg`. Run it again (and re-import `register.reg`, which replaces the earlier entries) after moving the project or updating TextConverter.
-3. Double-click `register.reg` and approve the prompt to register the context menu. On Windows 11 the entries are under **Show more options**.
+3. Double-click `register.reg` and approve the prompt to register the context menus. On Windows 11 the entries are under **Show more options**.
 4. To remove the integration, double-click `unregister.reg`.
 
 #### GUI Launcher

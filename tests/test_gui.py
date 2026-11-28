@@ -10,7 +10,9 @@ from unittest.mock import patch
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from textconverter.clipboard import ClipboardError
 from textconverter.config import AppConfig
+from textconverter.options import TextSource
 
 from _support import BaseConverterTest, setUpModule, tearDownModule
 
@@ -208,6 +210,72 @@ class TestGui(BaseConverterTest):
             app.run()
         box = next(c for c in app.sidebar.checkbox if c.label.startswith("Site-specific cleanup"))
         self.assertFalse(box.value)
+
+
+class TestClipboardSource(BaseConverterTest):
+    """The clipboard as the source; read_clipboard is faked."""
+
+    CLIP = TextSource("<p>Pasted</p>", "html", "https://x.test/page")
+
+    def _app(self, read) -> tuple[AppTest, object]:
+        """The app switched to the clipboard, with ``read`` as read_clipboard and save_to_file faked."""
+        st.cache_data.clear()
+        self.save = patch("textconverter.api.save_to_file").start()
+        for patcher in (patch("unified_ai_client.list_providers", return_value=PROVIDERS),
+                        patch("unified_ai_client.list_models", return_value=MODELS),
+                        patch("textconverter.clipboard.read_clipboard", side_effect=read)):
+            patcher.start()
+        self.addCleanup(patch.stopall)
+        app = AppTest.from_file(APP, default_timeout=30)
+        app.run()
+        app.radio(key="source_kind").set_value("clipboard")
+        app.run()
+        self.assertFalse(app.exception, app.exception)
+        return app
+
+    def _convert(self, app: AppTest, output: str = "out.md") -> None:
+        app.text_input(key="output").input(output)
+        app.run()
+        next(b for b in app.button if b.label == "Convert").click()
+        app.run()
+        self.assertFalse(app.exception, app.exception)
+
+    def test_the_clipboard_reaches_the_conversion(self):
+        app = self._app(lambda from_format: self.CLIP)
+        self.assertIn("Clipboard: HTML from https://x.test/page, 13 characters.", [c.value for c in app.caption])
+        self._convert(app)
+        self.assertIs(self.save.call_args.args[0], self.CLIP)
+        self.assertIn("keep images; images: linked files", next(c.value for c in app.sidebar.caption
+                                                                 if "paths" in c.value))
+
+    def test_a_format_chosen_reads_the_plain_text(self):
+        formats = []
+        app = self._app(lambda from_format: formats.append(from_format) or TextSource("# T", from_format or "text"))
+        app.selectbox(key="clipboard_format").set_value("markdown")
+        app.run()
+        self.assertEqual(formats[-1], "markdown")
+        self.assertIn(None, formats)
+
+    def test_an_unreadable_clipboard_is_an_error_and_no_conversion(self):
+        def read(from_format):
+            raise ClipboardError("The clipboard holds no text")
+        app = self._app(read)
+        self.assertTrue([c for c in app.caption if "holds no text" in c.value])
+        self._convert(app)
+        self.save.assert_not_called()
+        self.assertTrue([e for e in app.error if "holds no text" in e.value])
+
+    def test_the_typed_path_survives_the_clipboard(self):
+        app = self._app(lambda from_format: self.CLIP)
+        app.radio(key="source_kind").set_value("file")
+        app.run()
+        app.text_input(key="source").input("in.md")
+        app.run()
+        app.radio(key="source_kind").set_value("clipboard")
+        app.run()
+        app.radio(key="source_kind").set_value("file")
+        app.run()
+        self.assertEqual(app.text_input(key="source").value, "in.md")
 
 
 class TestFileDialog(BaseConverterTest):

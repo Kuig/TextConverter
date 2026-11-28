@@ -317,15 +317,19 @@ class TestWindowsIntegration(BaseConverterTest):
         self.assertEqual(menu, expected)
 
     def _commands(self) -> dict[str, str]:
-        """The command of each entry, by its path, as ``<source>/TextConverter/<target>`` or ``<source>/TextConverterGui``."""
+        """The command of each entry, by its path, as ``<source>/TextConverter/<target>`` or ``<source>/TextConverterGui``.
+
+        The source of the entries on a folder's background is ``folder``.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             register = self._register(tmp)
         commands = {}
         key = ""
         for line in register.splitlines():
-            found = re.fullmatch(r"\[HKEY_CLASSES_ROOT.SystemFileAssociations.(\.\w+).shell.(TextConverter\w*)(.*)\]", line)
+            found = re.fullmatch(r"\[HKEY_CLASSES_ROOT.(?:SystemFileAssociations.(\.\w+)|Directory.Background)"
+                                 r".shell.(TextConverter\w*)(.*)\]", line)
             if found:
-                key = found.group(1) + "/" + found.group(2) + found.group(3).replace("\\shell\\", "/")
+                key = (found.group(1) or "folder") + "/" + found.group(2) + found.group(3).replace("\\shell\\", "/")
             elif line.startswith("@="):
                 commands[key.removesuffix("\\command")] = line
         return commands
@@ -350,9 +354,29 @@ class TestWindowsIntegration(BaseConverterTest):
         for menu, count in counts.items():
             self.assertLessEqual(count, 16, menu)
 
+    def test_a_folder_background_pastes_the_clipboard_to_every_output(self):
+        """The main content of a copied page is kept: the page's menus are on the clipboard too."""
+        from textconverter.formats import OUTPUT_FORMATS
+        pastes = {path: command for path, command in self._commands().items() if path.startswith("folder/")}
+        targets = {re.search(r'%V\W+(\.\w+) ', command).group(1) for command in pastes.values()}
+        self.assertEqual(targets, {f.extensions[0] for f in OUTPUT_FORMATS.values()})
+        for path, command in pastes.items():
+            self.assertTrue(path.startswith("folder/TextConverterPaste/"), path)
+            self.assertIn('convert.cmd\\" --clipboard \\"%V\\" ', command)
+            self.assertTrue(command.endswith(' --extract-html"'), command)
+
+    def test_unregister_removes_every_menu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            register = self._register(tmp)
+            unregister = (Path(tmp) / "unregister.reg").read_text(encoding="utf-16")
+        menus = set(re.findall(r"^\[-?(HKEY_[^\]]*\\shell\\TextConverter\w*)\]$", register, re.MULTILINE))
+        self.assertIn("HKEY_CLASSES_ROOT\\Directory\\Background\\shell\\TextConverterPaste", menus)
+        for menu in menus:
+            self.assertIn(f"[-{menu}]", unregister)
+
     def test_every_source_opens_the_gui_on_its_file(self):
         commands = self._commands()
-        sources = {path.split("/", 1)[0] for path in commands}
+        sources = {path.split("/", 1)[0] for path in commands} - {"folder"}
         for source in sources:
             command = commands[f"{source}/TextConverterGui"]
             self.assertIn("launch_gui.bat", command)
@@ -407,6 +431,29 @@ class TestCli(BaseConverterTest):
         self.assertEqual((args.from_format, args.template), ("html", "dark"))
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             build_parser().parse_args(["convert", "a.md", "b.html", "--template", "drak"])
+
+    def test_clipboard_is_the_source_with_its_format(self):
+        from unittest.mock import patch
+        from textconverter.__main__ import build_parser
+        clip = textconverter.TextSource("# T", "markdown")
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch("textconverter.__main__.read_clipboard", return_value=clip) as read:
+            out = os.path.join(tmp, "out.html")
+            args = build_parser().parse_args(["convert", out, "--clipboard", "--from", "markdown"])
+            args.func(args)
+            read.assert_called_once_with("markdown")
+            self.assertIn("<h1>T</h1>", Path(out).read_text(encoding="utf-8"))
+
+    def test_clipboard_and_a_source_exclude_each_other(self):
+        from unittest.mock import patch
+        from textconverter.__main__ import build_parser
+        for argv in (["convert", "in.md", "out.md", "--clipboard"], ["convert", "out.md"]):
+            with self.subTest(argv=argv), patch("textconverter.__main__.log_error") as error, \
+                    patch("textconverter.__main__.read_clipboard") as read, self.assertRaises(SystemExit):
+                args = build_parser().parse_args(argv)
+                args.func(args)
+            self.assertIn("not both", error.call_args.args[0])
+            read.assert_not_called()
 
     def test_gui_starts_on_the_file_given(self):
         from unittest.mock import patch

@@ -15,7 +15,8 @@ if (-not (Test-Path $ExePath)) {
 }
 
 # Every conversion entry runs convert.cmd, which calls "textconverter convert" with
-# the CLI's own defaults and writes "<name>_converted<ext>" next to the source file.
+# the CLI's own defaults and writes "<name>_converted<ext>" next to the source file;
+# "Paste with TextConverter" on a folder's background converts the clipboard into it.
 # "Open with TextConverter" runs launch_gui.bat, which opens the GUI with the file as
 # its source, for every other option.
 $EscapedCmdPath = $CmdPath.Replace("\", "\\")
@@ -83,6 +84,15 @@ function Get-Entry([string]$Key, $Entry, [string]$Ext) {
     '@="\"' + $EscapedCmdPath + '\" \"%1\" ' + $Entry.Ext + ' ' + $OptionString + '"' + "`r`n"
 }
 
+# The registry lines of an entry that converts the clipboard into the folder (%V).
+# A page copied in the browser holds its menus too: keep its main content.
+function Get-PasteEntry([string]$Key, $Entry) {
+    "`r`n[$Key]`r`n`"MUIVerb`"=`"$($Entry.Verb)`"`r`n" +
+    "`r`n[$Key\command]`r`n" +
+    '@="\"' + $EscapedCmdPath + '\" --clipboard \"%V\" ' + $Entry.Ext + ' --template ' + $Entry.Template +
+    ' --extract-html"' + "`r`n"
+}
+
 # Generate register.reg
 $RegisterContent = "Windows Registry Editor Version 5.00`r`n"
 # Generate unregister.reg
@@ -120,6 +130,17 @@ foreach ($Ext in $Associations.Keys) {
     $UnregisterContent += "`r`n[-$Shell\TextConverter]`r`n"
     $UnregisterContent += "`r`n[-$Shell\TextConverterGui]`r`n"
 }
+
+# The background of a folder: the clipboard converted into it, to every target.
+$Shell = "HKEY_CLASSES_ROOT\Directory\Background\shell"
+$RegisterContent += "`r`n[-$Shell\TextConverterPaste]`r`n"
+$RegisterContent += "`r`n[$Shell\TextConverterPaste]`r`n"
+$RegisterContent += "`"MUIVerb`"=`"Paste with TextConverter...`"`r`n"
+$RegisterContent += "`"SubCommands`"=`"`"`r`n"
+foreach ($Sub in $Targets) {
+    $RegisterContent += Get-PasteEntry "$Shell\TextConverterPaste\shell\$($Sub.Key)" $Sub
+}
+$UnregisterContent += "`r`n[-$Shell\TextConverterPaste]`r`n"
 
 # Output registry files as UTF-16 LE (Unicode) for native Windows compatibility
 $RegisterPath = Join-Path $OutputDir "register.reg"

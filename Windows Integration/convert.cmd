@@ -1,15 +1,26 @@
 @echo off
 REM Called by the Explorer context menu entries (see generate_registry_files.ps1):
 REM   convert.cmd <source file> <target extension> [textconverter convert options]
+REM   convert.cmd --clipboard <folder> <target extension> [textconverter convert options]
 REM Writes the result next to the source through the project's CLI, as
 REM <name>_converted<ext>, or <name>_converted2<ext> and so on when such a file
 REM exists (also as one of the <name>_converted_<sheet>.csv of a table per file):
-REM no existing file is overwritten. On failure the window stays open so the
-REM error can be read.
+REM no existing file is overwritten. The clipboard is written into the folder as
+REM clipboard_converted<ext>, numbered the same way. On failure the window stays
+REM open so the error can be read.
 setlocal
 set "EXE=%~dp0..\.venv\Scripts\textconverter.exe"
+if /i "%~1"=="--clipboard" goto clipboard
 set "SOURCE=%~1"
 set "STEM=%~dpn1_converted"
+goto extension
+
+:clipboard
+set "SOURCE="
+set "STEM=%~f2\clipboard_converted"
+shift
+
+:extension
 set "EXT=%~2"
 set "NUMBER=1"
 set "TAG="
@@ -36,5 +47,12 @@ if not exist "%EXE%" (
     pause
     exit /b 1
 )
+if not defined SOURCE goto paste
 "%EXE%" convert "%SOURCE%" "%OUTPUT%"%OPTIONS%
+goto done
+
+:paste
+"%EXE%" convert --clipboard "%OUTPUT%"%OPTIONS%
+
+:done
 if errorlevel 1 pause

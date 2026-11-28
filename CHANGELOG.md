@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The clipboard as a source, on Windows: `textconverter convert --clipboard out.md`, and **Source: Clipboard** in the
+  GUI. A page selected and copied in the browser is converted with the address it came from, so its relative images
+  are downloaded and site cleanup recognizes the site, without saving the page first; without HTML on the clipboard,
+  or with `--from`, its plain text is read. In the library, `convert()` and `save_to_file()` take a `TextSource`
+  (text, its format and the page it comes from) in place of a path, so text reaches PDF, Word, PowerPoint and Excel
+  output too.
+- **Paste with TextConverter** in the Explorer menu of a folder's background: the clipboard converted into the folder
+  as `clipboard_converted<ext>`, to any output format, keeping the main content of a copied page.
 - Pictures remember where they sit. A picture read from PowerPoint keeps its place and size on the slide, one from Word
   its size on the page (and its place when it floats), one from Excel the range of cells it covers. PowerPoint output
   puts a picture back at its place, with the text stopping before it, instead of stacking every picture in a column;
