@@ -28,6 +28,7 @@ TextConverter/
     ├── __main__.py                  ← CLI entry point (convert / mcp / gui subcommands)
     ├── api.py                       ← Public API: convert(), convert_text(), save_to_file()
     ├── ast.py                       ← Document AST node definitions
+    ├── clipboard.py                 ← Windows clipboard as a TextSource: a browser's HTML with its page address, else plain text
     ├── code_detector.py             ← Heuristic code block detection
     ├── config.py                    ← Configuration loading and provider setup helpers
     ├── formats.py                   ← Registry of formats, image handling modes, PDF modes, templates
